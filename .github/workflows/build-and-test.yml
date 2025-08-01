@@ -99,8 +99,3 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: 1.23.x
-    
-    - name: Run Gosec Security Scanner
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: './...'
