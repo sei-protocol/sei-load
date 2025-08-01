@@ -66,11 +66,3 @@ jobs:
         sleep 5
         kill $SEILOAD_PID || true
         wait $SEILOAD_PID 2>/dev/null || true
-    
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.out
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
