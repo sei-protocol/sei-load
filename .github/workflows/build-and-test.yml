@@ -42,7 +42,7 @@ jobs:
     - name: Install golangci-lint
       uses: golangci/golangci-lint-action@v3
       with:
-        version: v2.3.4
+        version: latest
         skip-cache: false
         skip-pkg-cache: false
         skip-build-cache: false
