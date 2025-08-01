@@ -30,8 +30,8 @@ type Collector struct {
 	blockCollector *BlockCollector
 
 	// Global metrics
-	startTime time.Time
-	totalTxs  uint64
+	startTime      time.Time
+	totalTxs       uint64
 	lastWindowTime time.Time
 
 	// Configuration
@@ -316,7 +316,7 @@ func (c *Collector) GetStats() Stats {
 func (c *Collector) GetCumulativeBlockStats() *BlockStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	if c.blockCollector != nil {
 		stats := c.blockCollector.GetBlockStats()
 		return &stats
@@ -340,13 +340,13 @@ func calculatePercentile(sorted []time.Duration, percentile int) time.Duration {
 
 // Stats represents comprehensive load test statistics
 type Stats struct {
-	StartTime     time.Time
-	TotalTxs      uint64
-	TxCounts      map[string]map[string]uint64 // [scenario][endpoint] -> count
-	EndpointStats map[string]EndpointStats
-	OverallMaxTPS float64
+	StartTime         time.Time
+	TotalTxs          uint64
+	TxCounts          map[string]map[string]uint64 // [scenario][endpoint] -> count
+	EndpointStats     map[string]EndpointStats
+	OverallMaxTPS     float64
 	OverallCurrentTPS float64
-	BlockStats    *BlockStats // Block-related statistics
+	BlockStats        *BlockStats // Block-related statistics
 }
 
 // EndpointStats represents statistics for a specific endpoint
@@ -371,12 +371,12 @@ type EndpointStats struct {
 
 // WindowStats tracks metrics for the current reporting window
 type WindowStats struct {
-	windowStart    time.Time
-	txCount        uint64
-	latencySum     time.Duration
-	latencyCount   int
-	maxLatency     time.Duration
-	minLatency     time.Duration
+	windowStart          time.Time
+	txCount              uint64
+	latencySum           time.Duration
+	latencyCount         int
+	maxLatency           time.Duration
+	minLatency           time.Duration
 	cumulativeMaxTPS     float64
 	cumulativeMaxLatency time.Duration
 }
@@ -400,7 +400,7 @@ func (s *Stats) FormatStats() string {
 	duration := time.Since(s.StartTime)
 	avgTPS := float64(s.TotalTxs) / duration.Seconds()
 
-	result := fmt.Sprintf("\n=== Load Test Statistics ===\n")
+	result := "\n=== Load Test Statistics ===\n"
 	result += fmt.Sprintf("Runtime: %v | Total TXs: %d | Avg TPS: %.2f\n\n",
 		duration.Round(time.Second), s.TotalTxs, avgTPS)
 

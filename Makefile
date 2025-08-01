@@ -30,11 +30,14 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate clean help build-cli install setup-node
+.PHONY: generate clean help build-cli install setup-node build test lint
 
 # Default target
 help:
 	@echo "Available targets:"
+	@echo "  build        - Build the seiload CLI (alias for build-cli)"
+	@echo "  test         - Run tests with coverage"
+	@echo "  lint         - Run linting and static analysis"
 	@echo "  setup-node   - Install nvm, Node.js 20, and solc"
 	@echo "  generate     - Generate Go bindings and scenario templates for all contracts"
 	@echo "  clean        - Remove generated files"
@@ -132,3 +135,19 @@ install: build-cli
 	@echo "📦 Installing CLI ..."
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_PATH)/$(BINARY_NAME)
 	@echo "✅ Installed CLI: $(BINARY_NAME)"
+
+# Build the seiload CLI binary (alias for build-cli)
+build: build-cli
+
+# Run tests with coverage
+test:
+	@echo "🔍 Running tests with coverage..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out
+	@echo "✅ Tests passed"
+
+# Run linting and static analysis
+lint:
+	@echo "🔍 Running linting and static analysis..."
+	@golangci-lint run
+	@echo "✅ Linting and static analysis passed"

@@ -50,8 +50,8 @@ func NewWorker(id int, endpoint string, bufferSize int, workers int) *Worker {
 	}
 
 	return &Worker{
-		id:         id,
-		endpoint:   endpoint,
+		id:       id,
+		endpoint: endpoint,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: transport,
@@ -86,7 +86,7 @@ func (w *Worker) Start() {
 // Stop gracefully shuts down the worker
 func (w *Worker) Stop() {
 	w.cancel()
-	
+
 	// Close HTTP transport to release connections
 	if transport, ok := w.client.Transport.(*http.Transport); ok {
 		transport.CloseIdleConnections()
@@ -232,12 +232,17 @@ func (w *Worker) sendTransaction(tx *types.LoadTx) {
 		fmt.Printf("Worker %d: Failed to send transaction: %v\n", w.id, err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Printf("Worker %d: Failed to close response body: %v\n", w.id, err)
+		}
+	}()
 
 	// Always read and discard response body to enable connection reuse
 	// Limit read to prevent memory issues with large responses
 	_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
 	if err != nil && err != io.EOF {
+		fmt.Printf("Worker %d: Failed to read response body: %v\n", w.id, err)
 		// Log but don't fail - this is just for connection reuse
 	}
 

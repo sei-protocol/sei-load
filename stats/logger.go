@@ -15,10 +15,6 @@ type Logger struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
-
-	// Dry-run transaction logging
-	txCounter   uint64
-	txCounterMu sync.Mutex
 }
 
 // NewLogger creates a new statistics logger

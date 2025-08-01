@@ -6,6 +6,7 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
+	"seiload/config"
 	"seiload/generator/bindings"
 	"seiload/types"
 )
@@ -30,13 +31,6 @@ func NewERC20Scenario() TxGenerator {
 	return scenario
 }
 
-// DeployContract implements ContractDeployer interface - deploys ERC20 with specific constructor args
-func (s *ERC20Scenario) DeployContract(opts *bind.TransactOpts, client *ethclient.Client) (common.Address, *ethtypes.Transaction, error) {
-	// TODO: Update with actual constructor arguments
-	address, tx, _, err := bindings.DeployERC20(opts, client, "LoadToken", "LT")
-	return address, tx, err
-}
-
 // GetBindFunc implements ContractDeployer interface - returns the binding function
 func (s *ERC20Scenario) GetBindFunc() ContractBindFunc[bindings.ERC20] {
 	return bindings.NewERC20
@@ -45,6 +39,33 @@ func (s *ERC20Scenario) GetBindFunc() ContractBindFunc[bindings.ERC20] {
 // SetContract implements ContractDeployer interface - stores the contract instance
 func (s *ERC20Scenario) SetContract(contract *bindings.ERC20) {
 	s.contract = contract
+}
+
+// DeployContract implements ContractDeployer interface - deploys ERC20 with specific constructor args
+func (s *ERC20Scenario) DeployContract(opts *bind.TransactOpts, client *ethclient.Client) (common.Address, *ethtypes.Transaction, error) {
+	// TODO: Update with actual constructor arguments
+	address, tx, _, err := bindings.DeployERC20(opts, client, "LoadToken", "LT")
+	return address, tx, err
+}
+
+// Attach implements TxGenerator interface - attaches to an existing contract
+func (s *ERC20Scenario) Attach(config *config.LoadConfig, address common.Address) error {
+	// Call base Attach to set deployed flag and config
+	if err := s.ContractScenarioBase.Attach(config, address); err != nil {
+		return err
+	}
+
+	var client *ethclient.Client
+	var err error
+	if !config.MockDeploy {
+		client, err = ethclient.Dial(config.Endpoints[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	s.contract, err = bindings.NewERC20(address, client)
+	return err
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates ERC20 transaction

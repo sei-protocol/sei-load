@@ -14,6 +14,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	cfg := &config.LoadConfig{
 		ChainID:    7777,
 		MockDeploy: true,
+		Endpoints:  []string{"http://localhost:8545"}, // Add endpoints for Attach method
 		Scenarios: []config.Scenario{
 			{
 				Name:   scenarios.ERC20,
