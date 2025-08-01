@@ -39,19 +39,14 @@ jobs:
     - name: Verify dependencies
       run: go mod verify
     
-    - name: Run go vet
-      run: go vet ./...
+    - name: Run linting
+      run: make lint
     
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
-    
-    - name: Check test coverage
-      run: go tool cover -func=coverage.out
+      run: make test
     
     - name: Build binary
-      run: |
-        make build-cli
-        ls -la build/
+      run: make build
     
     - name: Test binary execution (help)
       run: ./build/seiload --help
@@ -71,20 +66,3 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.23.x
-    
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --timeout=5m

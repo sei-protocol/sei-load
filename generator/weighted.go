@@ -69,7 +69,7 @@ func (w *weightedGenerator) nextGenerator() Generator {
 // GenerateN generates n transactions.
 func (w *weightedGenerator) GenerateN(n int) []*types.LoadTx {
 	txs := make([]*types.LoadTx, 0, n)
-	for range n {
+	for i := 0; i < n; i++ {
 		if tx, ok := w.Generate(); ok {
 			txs = append(txs, tx)
 		} else {
@@ -108,7 +108,7 @@ func NewWeightedGenerator(cfgs ...*WeightedCfg) Generator {
 	}
 	var weighted []Generator
 	for _, cfg := range cfgs {
-		for range cfg.Weight {
+		for i := 0; i < cfg.Weight; i++ {
 			weighted = append(weighted, cfg.Generator)
 		}
 	}

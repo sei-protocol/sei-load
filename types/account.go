@@ -36,7 +36,7 @@ func (s *Account) GetAndIncrementNonce() uint64 {
 // GenerateAccounts generates random accounts.
 func GenerateAccounts(n int) []*Account {
 	result := make([]*Account, 0, n)
-	for range n {
+	for i := 0; i < n; i++ {
 		newAcc, err := NewAccount()
 		if err != nil {
 			panic(err)

@@ -224,34 +224,32 @@ func runLoadTest(cmd *cobra.Command, args []string) {
 	fmt.Println(strings.Repeat("=", 60))
 
 	// Main loop - wait for shutdown signal
-	select {
-	case <-sigChan:
-		fmt.Println("\n🛑 Received shutdown signal, stopping gracefully...")
+	<-sigChan
 
-		// Stop block collector first
-		if blockCollector != nil {
-			blockCollector.Stop()
-			fmt.Println("✅ Stopped block collector")
-		}
+	fmt.Println("\n🛑 Received shutdown signal, stopping gracefully...")
 
-		// Stop statistics logger first
-		logger.Stop()
-		fmt.Println("✅ Stopped statistics logger")
-
-		// Stop dispatcher
-		dispatcher.Stop()
-		fmt.Println("✅ Stopped dispatcher")
-
-		// Stop sender and all workers
-		snd.Stop()
-		fmt.Println("✅ Stopped sender and workers")
-
-		// Print final statistics
-		logger.LogFinalStats()
-
-		fmt.Println("👋 Shutdown complete")
-		return
+	// Stop block collector first
+	if blockCollector != nil {
+		blockCollector.Stop()
+		fmt.Println("✅ Stopped block collector")
 	}
+
+	// Stop statistics logger first
+	logger.Stop()
+	fmt.Println("✅ Stopped statistics logger")
+
+	// Stop dispatcher
+	dispatcher.Stop()
+	fmt.Println("✅ Stopped dispatcher")
+
+	// Stop sender and all workers
+	snd.Stop()
+	fmt.Println("✅ Stopped sender and workers")
+
+	// Print final statistics
+	logger.LogFinalStats()
+
+	fmt.Println("👋 Shutdown complete")
 }
 
 // loadConfig reads and parses the configuration file

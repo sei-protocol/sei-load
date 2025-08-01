@@ -9,6 +9,7 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
+	"seiload/config"
 	"seiload/generator/bindings"
 	"seiload/types"
 )
@@ -55,4 +56,24 @@ func (s *ERC721Scenario) SetContract(contract *bindings.ERC721) {
 func (s *ERC721Scenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	auth.GasLimit = 22460
 	return s.contract.Mint(auth, scenario.Receiver, big.NewInt(atomic.AddInt64(&s.id, 1)))
+}
+
+// Attach implements TxGenerator interface - attaches to an existing contract
+func (s *ERC721Scenario) Attach(config *config.LoadConfig, address common.Address) error {
+	// Call base Attach to set deployed flag and config
+	if err := s.ContractScenarioBase.Attach(config, address); err != nil {
+		return err
+	}
+
+	var client *ethclient.Client
+	var err error
+	if !config.MockDeploy {
+		client, err = ethclient.Dial(config.Endpoints[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	s.contract, err = bindings.NewERC721(address, client)
+	return err
 }

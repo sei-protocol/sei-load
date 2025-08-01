@@ -34,6 +34,7 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
+	"seiload/config"
 	"seiload/generator/bindings"
 	"seiload/types"
 )
@@ -73,6 +74,26 @@ func (s *${CONTRACT_NAME}Scenario) GetBindFunc() ContractBindFunc[bindings.${CON
 // SetContract implements ContractDeployer interface - stores the contract instance
 func (s *${CONTRACT_NAME}Scenario) SetContract(contract *bindings.${CONTRACT_NAME}) {
 	s.contract = contract
+}
+
+// Attach implements TxGenerator interface - attaches to an existing contract
+func (s *${CONTRACT_NAME}Scenario) Attach(config *config.LoadConfig, address common.Address) error {
+	// Call base Attach to set deployed flag and config
+	if err := s.ContractScenarioBase.Attach(config, address); err != nil {
+		return err
+	}
+
+	var client *ethclient.Client
+	var err error
+	if !config.MockDeploy {
+		client, err = ethclient.Dial(config.Endpoints[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	s.contract, err = bindings.New${CONTRACT_NAME}(address, client)
+	return err
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates ${CONTRACT_NAME} transaction
