@@ -1,4 +1,5 @@
 #  seiload CLI
+[![Tests](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml)
 
 A comprehensive load testing tool for Sei Chain that supports both contract and non-contract scenarios with advanced worker management, receipt tracking, and block monitoring capabilities.
 
