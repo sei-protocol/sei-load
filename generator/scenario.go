@@ -3,8 +3,8 @@ package generator
 import (
 	"sync"
 
-	"seiload/generator/scenarios"
-	"seiload/types"
+	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 type scenarioGenerator struct {

@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"seiload/config"
-	"seiload/generator"
-	"seiload/generator/scenarios"
-	"seiload/types"
+	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/generator"
+	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 // JSONRPCRequest represents a captured JSON-RPC request
@@ -98,12 +98,6 @@ func (ms *MockServer) Close() {
 	ms.server.Close()
 }
 
-// TestShardedSenderWithMockServers tests the sharded sender with mock HTTP servers
-func TestShardedSenderWithMockServers(t *testing.T) {
-	// Skip this test to avoid hanging - it requires actual HTTP servers
-	t.Skip("Skipping integration test that requires HTTP servers - use unit tests instead")
-}
-
 // TestShardDistributionVerification tests that specific transactions go to expected shards
 func TestShardDistributionVerification(t *testing.T) {
 	// Test shard distribution logic without network operations or scenario deployment
@@ -116,7 +110,7 @@ func TestShardDistributionVerification(t *testing.T) {
 	mockAccount := &types.Account{
 		Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
 	}
-	
+
 	mockTx := &types.LoadTx{
 		EthTx: ethtypes.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1000000000), nil),
 		Scenario: &types.TxScenario{

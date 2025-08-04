@@ -7,9 +7,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"seiload/config"
-	"seiload/generator/scenarios"
-	"seiload/types"
+	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 // Generator interface defines the contract for transaction generators

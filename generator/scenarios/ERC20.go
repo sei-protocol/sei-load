@@ -6,9 +6,9 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"seiload/config"
-	"seiload/generator/bindings"
-	"seiload/types"
+	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/generator/bindings"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 const ERC20 = "ERC20"
