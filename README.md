@@ -1,4 +1,5 @@
 # sei-load
+[![Tests](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml)
 
 A load testing tool for Sei Chain that generates transactions and measures performance.
 
