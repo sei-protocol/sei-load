@@ -28,6 +28,13 @@ Edit `my-config.json`:
   "accounts": {
     "count": 100,
     "newAccountRate": 0.1
+  },
+  "settings": {
+    "workers": 5,
+    "tps": 100,
+    "statsInterval": "10s",
+    "bufferSize": 1000,
+    "trackUserLatency": true
   }
 }
 ```
@@ -89,7 +96,8 @@ Edit `my-config.json`:
   "endpoints": ["http://localhost:8545"],
   "chainId": 1329,
   "scenarios": [...],
-  "accounts": {...}
+  "accounts": {...},
+  "settings": {...}
 }
 ```
 
@@ -109,6 +117,31 @@ Edit `my-config.json`:
   "newAccountRate": 0.1
 }
 ```
+
+### Settings
+```json
+"settings": {
+  "workers": 5,
+  "tps": 100,
+  "statsInterval": "10s",
+  "bufferSize": 1000,
+  "trackUserLatency": true
+}
+```
+
+**Settings Precedence**: CLI flags > Config file settings > Default values
+
+Available settings:
+- `workers`: Number of workers per endpoint
+- `tps`: Transactions per second (0 = unlimited)
+- `statsInterval`: Stats logging interval (e.g., "10s", "5m")
+- `bufferSize`: Buffer size per worker
+- `dryRun`: Simulate without sending transactions
+- `debug`: Enable debug logging
+- `trackReceipts`: Track transaction receipts
+- `trackBlocks`: Track block statistics
+- `trackUserLatency`: Track user latency metrics
+- `prewarm`: Prewarm accounts before test
 
 ## Available Scenarios
 
