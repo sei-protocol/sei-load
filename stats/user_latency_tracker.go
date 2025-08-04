@@ -2,18 +2,18 @@ package stats
 
 import (
 	"context"
-	"github.com/sei-protocol/sei-load/utils"
 	"log"
 	"math/big"
 	"sort"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // UserLatencyTracker tracks user latency by analyzing block transactions
 type UserLatencyTracker struct {
-	endpoint string
 	interval time.Duration
 }
 
@@ -26,11 +26,8 @@ func NewUserLatencyTracker(interval time.Duration) *UserLatencyTracker {
 
 // Run starts the user latency tracking loop
 func (ult *UserLatencyTracker) Run(ctx context.Context, endpoint string) error {
-	ult.endpoint = endpoint
-
 	// Create ticker for the configured interval
 	ticker := time.NewTicker(ult.interval)
-	defer ticker.Stop()
 
 	// Connect to the endpoint
 	client, err := ethclient.Dial(endpoint)
