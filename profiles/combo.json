@@ -22,5 +22,15 @@
       "name": "EVMTransfer",
       "weight": 1
     }
-  ]
+  ],
+  "workers": 1,
+  "tps": 0,
+  "statsInterval": "5s",
+  "bufferSize": 1000,
+  "dryRun": false,
+  "debug": false,
+  "trackReceipts": false,
+  "trackBlocks": false,
+  "trackUserLatency": false,
+  "prewarm": false
 }

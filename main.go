@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/sei-protocol/sei-load/utils/service"
 	"log"
 	"os"
 	"os/signal"
@@ -19,20 +18,11 @@ import (
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/utils"
+	"github.com/sei-protocol/sei-load/utils/service"
 )
 
 var (
-	configFile        string
-	statsInterval     time.Duration
-	bufferSize        int
-	tps               float64
-	dryRun            bool
-	debug             bool
-	workers           int
-	trackReceipts     bool
-	trackBlocks       bool
-	prewarm           bool
-	trackUserLatency  bool
+	configFile string
 )
 
 // ResolvedSettings holds the final resolved settings after applying precedence
@@ -47,91 +37,6 @@ type ResolvedSettings struct {
 	TrackBlocks      bool
 	TrackUserLatency bool
 	Prewarm          bool
-}
-
-// resolveSettings applies precedence: CLI > Config > Default
-func resolveSettings(cfg *config.LoadConfig, cmd *cobra.Command) ResolvedSettings {
-	settings := ResolvedSettings{
-		// Default values
-		Workers:          1,
-		TPS:              0,
-		StatsInterval:    10 * time.Second,
-		BufferSize:       1000,
-		DryRun:           false,
-		Debug:            false,
-		TrackReceipts:    false,
-		TrackBlocks:      false,
-		TrackUserLatency: false,
-		Prewarm:          false,
-	}
-
-	// Apply config values if present
-	if cfg.Settings != nil {
-		if cfg.Settings.Workers != nil {
-			settings.Workers = *cfg.Settings.Workers
-		}
-		if cfg.Settings.TPS != nil {
-			settings.TPS = *cfg.Settings.TPS
-		}
-		if cfg.Settings.StatsInterval != nil {
-			settings.StatsInterval = *cfg.Settings.StatsInterval
-		}
-		if cfg.Settings.BufferSize != nil {
-			settings.BufferSize = *cfg.Settings.BufferSize
-		}
-		if cfg.Settings.DryRun != nil {
-			settings.DryRun = *cfg.Settings.DryRun
-		}
-		if cfg.Settings.Debug != nil {
-			settings.Debug = *cfg.Settings.Debug
-		}
-		if cfg.Settings.TrackReceipts != nil {
-			settings.TrackReceipts = *cfg.Settings.TrackReceipts
-		}
-		if cfg.Settings.TrackBlocks != nil {
-			settings.TrackBlocks = *cfg.Settings.TrackBlocks
-		}
-		if cfg.Settings.TrackUserLatency != nil {
-			settings.TrackUserLatency = *cfg.Settings.TrackUserLatency
-		}
-		if cfg.Settings.Prewarm != nil {
-			settings.Prewarm = *cfg.Settings.Prewarm
-		}
-	}
-
-	// Apply CLI values if explicitly set (CLI wins over config)
-	if cmd.Flags().Changed("workers") {
-		settings.Workers = workers
-	}
-	if cmd.Flags().Changed("tps") {
-		settings.TPS = tps
-	}
-	if cmd.Flags().Changed("stats-interval") {
-		settings.StatsInterval = statsInterval
-	}
-	if cmd.Flags().Changed("buffer-size") {
-		settings.BufferSize = bufferSize
-	}
-	if cmd.Flags().Changed("dry-run") {
-		settings.DryRun = dryRun
-	}
-	if cmd.Flags().Changed("debug") {
-		settings.Debug = debug
-	}
-	if cmd.Flags().Changed("track-receipts") {
-		settings.TrackReceipts = trackReceipts
-	}
-	if cmd.Flags().Changed("track-blocks") {
-		settings.TrackBlocks = trackBlocks
-	}
-	if cmd.Flags().Changed("track-user-latency") {
-		settings.TrackUserLatency = trackUserLatency
-	}
-	if cmd.Flags().Changed("prewarm") {
-		settings.Prewarm = prewarm
-	}
-
-	return settings
 }
 
 var rootCmd = &cobra.Command{
@@ -154,16 +59,21 @@ without actually sending requests or deploying contracts.`,
 
 func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
-	rootCmd.Flags().DurationVarP(&statsInterval, "stats-interval", "s", 10*time.Second, "Interval for logging statistics")
-	rootCmd.Flags().IntVarP(&bufferSize, "buffer-size", "b", 1000, "Buffer size per worker")
-	rootCmd.Flags().Float64VarP(&tps, "tps", "t", 0, "Transactions per second (0 = no limit)")
-	rootCmd.Flags().BoolVarP(&dryRun, "dry-run", "", false, "Mock deployment and requests")
-	rootCmd.Flags().BoolVarP(&debug, "debug", "", false, "Log each request")
-	rootCmd.Flags().BoolVarP(&trackReceipts, "track-receipts", "", false, "Track receipts")
-	rootCmd.Flags().BoolVarP(&trackBlocks, "track-blocks", "", false, "Track blocks")
-	rootCmd.Flags().BoolVarP(&prewarm, "prewarm", "", false, "Prewarm accounts with self-transactions")
-	rootCmd.Flags().BoolVarP(&trackUserLatency, "track-user-latency", "", false, "Track user latency")
-	rootCmd.Flags().IntVarP(&workers, "workers", "w", 1, "Number of workers")
+	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
+	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
+	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
+	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
+	rootCmd.Flags().Bool("debug", false, "Log each request")
+	rootCmd.Flags().Bool("track-receipts", false, "Track receipts")
+	rootCmd.Flags().Bool("track-blocks", false, "Track blocks")
+	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
+	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
+	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
+
+	// Initialize Viper with proper error handling
+	if err := config.InitializeViper(rootCmd); err != nil {
+		log.Fatalf("Failed to initialize configuration: %v", err)
+	}
 
 	if err := rootCmd.MarkFlagRequired("config"); err != nil {
 		log.Fatal(err)
@@ -181,14 +91,19 @@ func main() {
 }
 
 func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
+	// Load config file into Viper
+	if err := config.LoadConfigFile(configFile); err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
+	}
+
 	// Parse the config file into a config.LoadConfig struct
 	cfg, err := loadConfig(configFile)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Resolve settings with precedence: CLI > Config > Default
-	settings := resolveSettings(cfg, cmd)
+	// Get resolved settings from the config package
+	settings := config.ResolveSettings()
 
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
 	log.Printf("📁 Config file: %s", configFile)

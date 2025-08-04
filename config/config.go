@@ -2,7 +2,6 @@ package config
 
 import (
 	"math/big"
-	"time"
 )
 
 // LoadConfig stores the configuration for load-related settings.
@@ -13,20 +12,6 @@ type LoadConfig struct {
 	Scenarios  []Scenario     `json:"scenarios,omitempty"`
 	MockDeploy bool           `json:"mockDeploy,omitempty"`
 	Settings   *Settings      `json:"settings,omitempty"`
-}
-
-// Settings stores CLI-configurable settings that can be specified in config file
-type Settings struct {
-	Workers           *int           `json:"workers,omitempty"`
-	TPS               *float64       `json:"tps,omitempty"`
-	StatsInterval     *time.Duration `json:"statsInterval,omitempty"`
-	BufferSize        *int           `json:"bufferSize,omitempty"`
-	DryRun            *bool          `json:"dryRun,omitempty"`
-	Debug             *bool          `json:"debug,omitempty"`
-	TrackReceipts     *bool          `json:"trackReceipts,omitempty"`
-	TrackBlocks       *bool          `json:"trackBlocks,omitempty"`
-	TrackUserLatency  *bool          `json:"trackUserLatency,omitempty"`
-	Prewarm           *bool          `json:"prewarm,omitempty"`
 }
 
 // GetChainID returns the chain ID as a big.Int.
