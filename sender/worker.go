@@ -57,7 +57,7 @@ func NewWorker(id int, endpoint string, bufferSize int, workers int) *Worker {
 		txChan:        make(chan *types.LoadTx, bufferSize),
 		sentTxs:       make(chan *types.LoadTx, bufferSize),
 		workers:       workers,
-		trackReceipts: true,
+		trackReceipts: false,
 	}
 }
 
@@ -187,15 +187,19 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	if err != nil {
 		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Limit read to prevent memory issues with large responses
+		_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
+		if err != nil && err != io.EOF {
+			log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
+			// Log but don't fail - this is just for connection reuse
+		}
 
-	// Always read and discard response body to enable connection reuse
-	// Limit read to prevent memory issues with large responses
-	_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
-	if err != nil && err != io.EOF {
-		log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
-		// Log but don't fail - this is just for connection reuse
-	}
+		// Close response body and handle error
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Worker %d: Failed to close response body: %v", w.id, closeErr)
+		}
+	}()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {

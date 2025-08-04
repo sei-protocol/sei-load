@@ -111,8 +111,7 @@ func (l *Logger) logCurrentStats() {
 	}
 
 	// Print overall summary line
-	log.Printf("[%s] throughput tps=%.2f, txs=%d,  latency(avg=%v p50=%v p99=%v max=%v)",
-		time.Now().Format("15:04:05"),
+	log.Printf("throughput tps=%.2f, txs=%d,  latency(avg=%v p50=%v p99=%v max=%v)",
 		totalWindowTPS,
 		totalTxs,
 		overallAvgLatency.Round(time.Millisecond),
@@ -122,8 +121,7 @@ func (l *Logger) logCurrentStats() {
 
 	// Print block statistics if available
 	if stats.BlockStats != nil && stats.BlockStats.SampleCount > 0 {
-		log.Printf("[%s] %s",
-			time.Now().Format("15:04:05"),
+		log.Printf("%s",
 			stats.BlockStats.FormatBlockStats())
 	}
 

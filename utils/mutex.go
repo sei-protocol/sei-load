@@ -49,7 +49,7 @@ type atomicWatch[T any] struct {
 }
 
 type AtomicSend[T any] struct {
-	atomicWatch[T]
+	*atomicWatch[T]
 }
 
 // Store updates the value of the atomic watch.
@@ -67,13 +67,14 @@ func (w *AtomicSend[T]) Update(f func(T) (T, bool)) {
 }
 
 func NewAtomicSend[T any](value T) (w AtomicSend[T]) {
-	w.atomicWatch.ptr.Store(newVersion(value))
+	w.atomicWatch = &atomicWatch[T]{}
+	w.ptr.Store(newVersion(value))
 	// nolint:nakedret
 	return
 }
 
 func (w *AtomicSend[T]) Subscribe() AtomicRecv[T] {
-	return AtomicRecv[T]{&w.atomicWatch}
+	return AtomicRecv[T]{w.atomicWatch}
 }
 
 // AtomicWatch stores a pointer to an IMMUTABLE value.
@@ -81,7 +82,7 @@ func (w *AtomicSend[T]) Subscribe() AtomicRecv[T] {
 // TODO(gprusak): remove mutex and rename to AtomicSend,
 // this will allow for sharing a mutex across multiple AtomicSenders.
 type AtomicWatch[T any] struct {
-	atomicWatch[T]
+	*atomicWatch[T]
 	mu sync.Mutex
 }
 
@@ -97,7 +98,7 @@ func NewAtomicWatch[T any](value T) (w AtomicWatch[T]) {
 
 // Subscribe returns a view-only API of the atomic watch.
 func (w *AtomicWatch[T]) Subscribe() AtomicRecv[T] {
-	return AtomicRecv[T]{&w.atomicWatch}
+	return AtomicRecv[T]{w.atomicWatch}
 }
 
 // Load returns the current value of the atomic watch.
@@ -231,4 +232,12 @@ func (w *Watch[T]) Lock() iter.Seq2[T, *WatchCtrl] {
 		defer w.ctrl.mu.Unlock()
 		_ = yield(w.val, &w.ctrl)
 	}
+}
+
+// Set updates the value and notifies all watchers
+func (w *Mutex[T]) Set(value T) {
+	newVersion := newVersion(value)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.value = newVersion.value
 }

@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -49,7 +50,7 @@ func (s *EVMTransferScenario) CreateTransaction(config *config.LoadConfig, scena
 	tx := &ethtypes.DynamicFeeTx{
 		Nonce:     scenario.Nonce,
 		To:        &scenario.Receiver,
-		Value:     bigOne,
+		Value:     big.NewInt(time.Now().Unix()),
 		Gas:       21000,                   // Standard gas limit for ETH transfer
 		GasTipCap: big.NewInt(2000000000),  // 2 gwei
 		GasFeeCap: big.NewInt(20000000000), // 20 gwei
