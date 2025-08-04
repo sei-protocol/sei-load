@@ -140,7 +140,7 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 		// Generate a transaction
 		tx, ok := d.generator.Generate()
 		if !ok {
-			return fmt.Errorf("Dispatcher: Generator returned nil transaction (batch %d/%d)\n", i+1, count)
+			return fmt.Errorf("dispatcher: generator returned nil transaction (batch %d/%d)", i+1, count)
 		}
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {

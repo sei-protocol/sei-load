@@ -22,16 +22,17 @@ import (
 )
 
 var (
-	configFile    string
-	statsInterval time.Duration
-	bufferSize    int
-	tps           float64
-	dryRun        bool
-	debug         bool
-	workers       int
-	trackReceipts bool
-	trackBlocks   bool
-	prewarm       bool
+	configFile        string
+	statsInterval     time.Duration
+	bufferSize        int
+	tps               float64
+	dryRun            bool
+	debug             bool
+	workers           int
+	trackReceipts     bool
+	trackBlocks       bool
+	prewarm           bool
+	trackUserLatency  bool
 )
 
 var rootCmd = &cobra.Command{
@@ -62,6 +63,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&trackReceipts, "track-receipts", "", false, "Track receipts")
 	rootCmd.Flags().BoolVarP(&trackBlocks, "track-blocks", "", false, "Track blocks")
 	rootCmd.Flags().BoolVarP(&prewarm, "prewarm", "", false, "Prewarm accounts with self-transactions")
+	rootCmd.Flags().BoolVarP(&trackUserLatency, "track-user-latency", "", false, "Track user latency")
 	rootCmd.Flags().IntVarP(&workers, "workers", "w", 1, "Number of workers")
 
 	if err := rootCmd.MarkFlagRequired("config"); err != nil {
@@ -83,7 +85,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// Parse the config file into a config.LoadConfig struct
 	cfg, err := loadConfig(configFile)
 	if err != nil {
-		return fmt.Errorf("Failed to load config: %w", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
@@ -109,6 +111,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if prewarm {
 		log.Printf("📝 Prewarm: enabled")
 	}
+	if trackUserLatency {
+		log.Printf("📝 Track user latency: enabled")
+	}
 	log.Println()
 
 	// Enable mock deployment in dry-run mode
@@ -124,13 +129,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create the generator from the config struct
 		gen, err := generator.NewConfigBasedGenerator(cfg)
 		if err != nil {
-			return fmt.Errorf("Failed to create generator: %w", err)
+			return fmt.Errorf("failed to create generator: %w", err)
 		}
 
 		// Create the sender from the config struct
 		snd, err := sender.NewShardedSender(cfg, bufferSize, workers)
 		if err != nil {
-			return fmt.Errorf("Failed to create sender: %w", err)
+			return fmt.Errorf("failed to create sender: %w", err)
 		}
 
 		// Create and start block collector if endpoints are available
@@ -140,6 +145,14 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			collector.SetBlockCollector(blockCollector)
 			s.SpawnBgNamed("block collector", func() error {
 				return blockCollector.Run(ctx, cfg.Endpoints[0])
+			})
+		}
+
+		// Create and start user latency tracker if endpoints are available
+		if len(cfg.Endpoints) > 0 && trackUserLatency {
+			userLatencyTracker := stats.NewUserLatencyTracker(statsInterval)
+			s.SpawnBgNamed("user latency tracker", func() error {
+				return userLatencyTracker.Run(ctx, cfg.Endpoints[0])
 			})
 		}
 
@@ -187,7 +200,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if prewarm {
 			if err := dispatcher.Prewarm(ctx); err != nil {
-				return fmt.Errorf("Failed to prewarm accounts: %w", err)
+				return fmt.Errorf("failed to prewarm accounts: %w", err)
 			}
 		}
 
@@ -216,6 +229,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		if trackBlocks {
 			log.Printf("📝 Track blocks mode: Block data will be collected")
 		}
+		if trackUserLatency {
+			log.Printf("📝 Track user latency mode: User latency will be tracked")
+		}
 		log.Print(strings.Repeat("=", 60))
 
 		// Main loop - wait for shutdown signal
@@ -240,7 +256,7 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 
 	var cfg config.LoadConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse config json: %w", err)
 	}
 
 	// Validate configuration

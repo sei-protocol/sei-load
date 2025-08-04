@@ -67,7 +67,7 @@ func (w *AtomicSend[T]) Update(f func(T) (T, bool)) {
 }
 
 func NewAtomicSend[T any](value T) (w AtomicSend[T]) {
-	w.atomicWatch.ptr.Store(newVersion(value))
+	w.ptr.Store(newVersion(value))
 	// nolint:nakedret
 	return
 }
