@@ -1,9 +1,9 @@
 package sender
 
 import (
+	"context"
 	"fmt"
 	"sync"
-	"context"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/stats"

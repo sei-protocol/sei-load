@@ -6,34 +6,34 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"io"
-	"net"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/service"
 	"github.com/sei-protocol/sei-load/utils"
+	"github.com/sei-protocol/sei-load/utils/service"
 )
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
-	id         int
-	endpoint   string
-	txChan     chan *types.LoadTx
-	sentTxs    chan *types.LoadTx
-	dryRun     bool
-	debug      bool
-	collector  *stats.Collector
-	logger     *stats.Logger
-	workers    int
+	id            int
+	endpoint      string
+	txChan        chan *types.LoadTx
+	sentTxs       chan *types.LoadTx
+	dryRun        bool
+	debug         bool
+	collector     *stats.Collector
+	logger        *stats.Logger
+	workers       int
 	trackReceipts bool
 }
 
 func newHttpClient() *http.Client {
 	return &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
@@ -52,11 +52,11 @@ func newHttpClient() *http.Client {
 // NewWorker creates a new worker for a specific endpoint
 func NewWorker(id int, endpoint string, bufferSize int, workers int) *Worker {
 	return &Worker{
-		id:         id,
-		endpoint:   endpoint,	
-		txChan:     make(chan *types.LoadTx, bufferSize),
-		sentTxs:    make(chan *types.LoadTx, bufferSize),
-		workers:    workers,
+		id:            id,
+		endpoint:      endpoint,
+		txChan:        make(chan *types.LoadTx, bufferSize),
+		sentTxs:       make(chan *types.LoadTx, bufferSize),
+		workers:       workers,
 		trackReceipts: true,
 	}
 }
@@ -73,7 +73,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		// Start multiple worker goroutines that share the same channel
 		client := newHttpClient()
 		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx,client) })
+			s.Spawn(func() error { return w.processTransactions(ctx, client) })
 		}
 		return w.watchTransactions(ctx)
 	})
@@ -109,11 +109,13 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	}
 	for {
 		tx, err := utils.Recv(ctx, w.sentTxs)
-		if err!=nil { return err }
-		ctx,cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		if err := w.waitForReceipt(ctx, eth, tx); err != nil {
-			log.Printf("❌ %v",err)
+			log.Printf("❌ %v", err)
 		}
 	}
 }
@@ -121,7 +123,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	for {
-		if _,err := utils.Recv(ctx, ticker.C); err != nil {
+		if _, err := utils.Recv(ctx, ticker.C); err != nil {
 			return fmt.Errorf("timeout waiting for receipt for tx %s", tx.EthTx.Hash().Hex())
 		}
 		receipt, err := eth.TransactionReceipt(context.Background(), tx.EthTx.Hash())
@@ -146,16 +148,18 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 // processTransactions is the main worker loop that processes transactions
 func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
 	for {
-		tx,err := utils.Recv(ctx, w.txChan)
-		if err != nil { return err }
+		tx, err := utils.Recv(ctx, w.txChan)
+		if err != nil {
+			return err
+		}
 		startTime := time.Now()
 		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
 		if w.collector != nil {
-			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err==nil)
+			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err == nil)
 		}
-		if err!=nil {
-			log.Printf("%v",err)
+		if err != nil {
+			log.Printf("%v", err)
 		}
 	}
 }
@@ -165,7 +169,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	if w.dryRun {
 		// In dry-run mode, simulate processing time and mark as successful
 		// Use very minimal delay to avoid channel overflow
-		return utils.Sleep(ctx, 10 * time.Microsecond) // Much faster simulation
+		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
 	// Create HTTP request with JSON-RPC payload

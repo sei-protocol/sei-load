@@ -2,8 +2,8 @@ package generator
 
 import (
 	"context"
-	"math/rand"
 	"github.com/sei-protocol/sei-load/types"
+	"math/rand"
 	"sync"
 )
 

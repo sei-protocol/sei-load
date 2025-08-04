@@ -62,14 +62,18 @@ func (bc *BlockCollector) Run(ctx context.Context, firstEndpoint string) error {
 		}
 		defer sub.Unsubscribe()
 		s.SpawnBg(func() error {
-			subErr,err := utils.Recv(ctx, sub.Err())
-			if err != nil { return err }
+			subErr, err := utils.Recv(ctx, sub.Err())
+			if err != nil {
+				return err
+			}
 			return subErr
 		})
 		log.Printf("📡 Subscribed to new blocks on %s", wsEndpoint)
 		for {
-			header,err := utils.Recv(ctx, headers)
-			if err != nil { return err }
+			header, err := utils.Recv(ctx, headers)
+			if err != nil {
+				return err
+			}
 			bc.processNewBlock(header)
 		}
 	})

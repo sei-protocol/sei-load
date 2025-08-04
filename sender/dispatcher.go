@@ -3,14 +3,14 @@ package sender
 import (
 	"context"
 	"fmt"
+	"golang.org/x/time/rate"
+	"log"
 	"sync"
 	"time"
-	"log"
-	"golang.org/x/time/rate"
 
-	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // Dispatcher continuously generates transactions and dispatches them to the sender
@@ -20,7 +20,7 @@ type Dispatcher struct {
 	sender     TxSender
 
 	// Configuration
-	limiter  *rate.Limiter
+	limiter *rate.Limiter
 
 	// Statistics
 	totalSent uint64
@@ -33,7 +33,7 @@ func NewDispatcher(gen generator.Generator, sender TxSender) *Dispatcher {
 	return &Dispatcher{
 		generator: gen,
 		sender:    sender,
-		limiter: rate.NewLimiter(rate.Inf, 1), // No rate limiting by default
+		limiter:   rate.NewLimiter(rate.Inf, 1), // No rate limiting by default
 	}
 }
 
@@ -41,7 +41,7 @@ func NewDispatcher(gen generator.Generator, sender TxSender) *Dispatcher {
 func (d *Dispatcher) SetRateLimit(duration time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.limiter = rate.NewLimiter(rate.Every(duration),1)
+	d.limiter = rate.NewLimiter(rate.Every(duration), 1)
 }
 
 // SetStatsCollector sets the statistics collector for this dispatcher
@@ -65,7 +65,9 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 	d.mu.RUnlock()
 
 	gen, ok := prewarmGen.Get()
-	if !ok { return nil } // No prewarming configured
+	if !ok {
+		return nil
+	} // No prewarming configured
 
 	log.Print("🔥 Starting account prewarming...")
 	processedAccounts := 0
@@ -103,7 +105,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	d.mu.RUnlock()
 
 	for {
-		if err:=limiter.Wait(ctx); err!=nil {
+		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
 		// Generate a transaction from main generator
@@ -116,7 +118,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {
 			return err
-		} 
+		}
 		d.mu.Lock()
 		d.totalSent++
 		d.mu.Unlock()
@@ -132,7 +134,7 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 	limiter := d.limiter
 	d.mu.RUnlock()
 	for i := range count {
-		if err:=limiter.Wait(ctx); err!=nil {
+		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
 		// Generate a transaction

@@ -2,10 +2,10 @@ package stats
 
 import (
 	"context"
+	"github.com/sei-protocol/sei-load/utils"
 	"log"
 	"sync"
 	"time"
-	"github.com/sei-protocol/sei-load/utils"
 )
 
 // Logger handles periodic statistics logging and dry-run transaction printing
@@ -32,7 +32,7 @@ func NewLogger(collector *Collector, interval time.Duration, debug bool) *Logger
 func (l *Logger) Run(ctx context.Context) error {
 	ticker := time.NewTicker(l.interval)
 	for {
-		if _,err := utils.Recv(ctx, ticker.C); err != nil {
+		if _, err := utils.Recv(ctx, ticker.C); err != nil {
 			return err
 		}
 		l.logCurrentStats()
