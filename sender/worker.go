@@ -193,6 +193,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	// Limit read to prevent memory issues with large responses
 	_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
 	if err != nil && err != io.EOF {
+		log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
 		// Log but don't fail - this is just for connection reuse
 	}
 

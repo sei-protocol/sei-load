@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/sei-protocol/sei-load/utils"
 	"log"
-	"sync"
 	"time"
 )
 
@@ -13,10 +12,6 @@ type Logger struct {
 	collector *Collector
 	interval  time.Duration
 	debug     bool
-
-	// Dry-run transaction logging
-	txCounter   uint64
-	txCounterMu sync.Mutex
 }
 
 // NewLogger creates a new statistics logger
