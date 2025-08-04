@@ -1,6 +1,6 @@
 package sender
 
-import "seiload/types"
+import "github.com/sei-protocol/sei-load/types"
 
 type TxSender interface {
 	Send(tx *types.LoadTx) error

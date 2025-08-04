@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"seiload/stats"
-	"seiload/types"
+	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 // Worker handles sending transactions to a specific endpoint

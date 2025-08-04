@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"seiload/config"
-	"seiload/generator"
-	"seiload/sender"
-	"seiload/stats"
+	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/generator"
+	"github.com/sei-protocol/sei-load/sender"
+	"github.com/sei-protocol/sei-load/stats"
 )
 
 var (

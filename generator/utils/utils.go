@@ -8,8 +8,8 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"seiload/config"
-	loadtypes "seiload/types"
+	"github.com/sei-protocol/sei-load/config"
+	loadtypes "github.com/sei-protocol/sei-load/types"
 )
 
 type DeployFunc[T any] func(
