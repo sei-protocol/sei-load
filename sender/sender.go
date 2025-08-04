@@ -1,7 +1,10 @@
 package sender
 
-import "github.com/sei-protocol/sei-load/types"
+import (
+	"context"
+	"github.com/sei-protocol/sei-load/types"
+)
 
 type TxSender interface {
-	Send(tx *types.LoadTx) error
+	Send(ctx context.Context, tx *types.LoadTx) error
 }

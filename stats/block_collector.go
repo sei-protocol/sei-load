@@ -6,18 +6,15 @@ import (
 	"log"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/sei-protocol/sei-load/utils"
+	"github.com/sei-protocol/sei-load/utils/service"
 )
 
-// BlockCollector subscribes to new blocks and tracks block metrics
-type BlockCollector struct {
-	mu sync.RWMutex
-
+type blockCollectorStats struct {
 	// Cumulative data (for final stats)
 	allBlockTimes []time.Duration // All block times
 	allGasUsed    []uint64        // All gas used values
@@ -28,246 +25,182 @@ type BlockCollector struct {
 	windowBlockTimes []time.Duration // Block times in current window
 	windowGasUsed    []uint64        // Gas used in current window
 	windowStart      time.Time       // Start of current window
+}
 
-	// WebSocket connection
-	client       *ethclient.Client
-	subscription ethereum.Subscription
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-
-	// Configuration
-	wsEndpoint string
-	running    bool
+// BlockCollector subscribes to new blocks and tracks block metrics
+type BlockCollector struct {
+	stats utils.Mutex[*blockCollectorStats]
 }
 
 // NewBlockCollector creates a new block data collector
-func NewBlockCollector(firstEndpoint string) *BlockCollector {
-	// Convert HTTP endpoint to WebSocket endpoint (8545 -> 8546)
-	wsEndpoint := strings.Replace(firstEndpoint, ":8545", ":8546", 1)
-	wsEndpoint = strings.Replace(wsEndpoint, "http://", "ws://", 1)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
+func NewBlockCollector() *BlockCollector {
 	return &BlockCollector{
-		allBlockTimes:    make([]time.Duration, 0),
-		allGasUsed:       make([]uint64, 0),
-		windowBlockTimes: make([]time.Duration, 0),
-		windowGasUsed:    make([]uint64, 0),
-		wsEndpoint:       wsEndpoint,
-		ctx:              ctx,
-		cancel:           cancel,
+		stats: utils.NewMutex(&blockCollectorStats{
+			allBlockTimes:    make([]time.Duration, 0),
+			allGasUsed:       make([]uint64, 0),
+			windowBlockTimes: make([]time.Duration, 0),
+			windowGasUsed:    make([]uint64, 0),
+		}),
 	}
 }
 
 // Start begins block subscription and data collection
-func (bc *BlockCollector) Start() error {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	if bc.running {
-		return fmt.Errorf("block collector already running")
-	}
-
-	// Connect to WebSocket endpoint
-	client, err := ethclient.Dial(bc.wsEndpoint)
-	if err != nil {
-		return fmt.Errorf("failed to connect to WebSocket endpoint %s: %v", bc.wsEndpoint, err)
-	}
-
-	bc.client = client
-	bc.running = true
-
-	// Start the subscription goroutine
-	bc.wg.Add(1)
-	go bc.subscribeToBlocks()
-	return nil
-}
-
-// Stop gracefully shuts down the block collector
-func (bc *BlockCollector) Stop() {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	if !bc.running {
-		return
-	}
-
-	bc.running = false
-	bc.cancel()
-
-	if bc.subscription != nil {
-		bc.subscription.Unsubscribe()
-	}
-
-	if bc.client != nil {
-		bc.client.Close()
-	}
-
-	bc.wg.Wait()
-	log.Printf("✅ Stopped block collector")
-}
-
-// subscribeToBlocks handles the WebSocket subscription to new blocks
-func (bc *BlockCollector) subscribeToBlocks() {
-	defer bc.wg.Done()
-
-	headers := make(chan *types.Header)
-	sub, err := bc.client.SubscribeNewHead(bc.ctx, headers)
-	if err != nil {
-		log.Printf("❌ Failed to subscribe to new blocks: %v", err)
-		return
-	}
-
-	bc.mu.Lock()
-	bc.subscription = sub
-	bc.mu.Unlock()
-
-	log.Printf("📡 Subscribed to new blocks on %s", bc.wsEndpoint)
-
-	for {
-		select {
-		case err := <-sub.Err():
-			log.Printf("❌ Block subscription error: %v", err)
-			return
-
-		case header := <-headers:
-			bc.processNewBlock(header)
-
-		case <-bc.ctx.Done():
-			return
+func (bc *BlockCollector) Run(ctx context.Context, firstEndpoint string) error {
+	// Convert HTTP endpoint to WebSocket endpoint (8545 -> 8546)
+	wsEndpoint := strings.Replace(firstEndpoint, ":8545", ":8546", 1)
+	wsEndpoint = strings.Replace(wsEndpoint, "http://", "ws://", 1)
+	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+		// Connect to WebSocket endpoint
+		client, err := ethclient.Dial(wsEndpoint)
+		if err != nil {
+			return fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", wsEndpoint, err)
 		}
-	}
+		headers := make(chan *types.Header)
+		sub, err := client.SubscribeNewHead(ctx, headers)
+		if err != nil {
+			return fmt.Errorf("❌ Failed to subscribe to new blocks: %w", err)
+		}
+		defer sub.Unsubscribe()
+		s.SpawnBg(func() error {
+			subErr,err := utils.Recv(ctx, sub.Err())
+			if err != nil { return err }
+			return subErr
+		})
+		log.Printf("📡 Subscribed to new blocks on %s", wsEndpoint)
+		for {
+			header,err := utils.Recv(ctx, headers)
+			if err != nil { return err }
+			bc.processNewBlock(header)
+		}
+	})
 }
 
 // processNewBlock processes a new block header and updates metrics
 func (bc *BlockCollector) processNewBlock(header *types.Header) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
+	for stats := range bc.stats.Lock() {
+		now := time.Now()
+		blockNum := header.Number.Uint64()
+		gasUsed := header.GasUsed
 
-	now := time.Now()
-	blockNum := header.Number.Uint64()
-	gasUsed := header.GasUsed
+		// Update max block number
+		if blockNum > stats.maxBlockNum {
+			stats.maxBlockNum = blockNum
+		}
 
-	// Update max block number
-	if blockNum > bc.maxBlockNum {
-		bc.maxBlockNum = blockNum
-	}
+		// Track gas used
+		stats.allGasUsed = append(stats.allGasUsed, gasUsed)
+		stats.windowGasUsed = append(stats.windowGasUsed, gasUsed)
 
-	// Track gas used
-	bc.allGasUsed = append(bc.allGasUsed, gasUsed)
-	bc.windowGasUsed = append(bc.windowGasUsed, gasUsed)
+		// Calculate time between blocks
+		if !stats.lastBlockTime.IsZero() {
+			timeBetween := now.Sub(stats.lastBlockTime)
+			stats.allBlockTimes = append(stats.allBlockTimes, timeBetween)
+			stats.windowBlockTimes = append(stats.windowBlockTimes, timeBetween)
+		}
 
-	// Calculate time between blocks
-	if !bc.lastBlockTime.IsZero() {
-		timeBetween := now.Sub(bc.lastBlockTime)
-		bc.allBlockTimes = append(bc.allBlockTimes, timeBetween)
-		bc.windowBlockTimes = append(bc.windowBlockTimes, timeBetween)
-	}
+		stats.lastBlockTime = now
 
-	bc.lastBlockTime = now
-
-	// Limit history to prevent memory growth (keep last 1000 entries)
-	if len(bc.allBlockTimes) > 1000 {
-		bc.allBlockTimes = bc.allBlockTimes[len(bc.allBlockTimes)-1000:]
-	}
-	if len(bc.allGasUsed) > 1000 {
-		bc.allGasUsed = bc.allGasUsed[len(bc.allGasUsed)-1000:]
-	}
-	if len(bc.windowBlockTimes) > 1000 {
-		bc.windowBlockTimes = bc.windowBlockTimes[len(bc.windowBlockTimes)-1000:]
-	}
-	if len(bc.windowGasUsed) > 1000 {
-		bc.windowGasUsed = bc.windowGasUsed[len(bc.windowGasUsed)-1000:]
+		// Limit history to prevent memory growth (keep last 1000 entries)
+		if len(stats.allBlockTimes) > 1000 {
+			stats.allBlockTimes = stats.allBlockTimes[len(stats.allBlockTimes)-1000:]
+		}
+		if len(stats.allGasUsed) > 1000 {
+			stats.allGasUsed = stats.allGasUsed[len(stats.allGasUsed)-1000:]
+		}
+		if len(stats.windowBlockTimes) > 1000 {
+			stats.windowBlockTimes = stats.windowBlockTimes[len(stats.windowBlockTimes)-1000:]
+		}
+		if len(stats.windowGasUsed) > 1000 {
+			stats.windowGasUsed = stats.windowGasUsed[len(stats.windowGasUsed)-1000:]
+		}
 	}
 }
 
 // GetBlockStats returns current block statistics
 func (bc *BlockCollector) GetBlockStats() BlockStats {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	for bc := range bc.stats.Lock() {
+		stats := BlockStats{
+			MaxBlockNumber: bc.maxBlockNum,
+			SampleCount:    len(bc.allBlockTimes),
+		}
 
-	stats := BlockStats{
-		MaxBlockNumber: bc.maxBlockNum,
-		SampleCount:    len(bc.allBlockTimes),
+		// Calculate block time percentiles
+		if len(bc.allBlockTimes) > 0 {
+			sortedTimes := make([]time.Duration, len(bc.allBlockTimes))
+			copy(sortedTimes, bc.allBlockTimes)
+			sort.Slice(sortedTimes, func(i, j int) bool {
+				return sortedTimes[i] < sortedTimes[j]
+			})
+
+			stats.P50BlockTime = calculatePercentile(sortedTimes, 50)
+			stats.P99BlockTime = calculatePercentile(sortedTimes, 99)
+			stats.MaxBlockTime = sortedTimes[len(sortedTimes)-1]
+		}
+
+		// Calculate gas used percentiles
+		if len(bc.allGasUsed) > 0 {
+			sortedGas := make([]uint64, len(bc.allGasUsed))
+			copy(sortedGas, bc.allGasUsed)
+			sort.Slice(sortedGas, func(i, j int) bool {
+				return sortedGas[i] < sortedGas[j]
+			})
+
+			stats.P50GasUsed = calculateGasPercentile(sortedGas, 50)
+			stats.P99GasUsed = calculateGasPercentile(sortedGas, 99)
+			stats.MaxGasUsed = sortedGas[len(sortedGas)-1]
+		}
+
+		return stats
 	}
-
-	// Calculate block time percentiles
-	if len(bc.allBlockTimes) > 0 {
-		sortedTimes := make([]time.Duration, len(bc.allBlockTimes))
-		copy(sortedTimes, bc.allBlockTimes)
-		sort.Slice(sortedTimes, func(i, j int) bool {
-			return sortedTimes[i] < sortedTimes[j]
-		})
-
-		stats.P50BlockTime = calculatePercentile(sortedTimes, 50)
-		stats.P99BlockTime = calculatePercentile(sortedTimes, 99)
-		stats.MaxBlockTime = sortedTimes[len(sortedTimes)-1]
-	}
-
-	// Calculate gas used percentiles
-	if len(bc.allGasUsed) > 0 {
-		sortedGas := make([]uint64, len(bc.allGasUsed))
-		copy(sortedGas, bc.allGasUsed)
-		sort.Slice(sortedGas, func(i, j int) bool {
-			return sortedGas[i] < sortedGas[j]
-		})
-
-		stats.P50GasUsed = calculateGasPercentile(sortedGas, 50)
-		stats.P99GasUsed = calculateGasPercentile(sortedGas, 99)
-		stats.MaxGasUsed = sortedGas[len(sortedGas)-1]
-	}
-
-	return stats
+	panic("unreachable")
 }
 
 // GetWindowBlockStats returns current window-based block statistics
 func (bc *BlockCollector) GetWindowBlockStats() BlockStats {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	for bc := range bc.stats.Lock() {
+		stats := BlockStats{
+			MaxBlockNumber: bc.maxBlockNum,
+			SampleCount:    len(bc.windowBlockTimes),
+		}
 
-	stats := BlockStats{
-		MaxBlockNumber: bc.maxBlockNum,
-		SampleCount:    len(bc.windowBlockTimes),
+		// Calculate block time percentiles for current window
+		if len(bc.windowBlockTimes) > 0 {
+			sortedTimes := make([]time.Duration, len(bc.windowBlockTimes))
+			copy(sortedTimes, bc.windowBlockTimes)
+			sort.Slice(sortedTimes, func(i, j int) bool {
+				return sortedTimes[i] < sortedTimes[j]
+			})
+
+			stats.P50BlockTime = calculatePercentile(sortedTimes, 50)
+			stats.P99BlockTime = calculatePercentile(sortedTimes, 99)
+			stats.MaxBlockTime = sortedTimes[len(sortedTimes)-1]
+		}
+
+		// Calculate gas used percentiles for current window
+		if len(bc.windowGasUsed) > 0 {
+			sortedGas := make([]uint64, len(bc.windowGasUsed))
+			copy(sortedGas, bc.windowGasUsed)
+			sort.Slice(sortedGas, func(i, j int) bool {
+				return sortedGas[i] < sortedGas[j]
+			})
+
+			stats.P50GasUsed = calculateGasPercentile(sortedGas, 50)
+			stats.P99GasUsed = calculateGasPercentile(sortedGas, 99)
+			stats.MaxGasUsed = sortedGas[len(sortedGas)-1]
+		}
+
+		return stats
 	}
-
-	// Calculate block time percentiles for current window
-	if len(bc.windowBlockTimes) > 0 {
-		sortedTimes := make([]time.Duration, len(bc.windowBlockTimes))
-		copy(sortedTimes, bc.windowBlockTimes)
-		sort.Slice(sortedTimes, func(i, j int) bool {
-			return sortedTimes[i] < sortedTimes[j]
-		})
-
-		stats.P50BlockTime = calculatePercentile(sortedTimes, 50)
-		stats.P99BlockTime = calculatePercentile(sortedTimes, 99)
-		stats.MaxBlockTime = sortedTimes[len(sortedTimes)-1]
-	}
-
-	// Calculate gas used percentiles for current window
-	if len(bc.windowGasUsed) > 0 {
-		sortedGas := make([]uint64, len(bc.windowGasUsed))
-		copy(sortedGas, bc.windowGasUsed)
-		sort.Slice(sortedGas, func(i, j int) bool {
-			return sortedGas[i] < sortedGas[j]
-		})
-
-		stats.P50GasUsed = calculateGasPercentile(sortedGas, 50)
-		stats.P99GasUsed = calculateGasPercentile(sortedGas, 99)
-		stats.MaxGasUsed = sortedGas[len(sortedGas)-1]
-	}
-
-	return stats
+	panic("unreachable")
 }
 
 // ResetWindowStats resets the window-based statistics for the next reporting period
 func (bc *BlockCollector) ResetWindowStats() {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	bc.windowBlockTimes = make([]time.Duration, 0)
-	bc.windowGasUsed = make([]uint64, 0)
-	bc.windowStart = time.Now()
+	for bc := range bc.stats.Lock() {
+		bc.windowBlockTimes = make([]time.Duration, 0)
+		bc.windowGasUsed = make([]uint64, 0)
+		bc.windowStart = time.Now()
+	}
 }
 
 // calculateGasPercentile calculates the given percentile from sorted gas values

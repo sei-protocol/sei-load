@@ -98,12 +98,6 @@ func (ms *MockServer) Close() {
 	ms.server.Close()
 }
 
-// TestShardedSenderWithMockServers tests the sharded sender with mock HTTP servers
-func TestShardedSenderWithMockServers(t *testing.T) {
-	// Skip this test to avoid hanging - it requires actual HTTP servers
-	t.Skip("Skipping integration test that requires HTTP servers - use unit tests instead")
-}
-
 // TestShardDistributionVerification tests that specific transactions go to expected shards
 func TestShardDistributionVerification(t *testing.T) {
 	// Test shard distribution logic without network operations or scenario deployment

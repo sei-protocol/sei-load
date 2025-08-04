@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sei-protocol/sei-load/utils/service"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"github.com/sei-protocol/sei-load/utils/service"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +18,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 var (
@@ -45,7 +46,7 @@ to multiple endpoints with account pooling management.
 Use --dry-run to test configuration and view transaction details 
 without actually sending requests or deploying contracts.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err:=runLoadTest(context.Background(),cmd,args); err != nil {
+		if err := runLoadTest(context.Background(), cmd, args); err != nil {
 			log.Fatal(err)
 		}
 	},
@@ -135,10 +136,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create and start block collector if endpoints are available
 		var blockCollector *stats.BlockCollector
 		if len(cfg.Endpoints) > 0 && trackBlocks {
-			blockCollector = stats.NewBlockCollector(cfg.Endpoints[0])
+			blockCollector = stats.NewBlockCollector()
 			collector.SetBlockCollector(blockCollector)
 			s.SpawnBgNamed("block collector", func() error {
-				return blockCollector.Run(ctx)
+				return blockCollector.Run(ctx, cfg.Endpoints[0])
 			})
 		}
 
@@ -168,28 +169,20 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 
 		// Set statistics collector for dispatcher
-		dispatcher.SetStatsCollector(collector, logger)
+		dispatcher.SetStatsCollector(collector)
 
 		// Set up prewarming if enabled
 		if prewarm {
-			log.Println("🔥 Creating prewarm generator...")
+			log.Printf("🔥 Creating prewarm generator...")
 			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
 			dispatcher.SetPrewarmGenerator(prewarmGen)
-			log.Println("✅ Prewarm generator ready")
+			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
 		}
 
 		// Start the sender (starts all workers)
 		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
 		log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
-
-		// Start block collector if enabled
-		if trackBlocks {
-			blockCollector = stats.NewBlockCollector(cfg.Endpoints[0])
-			collector.SetBlockCollector(blockCollector)
-			s.SpawnBgNamed("block collector", func() error { return blockCollector.Run(ctx) })
-			log.Println("✅ Started block collector")
-		}
 
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if prewarm {
@@ -200,11 +193,11 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Start logger (after prewarming to capture only main load test metrics)
 		s.SpawnBgNamed("logger", func() error { return logger.Run(ctx) })
-		log.Println("✅ Started statistics logger")
+		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
 		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx) })
-		log.Println("✅ Started dispatcher")
+		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown
 		sigChan := make(chan os.Signal, 1)
@@ -223,10 +216,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		if trackBlocks {
 			log.Printf("📝 Track blocks mode: Block data will be collected")
 		}
-		log.Println(strings.Repeat("=", 60))
+		log.Print(strings.Repeat("=", 60))
 
 		// Main loop - wait for shutdown signal
-		if _,err:=utils.Recv(ctx, sigChan); err!=nil {
+		if _, err := utils.Recv(ctx, sigChan); err != nil {
 			return err
 		}
 		log.Print("\n🛑 Received shutdown signal, stopping gracefully...")
