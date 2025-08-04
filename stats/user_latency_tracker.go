@@ -2,6 +2,7 @@ package stats
 
 import (
 	"context"
+	"github.com/sei-protocol/sei-load/utils"
 	"log"
 	"math/big"
 	"sort"
@@ -39,14 +40,12 @@ func (ult *UserLatencyTracker) Run(ctx context.Context, endpoint string) error {
 	defer client.Close()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if err := ult.trackLatency(ctx, client); err != nil {
-				log.Printf("User latency tracker: Error tracking latency: %v", err)
-				// Continue on error - don't stop the tracker
-			}
+		if _, err := utils.Recv(ctx, ticker.C); err != nil {
+			return err
+		}
+		if err := ult.trackLatency(ctx, client); err != nil {
+			log.Printf("User latency tracker: Error tracking latency: %v", err)
+			// Continue on error - don't stop the tracker
 		}
 	}
 }

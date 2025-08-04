@@ -133,7 +133,7 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 	d.mu.RLock()
 	limiter := d.limiter
 	d.mu.RUnlock()
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
