@@ -44,7 +44,11 @@ to multiple endpoints with account pooling management.
 
 Use --dry-run to test configuration and view transaction details 
 without actually sending requests or deploying contracts.`,
-	Run: runLoadTest,
+	Run: func(cmd *cobra.Command, args []string) {
+		if err:=runLoadTest(context.Background(),cmd,args); err != nil {
+			log.Fatal(err)
+		}
+	},
 }
 
 func init() {
@@ -74,45 +78,48 @@ func main() {
 	}
 }
 
-func runLoadTest(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
-	err := service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		// Parse the config file into a config.LoadConfig struct
-		cfg, err := loadConfig(configFile)
-		if err != nil {
-			return fmt.Errorf("Failed to load config: %w", err)
-		}
+func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
+	// Parse the config file into a config.LoadConfig struct
+	cfg, err := loadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("Failed to load config: %w", err)
+	}
 
-		log.Printf("🚀 Starting Sei Chain Load Test v2")
-		log.Printf("📁 Config file: %s", configFile)
-		log.Printf("🎯 Endpoints: %d", len(cfg.Endpoints))
-		log.Printf("👥 Workers per endpoint: %d", workers)
-		log.Printf("🔧 Total workers: %d", len(cfg.Endpoints)*workers)
-		log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
-		log.Printf("⏱️  Stats interval: %v", statsInterval)
-		log.Printf("📦 Buffer size per worker: %d", bufferSize)
-		if tps > 0 {
-			log.Printf("📈 Transactions per second: %.2f", tps)
-		}
-		if dryRun {
-			log.Printf("📝 Dry run: enabled")
-		}
-		if trackReceipts {
-			log.Printf("📝 Track receipts: enabled")
-		}
-		if trackBlocks {
-			log.Printf("📝 Track blocks: enabled")
-		}
-		if prewarm {
-			log.Printf("📝 Prewarm: enabled")
-		}
-		log.Println()
+	log.Printf("🚀 Starting Sei Chain Load Test v2")
+	log.Printf("📁 Config file: %s", configFile)
+	log.Printf("🎯 Endpoints: %d", len(cfg.Endpoints))
+	log.Printf("👥 Workers per endpoint: %d", workers)
+	log.Printf("🔧 Total workers: %d", len(cfg.Endpoints)*workers)
+	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
+	log.Printf("⏱️  Stats interval: %v", statsInterval)
+	log.Printf("📦 Buffer size per worker: %d", bufferSize)
+	if tps > 0 {
+		log.Printf("📈 Transactions per second: %.2f", tps)
+	}
+	if dryRun {
+		log.Printf("📝 Dry run: enabled")
+	}
+	if trackReceipts {
+		log.Printf("📝 Track receipts: enabled")
+	}
+	if trackBlocks {
+		log.Printf("📝 Track blocks: enabled")
+	}
+	if prewarm {
+		log.Printf("📝 Prewarm: enabled")
+	}
+	log.Println()
 
-		// Enable mock deployment in dry-run mode
-		if dryRun {
-			cfg.MockDeploy = true
-		}
+	// Enable mock deployment in dry-run mode
+	if dryRun {
+		cfg.MockDeploy = true
+	}
 
+	// Create statistics collector and logger
+	collector := stats.NewCollector()
+	logger := stats.NewLogger(collector, statsInterval, debug)
+
+	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Create the generator from the config struct
 		gen, err := generator.NewConfigBasedGenerator(cfg)
 		if err != nil {
@@ -125,19 +132,14 @@ func runLoadTest(cmd *cobra.Command, args []string) {
 			return fmt.Errorf("Failed to create sender: %w", err)
 		}
 
-		// Create statistics collector and logger
-		collector := stats.NewCollector()
-		logger := stats.NewLogger(collector, statsInterval, debug)
-
 		// Create and start block collector if endpoints are available
 		var blockCollector *stats.BlockCollector
 		if len(cfg.Endpoints) > 0 && trackBlocks {
 			blockCollector = stats.NewBlockCollector(cfg.Endpoints[0])
 			collector.SetBlockCollector(blockCollector)
-			// Start block collector
-			if err := blockCollector.Start(); err != nil {
-				log.Printf("⚠️  Failed to start block collector: %v", err)
-			}
+			s.SpawnBgNamed("block collector", func() error {
+				return blockCollector.Run(ctx)
+			})
 		}
 
 		// Enable dry-run mode in sender if specified
@@ -170,7 +172,7 @@ func runLoadTest(cmd *cobra.Command, args []string) {
 
 		// Set up prewarming if enabled
 		if prewarm {
-			fmt.Println("🔥 Creating prewarm generator...")
+			log.Println("🔥 Creating prewarm generator...")
 			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
 			dispatcher.SetPrewarmGenerator(prewarmGen)
 			log.Println("✅ Prewarm generator ready")
@@ -178,32 +180,30 @@ func runLoadTest(cmd *cobra.Command, args []string) {
 		}
 
 		// Start the sender (starts all workers)
-		snd.Start()
+		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
 		log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
 
 		// Start block collector if enabled
 		if trackBlocks {
 			blockCollector = stats.NewBlockCollector(cfg.Endpoints[0])
 			collector.SetBlockCollector(blockCollector)
-			if err := blockCollector.Start(); err != nil {
-				return fmt.Errorf("Failed to start block collector: %w", err)
-			}
+			s.SpawnBgNamed("block collector", func() error { return blockCollector.Run(ctx) })
 			log.Println("✅ Started block collector")
 		}
 
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if prewarm {
-			if err := dispatcher.Prewarm(); err != nil {
+			if err := dispatcher.Prewarm(ctx); err != nil {
 				return fmt.Errorf("Failed to prewarm accounts: %w", err)
 			}
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
-		logger.Start()
+		s.SpawnBgNamed("logger", func() error { return logger.Run(ctx) })
 		log.Println("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		dispatcher.Start()
+		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx) })
 		log.Println("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown
@@ -223,40 +223,19 @@ func runLoadTest(cmd *cobra.Command, args []string) {
 		if trackBlocks {
 			log.Printf("📝 Track blocks mode: Block data will be collected")
 		}
-		fmt.Println(strings.Repeat("=", 60))
+		log.Println(strings.Repeat("=", 60))
 
 		// Main loop - wait for shutdown signal
-		<-sigChan
-
-		log.Println("🛑 Received shutdown signal, stopping gracefully...")
-
-		// Stop block collector first
-		if blockCollector != nil {
-			blockCollector.Stop()
-			log.Println("✅ Stopped block collector")
+		if _,err:=utils.Recv(ctx, sigChan); err!=nil {
+			return err
 		}
-
-		// Stop statistics logger first
-		logger.Stop()
-		log.Println("✅ Stopped statistics logger")
-
-		// Stop dispatcher
-		dispatcher.Stop()
-		log.Println("✅ Stopped dispatcher")
-
-		// Stop sender and all workers
-		snd.Stop()
-		log.Println("✅ Stopped sender and workers")
-
-		// Print final statistics
-		logger.LogFinalStats()
-
-		log.Println("👋 Shutdown complete")
+		log.Print("\n🛑 Received shutdown signal, stopping gracefully...")
 		return nil
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Print final statistics
+	logger.LogFinalStats()
+	log.Printf("👋 Shutdown complete")
+	return err
 }
 
 // loadConfig reads and parses the configuration file
