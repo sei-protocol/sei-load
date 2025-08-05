@@ -73,9 +73,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		// Start multiple worker goroutines that share the same channel
 		client := newHttpClient()
 		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx, client) })
+			s.Spawn(func() error { return w.sendTransactions(ctx, client) })
 		}
-		return w.watchTransactions(ctx)
+		return w.waitForReceipts(ctx)
 	})
 }
 
@@ -99,7 +99,7 @@ func (w *Worker) SetTrackReceipts(trackReceipts bool) {
 	w.trackReceipts = trackReceipts
 }
 
-func (w *Worker) watchTransactions(ctx context.Context) error {
+func (w *Worker) waitForReceipts(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
@@ -145,21 +145,23 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 	}
 }
 
-// processTransactions is the main worker loop that processes transactions
-func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
+// sendTransactions is the main worker loop that processes transactions
+func (w *Worker) sendTransactions(ctx context.Context, client *http.Client) error {
 	for {
 		tx, err := utils.Recv(ctx, w.txChan)
 		if err != nil {
 			return err
 		}
 		startTime := time.Now()
+		// TODO: we cannot afford losing transactions due to nonce gaps.
+		// Consider retries though.
 		err = w.sendTransaction(ctx, client, tx)
+		if err!=nil {
+			return fmt.Errorf("w.sendTransaction(): %w",err)
+		}
 		// Record statistics if collector is available
 		if w.collector != nil {
 			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err == nil)
-		}
-		if err != nil {
-			log.Printf("%v", err)
 		}
 	}
 }
