@@ -3,6 +3,7 @@ package generator
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -166,11 +167,19 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 	// Create weighted configurations
 	var weightedConfigs []*WeightedCfg
 	for _, instance := range g.instances {
+		if instance.Weight == 0 {
+			log.Printf("Skipping scenario %s with weight 0", instance.Name)
+			continue
+		}
 		// Create a scenarioGenerator for this scenario instance
 		gen := NewScenarioGenerator(instance.Accounts, instance.Scenario)
 
 		// Add to weighted config with the specified weight
 		weightedConfigs = append(weightedConfigs, WeightedConfig(instance.Weight, gen))
+	}
+
+	if len(weightedConfigs) == 0 {
+		return nil, fmt.Errorf("no scenario instances created (define some scenarios)")
 	}
 
 	// Create and return the weighted scenarioGenerator
