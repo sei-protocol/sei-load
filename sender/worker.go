@@ -3,6 +3,7 @@ package sender
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"golang.org/x/time/rate"
 
@@ -111,7 +113,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
 	}
-	for {
+	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
 			return err
@@ -122,17 +124,19 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 			log.Printf("❌ %v", err)
 		}
 	}
+	return ctx.Err()
 }
 
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
-	for {
+	defer ticker.Stop()
+	for ctx.Err() == nil {
 		if _, err := utils.Recv(ctx, ticker.C); err != nil {
 			return fmt.Errorf("timeout waiting for receipt for tx %s", tx.EthTx.Hash().Hex())
 		}
-		receipt, err := eth.TransactionReceipt(context.Background(), tx.EthTx.Hash())
+		receipt, err := eth.TransactionReceipt(ctx, tx.EthTx.Hash())
 		if err != nil {
-			if err.Error() == "not found" {
+			if errors.Is(err, ethereum.NotFound) {
 				continue
 			}
 			log.Printf("❌ error getting receipt for tx %s: %v", tx.EthTx.Hash().Hex(), err)
@@ -147,11 +151,12 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		}
 		return nil
 	}
+	return ctx.Err()
 }
 
 // processTransactions is the main worker loop that processes transactions
 func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
-	for {
+	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.txChan)
 		if err != nil {
 			return err
@@ -174,6 +179,7 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 			log.Printf("%v", err)
 		}
 	}
+	return ctx.Err()
 }
 
 // sendTransaction sends a single transaction to the endpoint

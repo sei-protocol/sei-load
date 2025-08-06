@@ -69,13 +69,14 @@ func (bc *BlockCollector) Run(ctx context.Context, firstEndpoint string) error {
 			return subErr
 		})
 		log.Printf("📡 Subscribed to new blocks on %s", wsEndpoint)
-		for {
+		for ctx.Err() == nil {
 			header, err := utils.Recv(ctx, headers)
 			if err != nil {
 				return err
 			}
 			bc.processNewBlock(header)
 		}
+		return ctx.Err()
 	})
 }
 

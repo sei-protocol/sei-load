@@ -2,9 +2,10 @@ package generator
 
 import (
 	"context"
-	"github.com/sei-protocol/sei-load/types"
 	"math/rand"
 	"sync"
+
+	"github.com/sei-protocol/sei-load/types"
 )
 
 // WeightedCfg is a configuration for a weighted scenarioGenerator.
@@ -32,7 +33,7 @@ func (w *weightedGenerator) GenerateInfinite(ctx context.Context) <-chan *types.
 	output := make(chan *types.LoadTx, 10000)
 	go func() {
 		defer close(output)
-		for {
+		for ctx.Err() == nil {
 			select {
 			case <-ctx.Done():
 				return
