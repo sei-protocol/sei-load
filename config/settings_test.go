@@ -1,13 +1,14 @@
 package config
 
 import (
-	"github.com/stretchr/testify/require"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 )
 
 func TestArgumentPrecedence(t *testing.T) {
@@ -71,13 +72,7 @@ func TestArgumentPrecedence(t *testing.T) {
 			viper.Reset()
 
 			// Create temporary config file
-			configFile, err := createTempConfigFile(t, tt.configContent)
-			if err != nil {
-				t.Fatalf("Failed to create temp config file: %v", err)
-			}
-			defer func() {
-				require.NoError(t, os.Remove(configFile))
-			}()
+			configFile := createTempConfigFile(t, tt.configContent)
 
 			// Create test command with flags
 			cmd := &cobra.Command{
@@ -99,34 +94,22 @@ func TestArgumentPrecedence(t *testing.T) {
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
 				cmd.SetArgs(tt.cliArgs)
-				if err := cmd.Execute(); err != nil {
-					t.Fatalf("Failed to parse CLI args: %v", err)
-				}
+				require.NoError(t, cmd.Execute(), "Failed to parse CLI args")
 			}
 
 			// Initialize Viper
-			if err := InitializeViper(cmd); err != nil {
-				t.Fatalf("Failed to initialize Viper: %v", err)
-			}
+			require.NoError(t, InitializeViper(cmd), "Failed to initialize Viper")
 
 			// Load config file
-			if err := LoadConfigFile(configFile); err != nil {
-				t.Fatalf("Failed to load config file: %v", err)
-			}
+			require.NoError(t, LoadConfigFile(configFile), "Failed to load config file")
 
 			// Resolve settings
 			settings := ResolveSettings()
 
 			// Verify expectations
-			if settings.StatsInterval != tt.expectedStats {
-				t.Errorf("StatsInterval: expected %v, got %v", tt.expectedStats, settings.StatsInterval)
-			}
-			if settings.Workers != tt.expectedWorkers {
-				t.Errorf("Workers: expected %d, got %d", tt.expectedWorkers, settings.Workers)
-			}
-			if settings.TPS != tt.expectedTPS {
-				t.Errorf("TPS: expected %f, got %f", tt.expectedTPS, settings.TPS)
-			}
+			require.Equal(t, tt.expectedStats, settings.StatsInterval, "StatsInterval: expected %v, got %v", tt.expectedStats, settings.StatsInterval)
+			require.Equal(t, tt.expectedWorkers, settings.Workers, "Workers: expected %d, got %d", tt.expectedWorkers, settings.Workers)
+			require.Equal(t, tt.expectedTPS, settings.TPS, "TPS: expected %f, got %f", tt.expectedTPS, settings.TPS)
 		})
 	}
 }
@@ -153,22 +136,10 @@ func TestDefaultSettings(t *testing.T) {
 }
 
 // Helper function to create temporary config files for testing
-func createTempConfigFile(t *testing.T, content string) (string, error) {
-	tmpFile, err := os.CreateTemp("", "test-config-*.json")
-	if err != nil {
-		return "", err
-	}
-
-	if _, err := tmpFile.WriteString(content); err != nil {
-		require.NoError(t, tmpFile.Close())
-		require.NoError(t, os.Remove(tmpFile.Name()))
-		return "", err
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		require.NoError(t, os.Remove(tmpFile.Name()))
-		return "", err
-	}
-
-	return tmpFile.Name(), nil
+func createTempConfigFile(t *testing.T, content string) string {
+	t.Helper()
+	destination := filepath.Join(t.TempDir(), "test-config.json")
+	err := os.WriteFile(destination, []byte(content), 0644)
+	require.NoError(t, err, "Failed to create temp config file: %v", err)
+	return destination
 }
