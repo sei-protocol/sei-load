@@ -3,10 +3,8 @@ package sender
 import (
 	"context"
 	"fmt"
-	"golang.org/x/time/rate"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/stats"
@@ -19,9 +17,6 @@ type Dispatcher struct {
 	prewarmGen utils.Option[generator.Generator] // Optional prewarm generator
 	sender     TxSender
 
-	// Configuration
-	limiter *rate.Limiter
-
 	// Statistics
 	totalSent uint64
 	mu        sync.RWMutex
@@ -33,15 +28,7 @@ func NewDispatcher(gen generator.Generator, sender TxSender) *Dispatcher {
 	return &Dispatcher{
 		generator: gen,
 		sender:    sender,
-		limiter:   rate.NewLimiter(rate.Inf, 1), // No rate limiting by default
 	}
-}
-
-// SetRateLimit sets the minimum time between transaction generations
-func (d *Dispatcher) SetRateLimit(duration time.Duration) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.limiter = rate.NewLimiter(rate.Every(duration), 1)
 }
 
 // SetStatsCollector sets the statistics collector for this dispatcher
@@ -100,14 +87,7 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 
 // Start begins the dispatcher's transaction generation and sending loop
 func (d *Dispatcher) Run(ctx context.Context) error {
-	d.mu.RLock()
-	limiter := d.limiter
-	d.mu.RUnlock()
-
 	for {
-		if err := limiter.Wait(ctx); err != nil {
-			return err
-		}
 		// Generate a transaction from main generator
 		tx, ok := d.generator.Generate()
 		if !ok {
@@ -130,13 +110,7 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 	if count <= 0 {
 		return fmt.Errorf("count must be positive")
 	}
-	d.mu.RLock()
-	limiter := d.limiter
-	d.mu.RUnlock()
 	for i := range count {
-		if err := limiter.Wait(ctx); err != nil {
-			return err
-		}
 		// Generate a transaction
 		tx, ok := d.generator.Generate()
 		if !ok {

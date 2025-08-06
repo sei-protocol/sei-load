@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
@@ -24,20 +25,6 @@ import (
 var (
 	configFile string
 )
-
-// ResolvedSettings holds the final resolved settings after applying precedence
-type ResolvedSettings struct {
-	Workers          int
-	TPS              float64
-	StatsInterval    time.Duration
-	BufferSize       int
-	DryRun           bool
-	Debug            bool
-	TrackReceipts    bool
-	TrackBlocks      bool
-	TrackUserLatency bool
-	Prewarm          bool
-}
 
 var rootCmd = &cobra.Command{
 	Use:   "seiload",
@@ -149,8 +136,20 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
 
+		// Create shared rate limiter for all workers if TPS is specified
+		var sharedLimiter *rate.Limiter
+		if settings.TPS > 0 {
+			// Convert TPS to interval: 1/tps seconds = (1/tps) * 1e9 nanoseconds
+			intervalNs := int64((1.0 / settings.TPS) * 1e9)
+			sharedLimiter = rate.NewLimiter(rate.Every(time.Duration(intervalNs)), 1)
+			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", settings.TPS)
+		} else {
+			// No rate limiting
+			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
+		}
+
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers)
+		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
@@ -192,11 +191,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Create dispatcher
 		dispatcher := sender.NewDispatcher(gen, snd)
-		if settings.TPS > 0 {
-			// Convert TPS to interval: 1/tps seconds = (1/tps) * 1e9 nanoseconds
-			intervalNs := int64((1.0 / settings.TPS) * 1e9)
-			dispatcher.SetRateLimit(time.Duration(intervalNs))
-		}
 
 		// Set statistics collector for dispatcher
 		dispatcher.SetStatsCollector(collector)
