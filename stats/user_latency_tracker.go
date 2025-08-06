@@ -28,7 +28,7 @@ func NewUserLatencyTracker(interval time.Duration) *UserLatencyTracker {
 func (ult *UserLatencyTracker) Run(ctx context.Context, endpoint string) error {
 	// Create ticker for the configured interval
 	ticker := time.NewTicker(ult.interval)
-
+	defer ticker.Stop()
 	// Connect to the endpoint
 	client, err := ethclient.Dial(endpoint)
 	if err != nil {
@@ -36,7 +36,7 @@ func (ult *UserLatencyTracker) Run(ctx context.Context, endpoint string) error {
 	}
 	defer client.Close()
 
-	for {
+	for ctx.Err() == nil {
 		if _, err := utils.Recv(ctx, ticker.C); err != nil {
 			return err
 		}
@@ -45,6 +45,7 @@ func (ult *UserLatencyTracker) Run(ctx context.Context, endpoint string) error {
 			// Continue on error - don't stop the tracker
 		}
 	}
+	return ctx.Err()
 }
 
 // trackLatency fetches the latest block and calculates user latency statistics

@@ -61,7 +61,7 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 	logInterval := 100
 
 	// Run prewarm generator until completion
-	for {
+	for ctx.Err() == nil {
 		tx, ok := gen.Generate()
 		if !ok {
 			break // Prewarming is complete
@@ -87,7 +87,7 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 
 // Start begins the dispatcher's transaction generation and sending loop
 func (d *Dispatcher) Run(ctx context.Context) error {
-	for {
+	for ctx.Err() == nil {
 		// Generate a transaction from main generator
 		tx, ok := d.generator.Generate()
 		if !ok {
@@ -103,6 +103,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		d.totalSent++
 		d.mu.Unlock()
 	}
+	return ctx.Err()
 }
 
 // StartBatch generates and sends a specific number of transactions then stops
@@ -126,7 +127,7 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 			d.mu.Unlock()
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // GetStats returns dispatcher statistics
