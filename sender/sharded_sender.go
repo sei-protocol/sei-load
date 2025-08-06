@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	"golang.org/x/time/rate"
+
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
@@ -21,23 +23,25 @@ type ShardedSender struct {
 	mu         sync.RWMutex
 	collector  *stats.Collector
 	logger     *stats.Logger
+	limiter    *rate.Limiter // Shared rate limiter for all workers
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int) (*ShardedSender, error) {
+func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limiter *rate.Limiter) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
 
 	workerList := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
-		workerList[i] = NewWorker(i, endpoint, bufferSize, workers)
+		workerList[i] = NewWorker(i, endpoint, bufferSize, workers, limiter)
 	}
 
 	return &ShardedSender{
 		workers:    workerList,
 		numShards:  len(cfg.Endpoints),
 		bufferSize: bufferSize,
+		limiter:    limiter,
 	}, nil
 }
 

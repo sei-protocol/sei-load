@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/ethereum/go-ethereum/ethclient"
+	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
@@ -29,6 +31,7 @@ type Worker struct {
 	logger        *stats.Logger
 	workers       int
 	trackReceipts bool
+	limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
 
 func newHttpClient() *http.Client {
@@ -50,7 +53,7 @@ func newHttpClient() *http.Client {
 }
 
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(id int, endpoint string, bufferSize int, workers int) *Worker {
+func NewWorker(id int, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
 	return &Worker{
 		id:            id,
 		endpoint:      endpoint,
@@ -58,6 +61,7 @@ func NewWorker(id int, endpoint string, bufferSize int, workers int) *Worker {
 		sentTxs:       make(chan *types.LoadTx, bufferSize),
 		workers:       workers,
 		trackReceipts: false,
+		limiter:       limiter,
 	}
 }
 
@@ -152,6 +156,14 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 		if err != nil {
 			return err
 		}
+
+		// Apply rate limiting before sending the transaction
+		if w.limiter != nil {
+			if err := w.limiter.Wait(ctx); err != nil {
+				return err
+			}
+		}
+
 		startTime := time.Now()
 		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
