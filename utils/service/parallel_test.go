@@ -3,11 +3,13 @@ package service
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestParallelOk(t *testing.T) {
 	x := [10]int{}
-	if err := Parallel(func(s ParallelScope) error {
+	err := Parallel(func(s ParallelScope) error {
 		for i := range x {
 			s.Spawn(func() error {
 				x[i] = i
@@ -15,13 +17,10 @@ func TestParallelOk(t *testing.T) {
 			})
 		}
 		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 	for want, got := range x {
-		if want != got {
-			t.Fatalf("x[%d] = %d, want %d", want, got, want)
-		}
+		require.Equal(t, want, got, "x[%d] = %d, want %d", want, got, want)
 	}
 }
 
@@ -40,15 +39,11 @@ func TestParallelFail(t *testing.T) {
 		}
 		return nil
 	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want %v", err, wantErr)
-	}
+	require.ErrorIs(t, wantErr, err, "err = %v, want %v", err, wantErr)
 	for want, got := range x {
 		if want%2 == 0 {
 			want = 0
 		}
-		if want != got {
-			t.Fatalf("x[%d] = %d, want %d", want, got, want)
-		}
+		require.Equal(t, want, got, "x[%d] = %d, want %d", want, got, want)
 	}
 }
