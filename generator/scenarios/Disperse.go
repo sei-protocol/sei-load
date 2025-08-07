@@ -11,7 +11,7 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 )
 
-const Disperse = "Disperse"
+const Disperse = "disperse"
 
 // DisperseScenario implements the TxGenerator interface for Disperse contract operations
 type DisperseScenario struct {

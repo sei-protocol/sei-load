@@ -14,7 +14,7 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 )
 
-const ERC721 = "ERC721"
+const ERC721 = "erc721"
 
 // ERC721Scenario implements the TxGenerator interface for ERC721 contract operations
 type ERC721Scenario struct {

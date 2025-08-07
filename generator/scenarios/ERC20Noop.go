@@ -11,7 +11,7 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 )
 
-const ERC20Noop = "ERC20Noop"
+const ERC20Noop = "erc20noop"
 
 // ERC20NoopScenario implements the TxGenerator interface for ERC20Noop contract operations
 type ERC20NoopScenario struct {

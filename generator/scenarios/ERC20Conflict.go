@@ -11,7 +11,7 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 )
 
-const ERC20Conflict = "ERC20Conflict"
+const ERC20Conflict = "erc20conflict"
 
 // ERC20ConflictScenario implements the TxGenerator interface for ERC20Conflict contract operations
 type ERC20ConflictScenario struct {

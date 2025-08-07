@@ -39,7 +39,7 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 )
 
-const ${SCENARIO_CONST} = "${CONTRACT_NAME}"
+const ${SCENARIO_CONST} = "${CONTRACT_NAME,,}"
 
 // ${CONTRACT_NAME}Scenario implements the TxGenerator interface for ${CONTRACT_NAME} contract operations
 type ${CONTRACT_NAME}Scenario struct {

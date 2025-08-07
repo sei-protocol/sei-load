@@ -11,7 +11,7 @@ import (
 	types2 "github.com/sei-protocol/sei-load/types"
 )
 
-const EVMTransfer = "EVMTransfer"
+const EVMTransfer = "evmtransfer"
 
 // EVMTransferScenario implements the TxGenerator interface for simple ETH transfers
 type EVMTransferScenario struct {
