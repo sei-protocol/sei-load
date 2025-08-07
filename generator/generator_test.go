@@ -52,6 +52,6 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 
 	// Weight 2:3 → Expect ≈40:60 distribution (±10 allowed)
-	require.InDelta(t, 40, float64(scenarioCounts["ERC20"]), 10)
-	require.InDelta(t, 60, float64(scenarioCounts["EVMTransfer"]), 10)
+	require.InDelta(t, 40, float64(scenarioCounts[scenarios.ERC20]), 10)
+	require.InDelta(t, 60, float64(scenarioCounts[scenarios.EVMTransfer]), 10)
 }
