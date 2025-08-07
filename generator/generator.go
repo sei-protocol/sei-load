@@ -138,7 +138,7 @@ func (g *configBasedGenerator) deployAll() error {
 		instance.Deployed = true
 
 		if address.Cmp(common.Address{}) != 0 {
-			fmt.Printf("✅ Deployed %s at address: %s\n", instance.Name, address.Hex())
+			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
 
 		// Increment deployer nonce for next deployment

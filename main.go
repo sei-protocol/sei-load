@@ -118,7 +118,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if settings.TrackUserLatency {
 		log.Printf("📝 Track user latency: enabled")
 	}
-	log.Println()
 
 	// Enable mock deployment in dry-run mode
 	if settings.DryRun {

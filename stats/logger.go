@@ -2,6 +2,7 @@ package stats
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -141,19 +142,78 @@ func (l *Logger) logCurrentStats() {
 func (l *Logger) LogFinalStats() {
 	stats := l.collector.GetStats()
 
-	log.Print("\n=============================")
-	log.Print("FINAL LOAD TEST RESULTS")
-	log.Print("=============================")
-	log.Print(stats.FormatStats())
+	// Use fmt.Print for clean output without timestamps
+	fmt.Println()
+	fmt.Println("=============================")
+	fmt.Println("FINAL LOAD TEST RESULTS")
+	fmt.Println("=============================")
+	fmt.Println()
+
+	// Print load test statistics
+	duration := time.Since(stats.StartTime)
+	avgTPS := float64(stats.TotalTxs) / duration.Seconds()
+
+	fmt.Println("=== Load Test Statistics ===")
+	fmt.Printf("Runtime: %v | Total TXs: %d | Avg TPS: %.2f\n\n",
+		duration.Round(time.Second), stats.TotalTxs, avgTPS)
+
+	// Transaction counts by scenario
+	fmt.Println("Transaction Counts by Scenario:")
+	for scenario, endpoints := range stats.TxCounts {
+		fmt.Printf("  %s:\n", scenario)
+		for endpoint, count := range endpoints {
+			fmt.Printf("    %s: %d\n", endpoint, count)
+		}
+	}
+
+	// Endpoint performance
+	fmt.Println("\nEndpoint Performance:")
+	for endpoint, endpointStats := range stats.EndpointStats {
+		fmt.Printf("  %s:\n", endpoint)
+		fmt.Printf("    Latency P50: %v | P99: %v (samples: %d)\n",
+			endpointStats.P50Latency.Round(time.Millisecond),
+			endpointStats.P99Latency.Round(time.Millisecond),
+			endpointStats.SampleCount)
+		fmt.Printf("    TPS Current: %.2f | Max (10s): %.2f\n",
+			endpointStats.CurrentTPS, endpointStats.MaxTPS)
+		fmt.Printf("    Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
+			endpointStats.WindowTxCount,
+			endpointStats.WindowLatencySum.Round(time.Millisecond),
+			endpointStats.WindowLatencyCount)
+		fmt.Printf("    Window Max Latency: %v | Window Min Latency: %v\n",
+			endpointStats.WindowMaxLatency.Round(time.Millisecond),
+			endpointStats.WindowMinLatency.Round(time.Millisecond))
+		fmt.Printf("    Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
+			endpointStats.CumulativeMaxTPS,
+			endpointStats.CumulativeMaxLatency.Round(time.Millisecond))
+	}
+
+	// Overall TPS
+	fmt.Printf("\nOverall TPS: Current: %.2f | Max (10s): %.2f\n",
+		stats.OverallCurrentTPS, stats.OverallMaxTPS)
+
+	// Block stats
+	if stats.BlockStats != nil && stats.BlockStats.SampleCount > 0 {
+		fmt.Printf("\nBlock Statistics:\n")
+		fmt.Printf("  Height: %d | Samples: %d\n",
+			stats.BlockStats.MaxBlockNumber, stats.BlockStats.SampleCount)
+		fmt.Printf("  Block Times: P50=%v | P99=%v | Max=%v\n",
+			stats.BlockStats.P50BlockTime.Round(time.Millisecond),
+			stats.BlockStats.P99BlockTime.Round(time.Millisecond),
+			stats.BlockStats.MaxBlockTime.Round(time.Millisecond))
+		fmt.Printf("  Gas Usage: P50=%d | P99=%d | Max=%d\n",
+			stats.BlockStats.P50GasUsed,
+			stats.BlockStats.P99GasUsed,
+			stats.BlockStats.MaxGasUsed)
+	}
 
 	// Additional final statistics
-	duration := time.Since(stats.StartTime)
 	if duration.Seconds() > 0 {
-		log.Printf("\nOverall Performance Summary:")
-		log.Printf("  Total Runtime: %v", duration.Round(time.Second))
-		log.Printf("  Total Transactions: %d", stats.TotalTxs)
-		log.Printf("  Average TPS: %.2f", float64(stats.TotalTxs)/duration.Seconds())
-		log.Printf("  Max TPS: %.2f", stats.OverallMaxTPS)
+		fmt.Println("\nOverall Performance Summary:")
+		fmt.Printf("  Total Runtime: %v\n", duration.Round(time.Second))
+		fmt.Printf("  Total Transactions: %d\n", stats.TotalTxs)
+		fmt.Printf("  Average TPS: %.2f\n", float64(stats.TotalTxs)/duration.Seconds())
+		fmt.Printf("  Max TPS: %.2f\n", stats.OverallMaxTPS)
 
 		// Calculate total transactions per scenario
 		scenarioTotals := make(map[string]uint64)
@@ -165,27 +225,27 @@ func (l *Logger) LogFinalStats() {
 			scenarioTotals[scenario] = total
 		}
 
-		log.Printf("\nScenario Distribution:")
+		fmt.Println("\nScenario Distribution:")
 		for scenario, total := range scenarioTotals {
 			percentage := float64(total) / float64(stats.TotalTxs) * 100
-			log.Printf("  %s: %d (%.1f%%)", scenario, total, percentage)
+			fmt.Printf("  %s: %d (%.1f%%)\n", scenario, total, percentage)
 		}
 	}
 
 	// Print overall gas statistics if available (use cumulative data)
 	if cumulativeBlockStats := l.collector.GetCumulativeBlockStats(); cumulativeBlockStats != nil && cumulativeBlockStats.SampleCount > 0 {
-		log.Printf("\nOverall Gas Statistics:")
-		log.Printf("  Max Block Number: %d", cumulativeBlockStats.MaxBlockNumber)
-		log.Printf("  Block Times: p50=%v p99=%v max=%v",
+		fmt.Println("\nOverall Gas Statistics:")
+		fmt.Printf("  Max Block Number: %d\n", cumulativeBlockStats.MaxBlockNumber)
+		fmt.Printf("  Block Times: p50=%v p99=%v max=%v\n",
 			cumulativeBlockStats.P50BlockTime.Round(time.Millisecond),
 			cumulativeBlockStats.P99BlockTime.Round(time.Millisecond),
 			cumulativeBlockStats.MaxBlockTime.Round(time.Millisecond))
-		log.Printf("  Gas Usage: p50=%d p99=%d max=%d",
+		fmt.Printf("  Gas Usage: p50=%d p99=%d max=%d\n",
 			cumulativeBlockStats.P50GasUsed,
 			cumulativeBlockStats.P99GasUsed,
 			cumulativeBlockStats.MaxGasUsed)
-		log.Printf("  Block Samples: %d", cumulativeBlockStats.SampleCount)
+		fmt.Printf("  Block Samples: %d\n", cumulativeBlockStats.SampleCount)
 	}
 
-	log.Printf("==============================")
+	fmt.Println("==============================")
 }
