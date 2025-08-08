@@ -13,6 +13,8 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/stats"
@@ -24,6 +26,7 @@ import (
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
 	id            int
+	chainID       int64
 	endpoint      string
 	txChan        chan *types.LoadTx
 	sentTxs       chan *types.LoadTx
@@ -55,9 +58,10 @@ func newHttpClient() *http.Client {
 }
 
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(id int, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
-	return &Worker{
+func NewWorker(id int, chainID int64, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
+	w := &Worker{
 		id:            id,
+		chainID:       chainID,
 		endpoint:      endpoint,
 		txChan:        make(chan *types.LoadTx, bufferSize),
 		sentTxs:       make(chan *types.LoadTx, bufferSize),
@@ -65,6 +69,8 @@ func NewWorker(id int, endpoint string, bufferSize int, workers int, limiter *ra
 		trackReceipts: false,
 		limiter:       limiter,
 	}
+	meterWorkerQueueLength(w)
+	return w
 }
 
 // SetStatsCollector sets the statistics collector for this worker
@@ -127,7 +133,17 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) error {
+func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
+	defer func(start time.Time) {
+		metrics.receiptLatency.Record(ctx, time.Since(start).Seconds(),
+			metric.WithAttributes(
+				attribute.String("scenario", tx.Scenario.Name),
+				attribute.String("endpoint", w.endpoint),
+				attribute.Int("worker_id", w.id),
+				attribute.Int64("chain_id", w.chainID),
+				statusAttrFromError(_err)),
+		)
+	}(time.Now())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
@@ -183,7 +199,17 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) error {
+func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+	defer func(start time.Time) {
+		metrics.sendLatency.Record(ctx, time.Since(start).Seconds(),
+			metric.WithAttributes(
+				attribute.String("scenario", tx.Scenario.Name),
+				attribute.String("endpoint", w.endpoint),
+				attribute.Int("worker_id", w.id),
+				attribute.Int64("chain_id", w.chainID),
+				statusAttrFromError(_err)),
+		)
+	}(time.Now())
 	if w.dryRun {
 		// In dry-run mode, simulate processing time and mark as successful
 		// Use very minimal delay to avoid channel overflow
@@ -232,7 +258,8 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	return nil
 }
 
-// GetChannelLength returns the current length of the worker's channel (for monitoring)
+// GetChannelLength returns the current length of the worker's channel (for monitoring).
+// This function is safe for concurrent calls.
 func (w *Worker) GetChannelLength() int {
 	return len(w.txChan)
 }
