@@ -56,6 +56,7 @@ func init() {
 	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
+	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -91,6 +92,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	// Get resolved settings from the config package
 	settings := config.ResolveSettings()
+
+	// Handle --nodes flag to limit number of endpoints
+	nodes, _ := cmd.Flags().GetInt("nodes")
+	if nodes > 0 && nodes < len(cfg.Endpoints) {
+		log.Printf("🔧 Limiting endpoints from %d to %d nodes", len(cfg.Endpoints), nodes)
+		cfg.Endpoints = cfg.Endpoints[:nodes]
+	}
 
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
 	log.Printf("📁 Config file: %s", configFile)
