@@ -61,7 +61,7 @@ func init() {
 	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
-	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:8081", "The ip:port on which to export prometheus metrics.")
+	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
