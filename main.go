@@ -191,8 +191,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 			ramper := sender.NewRamper(&sender.RamperConfig{
 				IncrementTps: 100,
-				LoadTime:     30 * time.Second, // TODO: update
-				PauseTime:    10 * time.Second,
+				LoadTime:     120 * time.Second,
+				PauseTime:    30 * time.Second,
 			}, ramperBlockCollector, sharedLimiter)
 			s.SpawnBgNamed("ramper", func() error { return ramper.Run(ctx) })
 		}
