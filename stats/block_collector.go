@@ -241,7 +241,7 @@ type BlockStats struct {
 }
 
 // FormatBlockStats returns a formatted string representation of block statistics
-func (bs *BlockStats) FormatBlockStats() string {
+func (bs BlockStats) FormatBlockStats() string {
 	if bs.SampleCount == 0 {
 		return "block stats: no data available"
 	}
