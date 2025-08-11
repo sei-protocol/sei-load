@@ -5,7 +5,7 @@
     ],
     "accounts": {
       "count": 5000,
-      "newAccountRate": 1
+      "newAccountRate": 0.0
     },
     "scenarios": [
       {
