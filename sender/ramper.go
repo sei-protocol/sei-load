@@ -73,8 +73,7 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 				// we need to watch the monitoring endpoint for the SLO
 				// Add appropriate monitoring logic here with timeout/context respect
 				// check window stats
-				windowStats := r.blockCollector.GetWindowBlockStats()
-				if windowStats.P50BlockTime > 1*time.Second {
+				if r.blockCollector.GetWindowBlockTimePercentile(90) > 1*time.Second {
 					ch <- struct{}{}
 				}
 				time.Sleep(200 * time.Millisecond) // TODO: maybe this is too frequent?
