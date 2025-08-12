@@ -205,6 +205,18 @@ func (bc *BlockCollector) GetWindowBlockStats() BlockStats {
 	panic("unreachable")
 }
 
+func (bc *BlockCollector) GetWindowBlockTimePercentile(percentile int) time.Duration {
+	for bc := range bc.stats.Lock() {
+		sortedTimes := make([]time.Duration, len(bc.windowBlockTimes))
+		copy(sortedTimes, bc.windowBlockTimes)
+		sort.Slice(sortedTimes, func(i, j int) bool {
+			return sortedTimes[i] < sortedTimes[j]
+		})
+		return calculatePercentile(sortedTimes, percentile)
+	}
+	panic("unreachable")
+}
+
 // ResetWindowStats resets the window-based statistics for the next reporting period
 func (bc *BlockCollector) ResetWindowStats() {
 	for bc := range bc.stats.Lock() {
