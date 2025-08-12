@@ -180,8 +180,9 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 
 		// Apply rate limiting before sending the transaction
 		if w.limiter != nil {
-			if err := w.limiter.Wait(ctx); err != nil {
-				return err
+			if allow := w.limiter.Allow(); !allow {
+				time.Sleep(1 * time.Millisecond)
+				continue
 			}
 		}
 
