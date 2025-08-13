@@ -6,7 +6,9 @@ import (
 
 // LoadConfig stores the configuration for load-related settings.
 type LoadConfig struct {
-	ChainID    int64          `json:"chainId,omitempty"`
+	ChainID int64 `json:"chainId,omitempty"`
+	// SeiChainID is the textual chain ID used for tagging metric collection.
+	SeiChainID string         `json:"seiChainID,omitempty"`
 	Endpoints  []string       `json:"endpoints"`
 	Accounts   *AccountConfig `json:"accounts,omitempty"`
 	Scenarios  []Scenario     `json:"scenarios,omitempty"`
