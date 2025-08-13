@@ -62,7 +62,7 @@ func init() {
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
-	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:8081", "The ip:port on which to export prometheus metrics.")
+	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -283,8 +283,7 @@ func exportPrometheusMetrics(ctx context.Context, listenAddr string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create Prometheus exporter: %w", err)
 	}
-	provider := metric.NewMeterProvider(metric.WithReader(metricsExporter))
-	otel.SetMeterProvider(provider)
+	otel.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(metricsExporter)))
 	go func() {
 		defer func() { _ = metricsExporter.Shutdown(ctx) }()
 		http.Handle("/metrics", promhttp.Handler())
