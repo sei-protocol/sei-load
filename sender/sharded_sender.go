@@ -34,7 +34,7 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 
 	workerList := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
-		workerList[i] = NewWorker(i, endpoint, bufferSize, workers, limiter)
+		workerList[i] = NewWorker(i, cfg.ChainID, endpoint, bufferSize, workers, limiter)
 	}
 
 	return &ShardedSender{

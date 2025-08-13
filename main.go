@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
@@ -57,6 +62,7 @@ func init() {
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
+	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -130,6 +136,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// Enable mock deployment in dry-run mode
 	if settings.DryRun {
 		cfg.MockDeploy = true
+	}
+
+	listenAddr := cmd.Flag("metricsListenAddr").Value.String()
+	log.Printf("serving metrics at %s/metrics", listenAddr)
+
+	if err := exportPrometheusMetrics(ctx, listenAddr); err != nil {
+		return err
 	}
 
 	// Create statistics collector and logger
@@ -263,6 +276,24 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	logger.LogFinalStats()
 	log.Printf("👋 Shutdown complete")
 	return err
+}
+
+func exportPrometheusMetrics(ctx context.Context, listenAddr string) error {
+	metricsExporter, err := prometheus.New(prometheus.WithNamespace("seiload"))
+	if err != nil {
+		return fmt.Errorf("failed to create Prometheus exporter: %w", err)
+	}
+	otel.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(metricsExporter)))
+	go func() {
+		defer func() { _ = metricsExporter.Shutdown(ctx) }()
+		http.Handle("/metrics", promhttp.Handler())
+		err := http.ListenAndServe(listenAddr, nil)
+		if err != nil {
+			log.Printf("failed to serve metrics: %v", err)
+			return
+		}
+	}()
+	return nil
 }
 
 // loadConfig reads and parses the configuration file
