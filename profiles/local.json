@@ -1,5 +1,6 @@
 {
   "chainId": 713714,
+  "seiChainId": "loadtest-local",
   "endpoints": [
     "http://127.0.0.1:8545"
   ],

@@ -12,6 +12,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type blockCollectorStats struct {
@@ -29,12 +31,14 @@ type blockCollectorStats struct {
 
 // BlockCollector subscribes to new blocks and tracks block metrics
 type BlockCollector struct {
-	stats utils.Mutex[*blockCollectorStats]
+	seiChainID string
+	stats      utils.Mutex[*blockCollectorStats]
 }
 
 // NewBlockCollector creates a new block data collector
-func NewBlockCollector() *BlockCollector {
+func NewBlockCollector(seiChainID string) *BlockCollector {
 	return &BlockCollector{
+		seiChainID: seiChainID,
 		stats: utils.NewMutex(&blockCollectorStats{
 			allBlockTimes:    make([]time.Duration, 0),
 			allGasUsed:       make([]uint64, 0),
@@ -86,10 +90,10 @@ func (bc *BlockCollector) processNewBlock(header *types.Header) {
 		now := time.Now()
 		blockNum := header.Number.Uint64()
 		gasUsed := header.GasUsed
-		metrics.gasUsed.Record(context.Background(), int64(gasUsed))
+		metrics.gasUsed.Record(context.Background(), int64(gasUsed), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 		// Update max block number
 		if blockNum > stats.maxBlockNum {
-			metrics.blockNumber.Record(context.Background(), int64(blockNum))
+			metrics.blockNumber.Record(context.Background(), int64(blockNum), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.maxBlockNum = blockNum
 		}
 
@@ -100,7 +104,7 @@ func (bc *BlockCollector) processNewBlock(header *types.Header) {
 		// Calculate time between blocks
 		if !stats.lastBlockTime.IsZero() {
 			timeBetween := now.Sub(stats.lastBlockTime)
-			metrics.blockTime.Record(context.Background(), timeBetween.Seconds())
+			metrics.blockTime.Record(context.Background(), timeBetween.Seconds(), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.allBlockTimes = append(stats.allBlockTimes, timeBetween)
 			stats.windowBlockTimes = append(stats.windowBlockTimes, timeBetween)
 		}

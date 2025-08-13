@@ -26,7 +26,7 @@ import (
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
 	id            int
-	chainID       int64
+	seiChainID    string
 	endpoint      string
 	txChan        chan *types.LoadTx
 	sentTxs       chan *types.LoadTx
@@ -58,10 +58,10 @@ func newHttpClient() *http.Client {
 }
 
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(id int, chainID int64, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
+func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
 	w := &Worker{
 		id:            id,
-		chainID:       chainID,
+		seiChainID:    seiChainID,
 		endpoint:      endpoint,
 		txChan:        make(chan *types.LoadTx, bufferSize),
 		sentTxs:       make(chan *types.LoadTx, bufferSize),
@@ -140,7 +140,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
 				attribute.Int("worker_id", w.id),
-				attribute.Int64("chain_id", w.chainID),
+				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
@@ -206,7 +206,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
 				attribute.Int("worker_id", w.id),
-				attribute.Int64("chain_id", w.chainID),
+				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())

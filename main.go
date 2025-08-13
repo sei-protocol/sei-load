@@ -177,7 +177,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create and start block collector if endpoints are available
 		var blockCollector *stats.BlockCollector
 		if len(cfg.Endpoints) > 0 && settings.TrackBlocks {
-			blockCollector = stats.NewBlockCollector()
+			blockCollector = stats.NewBlockCollector(cfg.SeiChainID)
 			collector.SetBlockCollector(blockCollector)
 			s.SpawnBgNamed("block collector", func() error {
 				return blockCollector.Run(ctx, cfg.Endpoints[0])

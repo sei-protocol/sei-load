@@ -40,7 +40,7 @@ var (
 					observer.Observe(int64(worker.GetChannelLength()), metric.WithAttributes(
 						attribute.String("endpoint", worker.GetEndpoint()),
 						attribute.Int("worker_id", worker.id),
-						attribute.Int64("chain_id", worker.chainID),
+						attribute.String("chain_id", worker.seiChainID),
 					))
 				}
 				return nil
@@ -54,7 +54,7 @@ type chainWorkerObserver struct {
 }
 type chainWorkerID struct {
 	workerID int
-	chainID  int64
+	chainID  string
 }
 
 func meterWorkerQueueLength(worker *Worker) {
@@ -62,7 +62,7 @@ func meterWorkerQueueLength(worker *Worker) {
 	defer meteredChainWorkers.lock.Unlock()
 	id := chainWorkerID{
 		workerID: worker.id,
-		chainID:  worker.chainID,
+		chainID:  worker.seiChainID,
 	}
 	if _, exists := meteredChainWorkers.workers[id]; !exists {
 		meteredChainWorkers.workers[id] = worker
