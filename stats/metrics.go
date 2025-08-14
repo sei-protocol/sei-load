@@ -16,7 +16,8 @@ var (
 		gasUsed: must(meter.Int64Histogram(
 			"gas_used",
 			metric.WithDescription("Gas used in transactions"),
-			metric.WithUnit("{gas}"))),
+			metric.WithUnit("{gas}"),
+			metric.WithExplicitBucketBoundaries(1, 1000, 10_000, 50_000, 100_000, 200_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 1_000_000))),
 		blockNumber: must(meter.Int64Gauge(
 			"block_number",
 			metric.WithDescription("Block number in the chain"),
@@ -24,7 +25,8 @@ var (
 		blockTime: must(meter.Float64Histogram(
 			"block_time",
 			metric.WithDescription("Time taken to produce a block"),
-			metric.WithUnit("s"))),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0))),
 	}
 )
 
