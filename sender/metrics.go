@@ -24,11 +24,13 @@ var (
 		sendLatency: must(meter.Float64Histogram(
 			"send_latency",
 			metric.WithDescription("Latency of sending transactions in seconds"),
-			metric.WithUnit("s"))),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0))),
 		receiptLatency: must(meter.Float64Histogram(
 			"receipt_latency",
 			metric.WithDescription("Latency of sending transactions in seconds"),
-			metric.WithUnit("s"))),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0))),
 		workerQueueLength: must(meter.Int64ObservableGauge(
 			"worker_queue_length",
 			metric.WithDescription("Length of the worker's queue"),
