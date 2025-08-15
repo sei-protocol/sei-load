@@ -15,22 +15,6 @@
     {
       "name": "ERC20",
       "weight": 1
-    },
-    {
-      "name": "EVMTransfer",
-      "weight": 1
-    },
-    {
-      "name": "ERC20Noop",
-      "weight": 1
-    },
-    {
-      "name": "ERC20Conflict",
-      "weight": 1
-    },
-    {
-      "name": "ERC721",
-      "weight": 1
     }
   ],
   "workers": 1,
