@@ -73,7 +73,7 @@ func TestMockBlockStats_PercentileMethods(t *testing.T) {
 
 	// Test SetNextPercentile
 	duration90 := 12 * time.Millisecond
-	result := mock.SetNextPercentile(90, duration90)
+	result := mock.SetPercentile(90, duration90)
 	if result != mock {
 		t.Error("SetNextPercentile should return the same mock instance for chaining")
 	}
@@ -107,18 +107,18 @@ func TestMockBlockStats_PercentileMethods(t *testing.T) {
 		t.Errorf("GetWindowBlockTimePercentile(95) = %v, want %v", actual95, duration95)
 	}
 
-	// Test "next call" behavior - values should be consumed
-	if mock.HasPendingPercentile(90) {
-		t.Error("HasPendingPercentile(90) should return false after consumption")
+	// Test that values persist after being read (no longer cleared)
+	if !mock.HasPendingPercentile(90) {
+		t.Error("HasPendingPercentile(90) should still return true after reading value")
 	}
-	if mock.HasPendingPercentile(95) {
-		t.Error("HasPendingPercentile(95) should return false after consumption")
+	if !mock.HasPendingPercentile(95) {
+		t.Error("HasPendingPercentile(95) should still return true after reading value")
 	}
 
-	// Second call should return 0 (default)
+	// Second call should return the same value (not cleared)
 	second90 := mock.GetWindowBlockTimePercentile(90)
-	if second90 != 0 {
-		t.Errorf("Second call to GetWindowBlockTimePercentile(90) = %v, want 0", second90)
+	if second90 != duration90 {
+		t.Errorf("Second call to GetWindowBlockTimePercentile(90) = %v, want %v", second90, duration90)
 	}
 
 	// Test unknown percentile returns 0
@@ -160,7 +160,7 @@ func TestMockBlockStats_FluentChaining(t *testing.T) {
 		SetBlockStats(blockStats).
 		SetWindowBlockStats(windowStats).
 		SetPercentile(50, 5*time.Millisecond).
-		SetNextPercentile(90, 15*time.Millisecond)
+		SetPercentile(90, 15*time.Millisecond)
 
 	if result != mock {
 		t.Error("Fluent chaining should return the same mock instance")

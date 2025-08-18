@@ -63,7 +63,7 @@ func TestRamper_WatchSLO_ChannelBehavior(t *testing.T) {
 	mockBlockStats := stats.NewMockBlockStats()
 	ramper := NewRamper(cfg, mockBlockStats, limiter)
 
-	mockBlockStats.SetNextPercentile(90, 1100*time.Millisecond)
+	mockBlockStats.SetPercentile(90, 1100*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestRamper_Run_StepProgression(t *testing.T) {
 	}
 
 	mockBlockStats := stats.NewMockBlockStats()
-	mockBlockStats.SetNextPercentile(90, 500*time.Millisecond)
+	mockBlockStats.SetPercentile(90, 500*time.Millisecond)
 	ramper := NewRamper(cfg, mockBlockStats, limiter)
 
 	// Create a context with timeout to prevent infinite running
@@ -128,7 +128,7 @@ func TestRamper_Run_StepProgression(t *testing.T) {
 	if limiter.Limit() != rate.Limit(100.0) {
 		t.Fatalf("Expected second step TPS 100, got %v", limiter.Limit())
 	}
-	mockBlockStats.SetNextPercentile(90, 1100*time.Millisecond)
+	mockBlockStats.SetPercentile(90, 1100*time.Millisecond)
 
 	time.Sleep(100 * time.Millisecond)
 
