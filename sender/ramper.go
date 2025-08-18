@@ -71,13 +71,12 @@ func NewRamper(cfg *RamperConfig, blockCollector stats.BlockStatsProvider, share
 	}
 }
 
-func (r *Ramper) NewStep() error {
+func (r *Ramper) NewStep() {
 	r.step++
 	r.currentTps = r.cfg.IncrementTps * float64(r.step)
 	r.sharedLimiter.SetLimit(rate.Limit(r.currentTps))
 	r.startTime = time.Now()
 	log.Printf("📈 Ramping to step %d with TPS %f for %v", r.step, r.currentTps, r.cfg.LoadTime)
-	return nil
 }
 
 func (r *Ramper) LogFinalStats() {

@@ -37,22 +37,14 @@ func TestRamper_NewStep_LimiterUpdate(t *testing.T) {
 	}
 
 	// Call NewStep and verify limit is updated correctly
-	err := ramper.NewStep()
-	if err != nil {
-		t.Fatalf("NewStep failed: %v", err)
-	}
-
+	ramper.NewStep()
 	expectedTps := 50.0 // incrementTps * 1 (first step)
 	if limiter.Limit() != rate.Limit(expectedTps) {
 		t.Fatalf("Expected TPS %v after first step, got %v", expectedTps, limiter.Limit())
 	}
 
 	// Call NewStep again and verify increment
-	err = ramper.NewStep()
-	if err != nil {
-		t.Fatalf("Second NewStep failed: %v", err)
-	}
-
+	ramper.NewStep()
 	expectedTps = 100.0 // incrementTps * 2 (second step)
 	if limiter.Limit() != rate.Limit(expectedTps) {
 		t.Fatalf("Expected TPS %v after second step, got %v", expectedTps, limiter.Limit())
