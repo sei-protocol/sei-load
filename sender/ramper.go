@@ -18,6 +18,8 @@ import (
 // If we successfully pass a given TPS, we will pause for PauseTime, and then start the next step.
 // If we fail to pass a given TPS, we will stop the loadtest.
 
+var ErrRampTestFailedSLO = errors.New("Ramp Test failed SLO")
+
 type RamperConfig struct {
 	IncrementTps float64
 	LoadTime     time.Duration
@@ -48,7 +50,7 @@ func (r RampStats) FormatRampStats() string {
 type Ramper struct {
 	sharedLimiter  *rate.Limiter
 	cfg            *RamperConfig
-	blockCollector *stats.BlockCollector
+	blockCollector stats.BlockStatsProvider
 	currentTps     float64
 	step           int
 	startTime      time.Time
@@ -56,7 +58,7 @@ type Ramper struct {
 	latestStats    RampStats
 }
 
-func NewRamper(cfg *RamperConfig, blockCollector *stats.BlockCollector, sharedLimiter *rate.Limiter) *Ramper {
+func NewRamper(cfg *RamperConfig, blockCollector stats.BlockStatsProvider, sharedLimiter *rate.Limiter) *Ramper {
 	sharedLimiter.SetLimit(rate.Limit(0)) // reset limiter to 0
 	return &Ramper{
 		sharedLimiter:  sharedLimiter,
@@ -123,7 +125,7 @@ func (r *Ramper) Run(ctx context.Context) error {
 				r.sharedLimiter.SetLimit(rate.Limit(1))
 				log.Printf("❌ Ramping failed to pass SLO, stopping loadtest, failure window blockstats:")
 				log.Println(r.blockCollector.GetWindowBlockStats().FormatBlockStats())
-				return errors.New("Ramp Test failed SLO")
+				return ErrRampTestFailedSLO
 			case <-loadTimer:
 				r.sharedLimiter.SetLimit(rate.Limit(1)) // set limit to 1 to "pause" load
 				log.Printf("✅ Ramping passed current step, sleeping for %v", r.cfg.PauseTime)

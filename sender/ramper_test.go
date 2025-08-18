@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 )
 
@@ -58,37 +59,37 @@ func TestRamper_NewStep_LimiterUpdate(t *testing.T) {
 	}
 }
 
-// func TestRamper_WatchSLO_ChannelBehavior(t *testing.T) {
-// 	limiter := rate.NewLimiter(0, 1)
-// 	cfg := &RamperConfig{
-// 		IncrementTps: 50.0,
-// 		LoadTime:     2 * time.Second,
-// 		PauseTime:    1 * time.Second,
-// 	}
+func TestRamper_WatchSLO_ChannelBehavior(t *testing.T) {
 
-// blockCollector := stats.NewBlockCollector("loadtest-local")
-// ramper := NewRamper(cfg, blockCollector, limiter)
+	limiter := rate.NewLimiter(0, 1)
+	cfg := &RamperConfig{
+		IncrementTps: 50.0,
+		LoadTime:     2 * time.Second,
+		PauseTime:    1 * time.Second,
+	}
 
-// 	// Set TPS below threshold first
-// 	ramper.currentTps = 400.0
+	mockBlockStats := stats.NewMockBlockStats()
+	ramper := NewRamper(cfg, mockBlockStats, limiter)
 
-// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-// 	defer cancel()
+	mockBlockStats.SetNextPercentile(90, 1100*time.Millisecond)
 
-// 	// Start watching SLO
-// 	sloChan := ramper.WatchSLO(ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 
-// 	// Give it a moment to start
-// 	time.Sleep(100 * time.Millisecond)
+	sloChannel := ramper.WatchSLO(ctx)
 
-// 	// Wait for channel signal
-// 	select {
-// 	case <-sloChan:
-// 		// Expected behavior - SLO violation detected
-// 	case <-time.After(3 * time.Second):
-// 		t.Fatal("Expected SLO violation signal but timeout occurred")
-// 	}
-// }
+	// Since we set 90th percentile to 1100ms (> 1s threshold), we should get an SLO violation
+	select {
+	case <-sloChannel:
+		// This is expected - SLO violation detected due to 1100ms > 1s threshold
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Expected SLO violation but timeout occurred")
+	}
+
+	// Verify the channel is closed after violation
+	_, ok := <-sloChannel
+	require.False(t, ok, "expected channel to be closed after violation")
+}
 
 func TestRamper_Run_StepProgression(t *testing.T) {
 	limiter := rate.NewLimiter(0, 1)
@@ -98,15 +99,13 @@ func TestRamper_Run_StepProgression(t *testing.T) {
 		PauseTime:    1 * time.Second,
 	}
 
-	blockCollector := stats.NewBlockCollector("loadtest-local")
-	ramper := NewRamper(cfg, blockCollector, limiter)
+	mockBlockStats := stats.NewMockBlockStats()
+	mockBlockStats.SetNextPercentile(90, 500*time.Millisecond)
+	ramper := NewRamper(cfg, mockBlockStats, limiter)
 
 	// Create a context with timeout to prevent infinite running
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-
-	// Track the progression
-	startTime := time.Now()
 
 	// Run in goroutine so we can monitor behavior
 	done := make(chan error, 1)
@@ -137,23 +136,15 @@ func TestRamper_Run_StepProgression(t *testing.T) {
 	if limiter.Limit() != rate.Limit(100.0) {
 		t.Fatalf("Expected second step TPS 100, got %v", limiter.Limit())
 	}
+	mockBlockStats.SetNextPercentile(90, 1100*time.Millisecond)
 
-	// Cancel context to stop the run
-	cancel()
+	time.Sleep(100 * time.Millisecond)
 
-	// Wait for completion
+	// expect SLO violation - err from done channel
 	select {
 	case err := <-done:
-		if err != context.Canceled {
-			t.Fatalf("Expected context.Canceled error, got %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not complete within timeout")
-	}
-
-	// Verify total time is reasonable (should be around 6+ seconds for our test)
-	totalTime := time.Since(startTime)
-	if totalTime < 3*time.Second {
-		t.Fatalf("Test completed too quickly (%v), expected at least 3 seconds", totalTime)
+		require.ErrorIs(t, err, ErrRampTestFailedSLO, "expected SLO violation")
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Expected SLO violation but timeout occurred")
 	}
 }

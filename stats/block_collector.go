@@ -35,6 +35,13 @@ type BlockCollector struct {
 	stats      utils.Mutex[*blockCollectorStats]
 }
 
+type BlockStatsProvider interface {
+	GetBlockStats() BlockStats
+	GetWindowBlockStats() BlockStats
+	GetWindowBlockTimePercentile(percentile int) time.Duration
+	ResetWindowStats()
+}
+
 // NewBlockCollector creates a new block data collector
 func NewBlockCollector(seiChainID string) *BlockCollector {
 	return &BlockCollector{
