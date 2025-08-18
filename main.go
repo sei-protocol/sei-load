@@ -149,6 +149,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, settings.StatsInterval, settings.Debug)
+	var ramper *sender.Ramper
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Create the generator from the config struct
@@ -189,7 +190,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
 			})
 
-			ramper := sender.NewRamper(&sender.RamperConfig{
+			ramper = sender.NewRamper(&sender.RamperConfig{
 				IncrementTps: 100,
 				LoadTime:     120 * time.Second,
 				PauseTime:    30 * time.Second,
@@ -287,6 +288,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	})
 	// Print final statistics
 	logger.LogFinalStats()
+	if settings.RampUp && ramper != nil {
+		ramper.LogFinalStats()
+	}
 	log.Printf("👋 Shutdown complete")
 	return err
 }

@@ -28,7 +28,6 @@ type RamperConfig struct {
 type RampStats struct {
 	Step             int
 	TargetTPS        float64
-	SentTxs          int
 	WindowBlockStats stats.BlockStats
 }
 
@@ -39,12 +38,11 @@ func (r RampStats) FormatRampStats() string {
 ─────────────────────────────────────────
  Step:       %d
  Target TPS: %.2f
- Sent Txs:   %d
 ─────────────────────────────────────────
  Window Block Stats:
  %s
 ─────────────────────────────────────────`,
-		r.Step, r.TargetTPS, r.SentTxs, r.WindowBlockStats.FormatBlockStats())
+		r.Step, r.TargetTPS, r.WindowBlockStats.FormatBlockStats())
 }
 
 type Ramper struct {
@@ -80,6 +78,10 @@ func (r *Ramper) NewStep() error {
 	return nil
 }
 
+func (r *Ramper) LogFinalStats() {
+	log.Printf("Final Ramp stats: \n%s", r.latestStats.FormatRampStats())
+}
+
 // For ramping loadtest SLO, we'll look at the block time p50, if this increases beyond 1s, we consider it an uptime failure
 func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 	ch := make(chan struct{})
@@ -111,9 +113,6 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 // Start initializes and starts all workers
 func (r *Ramper) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		defer func() {
-			log.Printf("Final Ramp stats: \n%s", r.latestStats.FormatRampStats())
-		}()
 		// TODO: Implement ramping logic
 		for {
 			r.NewStep()
@@ -123,8 +122,8 @@ func (r *Ramper) Run(ctx context.Context) error {
 			case <-sloChan:
 				r.sharedLimiter.SetLimit(rate.Limit(1))
 				log.Printf("❌ Ramping failed to pass SLO, stopping loadtest, failure window blockstats:")
-				log.Printf("🔍 Block stats: %s", r.blockCollector.GetWindowBlockStats().FormatBlockStats())
-				return errors.New("Ramp Test failed SLO\n" + r.latestStats.FormatRampStats())
+				log.Println(r.blockCollector.GetWindowBlockStats().FormatBlockStats())
+				return errors.New("Ramp Test failed SLO")
 			case <-loadTimer:
 				r.sharedLimiter.SetLimit(rate.Limit(1)) // set limit to 1 to "pause" load
 				log.Printf("✅ Ramping passed current step, sleeping for %v", r.cfg.PauseTime)
@@ -132,7 +131,6 @@ func (r *Ramper) Run(ctx context.Context) error {
 				stepStats := RampStats{
 					Step:             r.step,
 					TargetTPS:        r.currentTps,
-					SentTxs:          r.blockCollector.GetWindowBlockStats().SampleCount,
 					WindowBlockStats: r.blockCollector.GetWindowBlockStats(),
 				}
 				r.latestStats = stepStats
