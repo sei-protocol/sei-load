@@ -62,7 +62,6 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 		// reset blockCollector window
 		defer close(ch)
 		r.blockCollector.ResetWindowStats()
-		time.Sleep(r.cfg.LoadTime / 2) // wait before checking SLO
 		// wait for half of the load time
 		log.Println("🔍 Ramping watching chain SLO")
 		for {
