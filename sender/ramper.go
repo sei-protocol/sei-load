@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -23,6 +24,29 @@ type RamperConfig struct {
 	PauseTime    time.Duration
 }
 
+// stats from the highest successful step
+type RampStats struct {
+	Step             int
+	TargetTPS        float64
+	SentTxs          int
+	WindowBlockStats stats.BlockStats
+}
+
+func (r RampStats) FormatRampStats() string {
+	return fmt.Sprintf(`
+┌─────────────────────────────────────────┐
+│              RAMP STATISTICS            │
+├─────────────────────────────────────────┤
+│ Step:       %d                          │
+│ Target TPS: %.2f                        │
+│ Sent Txs:   %d                          │
+├─────────────────────────────────────────┤
+│ Window Block Stats:                     │
+│ %s                                      │
+└─────────────────────────────────────────┘`,
+		r.Step, r.TargetTPS, r.SentTxs, r.WindowBlockStats.FormatBlockStats())
+}
+
 type Ramper struct {
 	sharedLimiter  *rate.Limiter
 	cfg            *RamperConfig
@@ -31,6 +55,7 @@ type Ramper struct {
 	step           int
 	startTime      time.Time
 	stopTime       time.Time
+	latestStats    RampStats
 }
 
 func NewRamper(cfg *RamperConfig, blockCollector *stats.BlockCollector, sharedLimiter *rate.Limiter) *Ramper {
@@ -86,6 +111,9 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 // Start initializes and starts all workers
 func (r *Ramper) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+		defer func() {
+			log.Printf("Final Ramp stats: \n%s", r.latestStats.FormatRampStats())
+		}()
 		// TODO: Implement ramping logic
 		for {
 			r.NewStep()
@@ -100,6 +128,14 @@ func (r *Ramper) Run(ctx context.Context) error {
 			case <-loadTimer:
 				r.sharedLimiter.SetLimit(rate.Limit(1)) // set limit to 1 to "pause" load
 				log.Printf("✅ Ramping passed current step, sleeping for %v", r.cfg.PauseTime)
+				// newest stats
+				stepStats := RampStats{
+					Step:             r.step,
+					TargetTPS:        r.currentTps,
+					SentTxs:          r.blockCollector.GetWindowBlockStats().SampleCount,
+					WindowBlockStats: r.blockCollector.GetWindowBlockStats(),
+				}
+				r.latestStats = stepStats
 				log.Printf("🔍 Block stats: %s", r.blockCollector.GetWindowBlockStats().FormatBlockStats())
 				time.Sleep(r.cfg.PauseTime)
 			case <-ctx.Done():
