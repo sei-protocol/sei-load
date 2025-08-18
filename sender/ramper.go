@@ -34,16 +34,16 @@ type RampStats struct {
 
 func (r RampStats) FormatRampStats() string {
 	return fmt.Sprintf(`
-┌─────────────────────────────────────────┐
-│              RAMP STATISTICS            │
-├─────────────────────────────────────────┤
-│ Step:       %d                          │
-│ Target TPS: %.2f                        │
-│ Sent Txs:   %d                          │
-├─────────────────────────────────────────┤
-│ Window Block Stats:                     │
-│ %s                                      │
-└─────────────────────────────────────────┘`,
+─────────────────────────────────────────
+              RAMP STATISTICS
+─────────────────────────────────────────
+ Step:       %d
+ Target TPS: %.2f
+ Sent Txs:   %d
+─────────────────────────────────────────
+ Window Block Stats:
+ %s
+─────────────────────────────────────────`,
 		r.Step, r.TargetTPS, r.SentTxs, r.WindowBlockStats.FormatBlockStats())
 }
 
@@ -124,7 +124,7 @@ func (r *Ramper) Run(ctx context.Context) error {
 				r.sharedLimiter.SetLimit(rate.Limit(1))
 				log.Printf("❌ Ramping failed to pass SLO, stopping loadtest, failure window blockstats:")
 				log.Printf("🔍 Block stats: %s", r.blockCollector.GetWindowBlockStats().FormatBlockStats())
-				return errors.New("Ramp Test failed SLO")
+				return errors.New("Ramp Test failed SLO\n" + r.latestStats.FormatRampStats())
 			case <-loadTimer:
 				r.sharedLimiter.SetLimit(rate.Limit(1)) // set limit to 1 to "pause" load
 				log.Printf("✅ Ramping passed current step, sleeping for %v", r.cfg.PauseTime)
