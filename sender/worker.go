@@ -176,7 +176,6 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 		// Apply rate limiting before getting the next transaction
 		if w.limiter != nil {
 			if !w.limiter.Allow() {
-				time.Sleep(1 * time.Millisecond)
 				continue
 			}
 		}
