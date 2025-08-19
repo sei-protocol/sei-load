@@ -1,9 +1,10 @@
 package scenarios
 
 import (
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"math/big"
 
 	"github.com/sei-protocol/sei-load/config"
 	types2 "github.com/sei-protocol/sei-load/types"
