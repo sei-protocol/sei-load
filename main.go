@@ -191,7 +191,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			})
 
 			ramper = sender.NewRamper(
-				sender.NewRampCurveStep(100, 100, 30*time.Second, 10*time.Second),
+				sender.NewRampCurveStep(100, 100, 120*time.Second, 30*time.Second),
 				ramperBlockCollector,
 				sharedLimiter,
 			)
