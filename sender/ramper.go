@@ -20,91 +20,89 @@ import (
 
 var ErrRampTestFailedSLO = errors.New("Ramp Test failed SLO")
 
-type RamperConfig struct {
-	IncrementTps float64
-	LoadTime     time.Duration
-	PauseTime    time.Duration
-}
-
-// stats from the highest successful step
-type RampStats struct {
-	Step             int
-	TargetTPS        float64
-	WindowBlockStats stats.BlockStats
-}
-
-func (r RampStats) FormatRampStats() string {
+func (r *Ramper) FormatRampStats() string {
 	return fmt.Sprintf(`
 ─────────────────────────────────────────
               RAMP STATISTICS
 ─────────────────────────────────────────
- Step:       %d
- Target TPS: %.2f
+ Ramp Curve Stats:
+ %s
 ─────────────────────────────────────────
  Window Block Stats:
  %s
 ─────────────────────────────────────────`,
-		r.Step, r.TargetTPS, r.WindowBlockStats.FormatBlockStats())
+		r.rampCurve.GetCurveStats(), r.blockCollector.GetWindowBlockStats().FormatBlockStats())
 }
 
 type Ramper struct {
 	sharedLimiter  *rate.Limiter
-	cfg            *RamperConfig
 	blockCollector stats.BlockStatsProvider
 	currentTps     float64
-	step           int
 	startTime      time.Time
-	stopTime       time.Time
-	latestStats    RampStats
+	rampCurve      RampCurve
 }
 
-func NewRamper(cfg *RamperConfig, blockCollector stats.BlockStatsProvider, sharedLimiter *rate.Limiter) *Ramper {
-	sharedLimiter.SetLimit(rate.Limit(0)) // reset limiter to 0
+// RampCurve is a function that returns the target TPS at a given time in the ramp period
+type RampCurve interface {
+	GetTPS(t time.Duration) float64
+	GetCurveStats() string
+}
+
+func NewRamper(rampCurve RampCurve, blockCollector stats.BlockStatsProvider, sharedLimiter *rate.Limiter) *Ramper {
+	sharedLimiter.SetLimit(rate.Limit(1)) // reset limiter to 1
 	return &Ramper{
 		sharedLimiter:  sharedLimiter,
-		cfg:            cfg,
 		blockCollector: blockCollector,
-		currentTps:     0,
-		step:           0,
-		startTime:      time.Now(),
-		stopTime:       time.Time{},
+		rampCurve:      rampCurve,
 	}
 }
 
-func (r *Ramper) NewStep() {
-	r.step++
-	r.currentTps = r.cfg.IncrementTps * float64(r.step)
+func (r *Ramper) UpdateTPS() {
+	timeSinceStart := time.Since(r.startTime)
+	r.currentTps = r.rampCurve.GetTPS(timeSinceStart)
 	r.sharedLimiter.SetLimit(rate.Limit(r.currentTps))
-	r.startTime = time.Now()
-	log.Printf("📈 Ramping to step %d with TPS %f for %v", r.step, r.currentTps, r.cfg.LoadTime)
 }
 
 func (r *Ramper) LogFinalStats() {
-	log.Printf("Final Ramp stats: \n%s", r.latestStats.FormatRampStats())
+	log.Printf("Final Ramp stats: \n%s", r.FormatRampStats())
 }
 
-// For ramping loadtest SLO, we'll look at the block time p50, if this increases beyond 1s, we consider it an uptime failure
+// WatchSLO will evaluate the chain SLO every 100ms using a 30 second window, and return a channel if the SLO is violated
 func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
-		// reset blockCollector window
 		defer close(ch)
+
+		log.Println("🔍 Ramping watching chain SLO with 30s windows, checking every 100ms")
+
+		// Two separate timers: frequent SLO checks and window resets
+		sloCheckTicker := time.NewTicker(100 * time.Millisecond)
+		windowResetTicker := time.NewTicker(30 * time.Second)
+		defer sloCheckTicker.Stop()
+		defer windowResetTicker.Stop()
+
+		// Reset window stats at the start
 		r.blockCollector.ResetWindowStats()
-		// wait for half of the load time
-		log.Println("🔍 Ramping watching chain SLO")
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				// we need to watch the monitoring endpoint for the SLO
-				// Add appropriate monitoring logic here with timeout/context respect
-				// check window stats
-				if r.blockCollector.GetWindowBlockTimePercentile(90) > 1*time.Second {
-					ch <- struct{}{}
+			case <-sloCheckTicker.C:
+				// Check SLO every 100ms
+				p90BlockTime := r.blockCollector.GetWindowBlockTimePercentile(90)
+				if p90BlockTime > 1*time.Second {
+					log.Printf("❌ SLO violated: 90th percentile block time %v exceeds 1s threshold", p90BlockTime)
+					select {
+					case ch <- struct{}{}:
+					case <-ctx.Done():
+					}
+					return
 				}
-				time.Sleep(200 * time.Millisecond) // TODO: maybe this is too frequent?
-				continue
+			case <-windowResetTicker.C:
+				// Reset window stats every 30 seconds for fresh measurements
+				log.Printf("🔄 Resetting SLO window stats (30s period)")
+				r.blockCollector.ResetWindowStats()
 			}
 		}
 	}()
@@ -115,31 +113,84 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 func (r *Ramper) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// TODO: Implement ramping logic
-		for {
-			r.NewStep()
-			loadTimer := time.After(r.cfg.LoadTime)
-			sloChan := r.WatchSLO(ctx)
+		r.startTime = time.Now()
+		sloChan := r.WatchSLO(ctx)
+		tpsUpdateTicker := time.NewTicker(100 * time.Millisecond)
+		for ctx.Err() == nil {
+
 			select {
 			case <-sloChan:
 				r.sharedLimiter.SetLimit(rate.Limit(1))
 				log.Printf("❌ Ramping failed to pass SLO, stopping loadtest, failure window blockstats:")
 				log.Println(r.blockCollector.GetWindowBlockStats().FormatBlockStats())
 				return ErrRampTestFailedSLO
-			case <-loadTimer:
-				r.sharedLimiter.SetLimit(rate.Limit(1)) // set limit to 1 to "pause" load
-				log.Printf("✅ Ramping passed current step, sleeping for %v", r.cfg.PauseTime)
-				// newest stats
-				stepStats := RampStats{
-					Step:             r.step,
-					TargetTPS:        r.currentTps,
-					WindowBlockStats: r.blockCollector.GetWindowBlockStats(),
-				}
-				r.latestStats = stepStats
-				log.Printf("🔍 Block stats: %s", r.blockCollector.GetWindowBlockStats().FormatBlockStats())
-				time.Sleep(r.cfg.PauseTime)
+			case <-tpsUpdateTicker.C:
+				r.UpdateTPS()
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
+		return ctx.Err()
 	})
+}
+
+type RampCurveStep struct {
+	StartTps         float64
+	IncrementTps     float64
+	LoadInterval     time.Duration
+	RecoveryInterval time.Duration
+	Step             int
+	CurrentTPS       float64
+}
+
+func NewRampCurveStep(startTps float64, incrementTps float64, loadInterval time.Duration, recoveryInterval time.Duration) *RampCurveStep {
+	return &RampCurveStep{
+		StartTps:         startTps,
+		IncrementTps:     incrementTps,
+		LoadInterval:     loadInterval,
+		RecoveryInterval: recoveryInterval,
+		Step:             0,
+		CurrentTPS:       startTps,
+	}
+}
+
+func (r *RampCurveStep) GetStartTps() float64 {
+	return r.StartTps
+}
+
+func (r *RampCurveStep) GetIncrementTps() float64 {
+	return r.IncrementTps
+}
+
+func (r *RampCurveStep) GetTPS(t time.Duration) float64 {
+	// figure out where we are in the load interval
+	cycleInterval := r.LoadInterval + r.RecoveryInterval
+	cycleProgress := t % cycleInterval
+
+	// if we're in the recovery interval, return 1.00 (close to 0 but doesn't fully block the limiter)
+	if cycleProgress > r.LoadInterval {
+		return 1.00
+	}
+
+	cycleNumber := int(t / cycleInterval)
+
+	// this means we're in a new step, so we need to update step and TPS
+	if cycleNumber > r.Step {
+		r.Step = cycleNumber
+		newTps := r.StartTps + r.IncrementTps*float64(r.Step)
+		log.Printf("📈 Ramping to %f TPS for %v", newTps, r.LoadInterval)
+		r.CurrentTPS = newTps
+		return newTps
+	}
+
+	return r.CurrentTPS
+}
+
+// this should return the highest target TPS that is PRIOR to the current step
+func (r *RampCurveStep) GetCurveStats() string {
+	step := r.Step - 1
+	if step < 0 {
+		return "no ramp curve stats available"
+	}
+	return fmt.Sprintf("Highest Passed TPS: %.2f", r.StartTps+r.IncrementTps*float64(step))
 }

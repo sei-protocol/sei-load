@@ -190,11 +190,11 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
 			})
 
-			ramper = sender.NewRamper(&sender.RamperConfig{
-				IncrementTps: 100,
-				LoadTime:     120 * time.Second,
-				PauseTime:    30 * time.Second,
-			}, ramperBlockCollector, sharedLimiter)
+			ramper = sender.NewRamper(
+				sender.NewRampCurveStep(100, 100, 30*time.Second, 10*time.Second),
+				ramperBlockCollector,
+				sharedLimiter,
+			)
 			s.SpawnBgNamed("ramper", func() error { return ramper.Run(ctx) })
 		}
 
