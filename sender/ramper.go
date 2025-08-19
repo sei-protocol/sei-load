@@ -31,15 +31,16 @@ func (r *Ramper) FormatRampStats() string {
  Window Block Stats:
  %s
 ─────────────────────────────────────────`,
-		r.rampCurve.GetCurveStats(), r.blockCollector.GetWindowBlockStats().FormatBlockStats())
+		r.rampCurve.GetCurveStats(), r.lastWindowStats.FormatBlockStats())
 }
 
 type Ramper struct {
-	sharedLimiter  *rate.Limiter
-	blockCollector stats.BlockStatsProvider
-	currentTps     float64
-	startTime      time.Time
-	rampCurve      RampCurve
+	sharedLimiter   *rate.Limiter
+	blockCollector  stats.BlockStatsProvider
+	currentTps      float64
+	startTime       time.Time
+	rampCurve       RampCurve
+	lastWindowStats stats.BlockStats
 }
 
 // RampCurve is a function that returns the target TPS at a given time in the ramp period
@@ -102,6 +103,8 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 			case <-windowResetTicker.C:
 				// Reset window stats every 30 seconds for fresh measurements
 				log.Printf("🔄 Resetting SLO window stats (30s period)")
+				// save last window stats
+				r.lastWindowStats = r.blockCollector.GetWindowBlockStats()
 				r.blockCollector.ResetWindowStats()
 			}
 		}
