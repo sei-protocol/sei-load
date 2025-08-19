@@ -173,16 +173,16 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 // processTransactions is the main worker loop that processes transactions
 func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
 	for ctx.Err() == nil {
+		// Apply rate limiting before getting the next transaction
+		if w.limiter != nil {
+			if !w.limiter.Allow() {
+				continue
+			}
+		}
+
 		tx, err := utils.Recv(ctx, w.txChan)
 		if err != nil {
 			return err
-		}
-
-		// Apply rate limiting before sending the transaction
-		if w.limiter != nil {
-			if err := w.limiter.Wait(ctx); err != nil {
-				return err
-			}
 		}
 
 		startTime := time.Now()

@@ -36,11 +36,11 @@ var rootCmd = &cobra.Command{
 	Short: "Sei Chain Load Test v2",
 	Long: `A load test generator for Sei Chain.
 
-Supports both contract and non-contract scenarios with factory 
-and weighted scenario selection mechanisms. Features sharded sending 
+Supports both contract and non-contract scenarios with factory
+and weighted scenario selection mechanisms. Features sharded sending
 to multiple endpoints with account pooling management.
 
-Use --dry-run to test configuration and view transaction details 
+Use --dry-run to test configuration and view transaction details
 without actually sending requests or deploying contracts.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runLoadTest(context.Background(), cmd, args); err != nil {
@@ -63,6 +63,7 @@ func init() {
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
 	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
+	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -148,6 +149,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, settings.StatsInterval, settings.Debug)
+	var ramper *sender.Ramper
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Create the generator from the config struct
@@ -159,9 +161,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create shared rate limiter for all workers if TPS is specified
 		var sharedLimiter *rate.Limiter
 		if settings.TPS > 0 {
-			// Convert TPS to interval: 1/tps seconds = (1/tps) * 1e9 nanoseconds
-			intervalNs := int64((1.0 / settings.TPS) * 1e9)
-			sharedLimiter = rate.NewLimiter(rate.Every(time.Duration(intervalNs)), 1)
+			sharedLimiter = rate.NewLimiter(rate.Limit(settings.TPS), 1)
 			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", settings.TPS)
 		} else {
 			// No rate limiting
@@ -182,6 +182,20 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			s.SpawnBgNamed("block collector", func() error {
 				return blockCollector.Run(ctx, cfg.Endpoints[0])
 			})
+		}
+
+		if settings.RampUp {
+			ramperBlockCollector := stats.NewBlockCollector(cfg.SeiChainID)
+			s.SpawnBgNamed("ramper block collector", func() error {
+				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
+			})
+
+			ramper = sender.NewRamper(
+				sender.NewRampCurveStep(100, 100, 120*time.Second, 30*time.Second),
+				ramperBlockCollector,
+				sharedLimiter,
+			)
+			s.SpawnBgNamed("ramper", func() error { return ramper.Run(ctx) })
 		}
 
 		// Create and start user latency tracker if endpoints are available
@@ -274,6 +288,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	})
 	// Print final statistics
 	logger.LogFinalStats()
+	if settings.RampUp && ramper != nil {
+		ramper.LogFinalStats()
+	}
 	log.Printf("👋 Shutdown complete")
 	return err
 }

@@ -35,6 +35,13 @@ type BlockCollector struct {
 	stats      utils.Mutex[*blockCollectorStats]
 }
 
+type BlockStatsProvider interface {
+	GetBlockStats() BlockStats
+	GetWindowBlockStats() BlockStats
+	GetWindowBlockTimePercentile(percentile int) time.Duration
+	ResetWindowStats()
+}
+
 // NewBlockCollector creates a new block data collector
 func NewBlockCollector(seiChainID string) *BlockCollector {
 	return &BlockCollector{
@@ -205,6 +212,18 @@ func (bc *BlockCollector) GetWindowBlockStats() BlockStats {
 	panic("unreachable")
 }
 
+func (bc *BlockCollector) GetWindowBlockTimePercentile(percentile int) time.Duration {
+	for bc := range bc.stats.Lock() {
+		sortedTimes := make([]time.Duration, len(bc.windowBlockTimes))
+		copy(sortedTimes, bc.windowBlockTimes)
+		sort.Slice(sortedTimes, func(i, j int) bool {
+			return sortedTimes[i] < sortedTimes[j]
+		})
+		return calculatePercentile(sortedTimes, percentile)
+	}
+	panic("unreachable")
+}
+
 // ResetWindowStats resets the window-based statistics for the next reporting period
 func (bc *BlockCollector) ResetWindowStats() {
 	for bc := range bc.stats.Lock() {
@@ -241,7 +260,7 @@ type BlockStats struct {
 }
 
 // FormatBlockStats returns a formatted string representation of block statistics
-func (bs *BlockStats) FormatBlockStats() string {
+func (bs BlockStats) FormatBlockStats() string {
 	if bs.SampleCount == 0 {
 		return "block stats: no data available"
 	}
