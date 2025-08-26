@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -57,9 +56,7 @@ func NewBlockCollector(seiChainID string) *BlockCollector {
 
 // Start begins block subscription and data collection
 func (bc *BlockCollector) Run(ctx context.Context, firstEndpoint string) error {
-	// Convert HTTP endpoint to WebSocket endpoint (8545 -> 8546)
-	wsEndpoint := strings.Replace(firstEndpoint, ":8545", ":8546", 1)
-	wsEndpoint = strings.Replace(wsEndpoint, "http://", "ws://", 1)
+	wsEndpoint := utils.GetWSEndpoint(firstEndpoint)
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Connect to WebSocket endpoint
 		client, err := ethclient.Dial(wsEndpoint)
