@@ -1,7 +1,10 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"math/big"
+	"time"
 )
 
 // LoadConfig stores the configuration for load-related settings.
@@ -14,6 +17,33 @@ type LoadConfig struct {
 	Scenarios  []Scenario     `json:"scenarios,omitempty"`
 	MockDeploy bool           `json:"mockDeploy,omitempty"`
 	Settings   *Settings      `json:"settings,omitempty"`
+}
+
+// Duration wraps time.Duration to provide JSON unmarshaling support
+type Duration time.Duration
+
+// UnmarshalJSON implements json.Unmarshaler for Duration
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid duration format: %w", err)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// ToDuration converts Duration back to time.Duration
+func (d Duration) ToDuration() time.Duration {
+	return time.Duration(d)
+}
+
+// MarshalJSON implements json.Marshaler for Duration
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
 }
 
 // GetChainID returns the chain ID as a big.Int.
