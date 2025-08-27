@@ -113,7 +113,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	log.Printf("👥 Workers per endpoint: %d", settings.Workers)
 	log.Printf("🔧 Total workers: %d", len(cfg.Endpoints)*settings.Workers)
 	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
-	log.Printf("⏱️  Stats interval: %v", settings.StatsInterval)
+	log.Printf("⏱️  Stats interval: %v", settings.StatsInterval.ToDuration())
 	log.Printf("📦 Buffer size per worker: %d", settings.BufferSize)
 	if settings.TPS > 0 {
 		log.Printf("📈 Transactions per second: %.2f", settings.TPS)
@@ -148,7 +148,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
-	logger := stats.NewLogger(collector, settings.StatsInterval, settings.Debug)
+	logger := stats.NewLogger(collector, settings.StatsInterval.ToDuration(), settings.Debug)
 	var ramper *sender.Ramper
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
@@ -200,7 +200,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Create and start user latency tracker if endpoints are available
 		if len(cfg.Endpoints) > 0 && settings.TrackUserLatency {
-			userLatencyTracker := stats.NewUserLatencyTracker(settings.StatsInterval)
+			userLatencyTracker := stats.NewUserLatencyTracker(settings.StatsInterval.ToDuration())
 			s.SpawnBgNamed("user latency tracker", func() error {
 				return userLatencyTracker.Run(ctx, cfg.Endpoints[0])
 			})
@@ -261,7 +261,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		log.Printf("📈 Logging statistics every %v (Press Ctrl+C to stop)", settings.StatsInterval)
+		log.Printf("📈 Logging statistics every %v (Press Ctrl+C to stop)", settings.StatsInterval.ToDuration())
 		if settings.DryRun {
 			log.Printf("📝 Dry-run mode: Simulating requests without sending")
 		}

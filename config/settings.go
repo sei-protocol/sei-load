@@ -12,7 +12,7 @@ import (
 type Settings struct {
 	Workers          int           `json:"workers"`
 	TPS              float64       `json:"tps"`
-	StatsInterval    time.Duration `json:"statsInterval"`
+	StatsInterval    Duration `json:"statsInterval"`
 	BufferSize       int           `json:"bufferSize"`
 	DryRun           bool          `json:"dryRun"`
 	Debug            bool          `json:"debug"`
@@ -28,7 +28,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		Workers:          1,
 		TPS:              0.0,
-		StatsInterval:    10 * time.Second,
+		StatsInterval:    Duration(10 * time.Second),
 		BufferSize:       1000,
 		DryRun:           false,
 		Debug:            false,
@@ -65,7 +65,7 @@ func InitializeViper(cmd *cobra.Command) error {
 
 	// Set defaults in Viper
 	defaults := DefaultSettings()
-	viper.SetDefault("statsInterval", defaults.StatsInterval)
+	viper.SetDefault("statsInterval", defaults.StatsInterval.ToDuration())
 	viper.SetDefault("bufferSize", defaults.BufferSize)
 	viper.SetDefault("tps", defaults.TPS)
 	viper.SetDefault("dryRun", defaults.DryRun)
@@ -98,7 +98,7 @@ func ResolveSettings() Settings {
 	return Settings{
 		Workers:          viper.GetInt("workers"),
 		TPS:              viper.GetFloat64("tps"),
-		StatsInterval:    viper.GetDuration("statsInterval"),
+		StatsInterval:    Duration(viper.GetDuration("statsInterval")),
 		BufferSize:       viper.GetInt("bufferSize"),
 		DryRun:           viper.GetBool("dryRun"),
 		Debug:            viper.GetBool("debug"),
