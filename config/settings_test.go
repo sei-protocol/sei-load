@@ -91,6 +91,7 @@ func TestArgumentPrecedence(t *testing.T) {
 			cmd.Flags().Bool("track-user-latency", false, "Track user latency")
 			cmd.Flags().Int("buffer-size", 0, "Buffer size")
 			cmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
+			cmd.Flags().String("report-path", "", "Report path")
 
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
@@ -130,6 +131,7 @@ func TestDefaultSettings(t *testing.T) {
 		TrackUserLatency: false,
 		Prewarm:          false,
 		RampUp:           false,
+		ReportPath:       "",
 	}
 
 	if defaults != expected {

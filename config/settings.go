@@ -21,6 +21,7 @@ type Settings struct {
 	TrackUserLatency bool          `json:"trackUserLatency"`
 	Prewarm          bool          `json:"prewarm"`
 	RampUp           bool          `json:"rampUp"`
+	ReportPath       string        `json:"reportPath"`
 }
 
 // DefaultSettings returns the default configuration values
@@ -37,6 +38,7 @@ func DefaultSettings() Settings {
 		TrackUserLatency: false,
 		Prewarm:          false,
 		RampUp:           false,
+		ReportPath:       "",
 	}
 }
 
@@ -55,6 +57,7 @@ func InitializeViper(cmd *cobra.Command) error {
 		"trackUserLatency": "track-user-latency",
 		"workers":          "workers",
 		"rampUp":           "ramp-up",
+		"reportPath":       "report-path",
 	}
 
 	for viperKey, flagName := range flagBindings {
@@ -76,6 +79,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("trackUserLatency", defaults.TrackUserLatency)
 	viper.SetDefault("workers", defaults.Workers)
 	viper.SetDefault("rampUp", defaults.RampUp)
+	viper.SetDefault("reportPath", defaults.ReportPath)
 	return nil
 }
 
@@ -107,5 +111,6 @@ func ResolveSettings() Settings {
 		TrackUserLatency: viper.GetBool("trackUserLatency"),
 		Prewarm:          viper.GetBool("prewarm"),
 		RampUp:           viper.GetBool("rampUp"),
+		ReportPath:       viper.GetString("reportPath"),
 	}
 }
