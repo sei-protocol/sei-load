@@ -64,6 +64,7 @@ func init() {
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
 	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
+	rootCmd.Flags().String("report-path", "", "Path to save the report")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -148,7 +149,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
-	logger := stats.NewLogger(collector, settings.StatsInterval.ToDuration(), settings.Debug)
+	logger := stats.NewLogger(collector, settings.StatsInterval.ToDuration(), settings.ReportPath, settings.Debug)
 	var ramper *sender.Ramper
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {

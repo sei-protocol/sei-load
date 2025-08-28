@@ -17,6 +17,8 @@ type LoadConfig struct {
 	Scenarios  []Scenario     `json:"scenarios,omitempty"`
 	MockDeploy bool           `json:"mockDeploy,omitempty"`
 	Settings   *Settings      `json:"settings,omitempty"`
+	// Path to write a JSON report of the load test.
+	ReportPath string `json:"reportPath,omitempty"`
 }
 
 // Duration wraps time.Duration to provide JSON unmarshaling support
