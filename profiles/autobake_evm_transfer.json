@@ -14,14 +14,17 @@
         "weight": 1
       }
     ],
-    "workers": 500,
-    "tps": 0,
-    "statsInterval": "5s",
-    "bufferSize": 1000,
-    "dryRun": false,
-    "debug": false,
-    "trackReceipts": false,
-    "trackBlocks": false,
-    "trackUserLatency": false,
-    "prewarm": false
+    "settings": {
+      "workers": 500,
+      "tps": 0,
+      "statsInterval": "5s",
+      "bufferSize": 1000,
+      "dryRun": false,
+      "debug": false,
+      "trackReceipts": false,
+      "trackBlocks": false,
+      "trackUserLatency": false,
+      "prewarm": false,
+      "reportPath": "/home/ubuntu/evm_transfer_report.txt"
+    }
   }
