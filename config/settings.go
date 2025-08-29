@@ -10,18 +10,18 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	Workers          int           `json:"workers"`
-	TPS              float64       `json:"tps"`
+	Workers          int      `json:"workers"`
+	TPS              float64  `json:"tps"`
 	StatsInterval    Duration `json:"statsInterval"`
-	BufferSize       int           `json:"bufferSize"`
-	DryRun           bool          `json:"dryRun"`
-	Debug            bool          `json:"debug"`
-	TrackReceipts    bool          `json:"trackReceipts"`
-	TrackBlocks      bool          `json:"trackBlocks"`
-	TrackUserLatency bool          `json:"trackUserLatency"`
-	Prewarm          bool          `json:"prewarm"`
-	RampUp           bool          `json:"rampUp"`
-	ReportPath       string        `json:"reportPath"`
+	BufferSize       int      `json:"bufferSize"`
+	DryRun           bool     `json:"dryRun"`
+	Debug            bool     `json:"debug"`
+	TrackReceipts    bool     `json:"trackReceipts"`
+	TrackBlocks      bool     `json:"trackBlocks"`
+	TrackUserLatency bool     `json:"trackUserLatency"`
+	Prewarm          bool     `json:"prewarm"`
+	RampUp           bool     `json:"rampUp"`
+	ReportPath       string   `json:"reportPath"`
 }
 
 // DefaultSettings returns the default configuration values
@@ -38,7 +38,7 @@ func DefaultSettings() Settings {
 		TrackUserLatency: false,
 		Prewarm:          false,
 		RampUp:           false,
-		ReportPath:       "",
+		ReportPath:       "", // TODO: some issue with importing this from config
 	}
 }
 
@@ -89,28 +89,37 @@ func LoadConfigFile(configFile string) error {
 		return fmt.Errorf("config file path is required")
 	}
 
+	fmt.Printf("Loading config file: %s\n", configFile)
 	viper.SetConfigFile(configFile)
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}
 
+	fmt.Printf("Config file loaded: %s\n", configFile)
+
 	return nil
 }
 
+// TODO: issue with resolving this relative to the actual config file
 // ResolveSettings gets the final resolved settings from Viper
 func ResolveSettings() Settings {
+	settings := viper.Sub("settings")
+	if settings == nil {
+		return DefaultSettings()
+	}
+
 	return Settings{
-		Workers:          viper.GetInt("workers"),
-		TPS:              viper.GetFloat64("tps"),
-		StatsInterval:    Duration(viper.GetDuration("statsInterval")),
-		BufferSize:       viper.GetInt("bufferSize"),
-		DryRun:           viper.GetBool("dryRun"),
-		Debug:            viper.GetBool("debug"),
-		TrackReceipts:    viper.GetBool("trackReceipts"),
-		TrackBlocks:      viper.GetBool("trackBlocks"),
-		TrackUserLatency: viper.GetBool("trackUserLatency"),
-		Prewarm:          viper.GetBool("prewarm"),
-		RampUp:           viper.GetBool("rampUp"),
-		ReportPath:       viper.GetString("reportPath"),
+		Workers:          settings.GetInt("workers"),
+		TPS:              settings.GetFloat64("tps"),
+		StatsInterval:    Duration(settings.GetDuration("statsInterval")),
+		BufferSize:       settings.GetInt("bufferSize"),
+		DryRun:           settings.GetBool("dryRun"),
+		Debug:            settings.GetBool("debug"),
+		TrackReceipts:    settings.GetBool("trackReceipts"),
+		TrackBlocks:      settings.GetBool("trackBlocks"),
+		TrackUserLatency: settings.GetBool("trackUserLatency"),
+		Prewarm:          settings.GetBool("prewarm"),
+		RampUp:           settings.GetBool("rampUp"),
+		ReportPath:       settings.GetString("reportPath"),
 	}
 }
