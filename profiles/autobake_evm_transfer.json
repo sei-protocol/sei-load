@@ -25,6 +25,7 @@
       "trackBlocks": false,
       "trackUserLatency": false,
       "prewarm": false,
+      "rampUp": false,
       "reportPath": "/home/ubuntu/evm_transfer_report.txt"
     }
   }
