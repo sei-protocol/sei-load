@@ -97,10 +97,8 @@ func LoadSettings(settings *Settings) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	fmt.Printf("settingsJSON: %s\n", string(settingsJSON))
 	viper.SetConfigType("json")
-	err = viper.ReadConfig(bytes.NewBuffer(settingsJSON))
-	if err != nil {
+	if err := viper.ReadConfig(bytes.NewBuffer(settingsJSON)); err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
