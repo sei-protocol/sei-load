@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,18 +12,18 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	Workers          int           `json:"workers"`
-	TPS              float64       `json:"tps"`
-	StatsInterval    Duration `json:"statsInterval"`
-	BufferSize       int           `json:"bufferSize"`
-	DryRun           bool          `json:"dryRun"`
-	Debug            bool          `json:"debug"`
-	TrackReceipts    bool          `json:"trackReceipts"`
-	TrackBlocks      bool          `json:"trackBlocks"`
-	TrackUserLatency bool          `json:"trackUserLatency"`
-	Prewarm          bool          `json:"prewarm"`
-	RampUp           bool          `json:"rampUp"`
-	ReportPath       string        `json:"reportPath"`
+	Workers          int      `json:"workers,omitempty"`
+	TPS              float64  `json:"tps,omitempty"`
+	StatsInterval    Duration `json:"statsInterval,omitempty"`
+	BufferSize       int      `json:"bufferSize,omitempty"`
+	DryRun           bool     `json:"dryRun,omitempty"`
+	Debug            bool     `json:"debug,omitempty"`
+	TrackReceipts    bool     `json:"trackReceipts,omitempty"`
+	TrackBlocks      bool     `json:"trackBlocks,omitempty"`
+	TrackUserLatency bool     `json:"trackUserLatency,omitempty"`
+	Prewarm          bool     `json:"prewarm,omitempty"`
+	RampUp           bool     `json:"rampUp,omitempty"`
+	ReportPath       string   `json:"reportPath,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values
@@ -83,15 +85,21 @@ func InitializeViper(cmd *cobra.Command) error {
 	return nil
 }
 
-// LoadConfigFile reads and merges the config file into Viper
-func LoadConfigFile(configFile string) error {
-	if configFile == "" {
-		return fmt.Errorf("config file path is required")
+// LoadSettings reads and merges the config file into Viper
+func LoadSettings(settings *Settings) error {
+	if settings == nil {
+		return fmt.Errorf("config settings are required")
 	}
 
-	viper.SetConfigFile(configFile)
-	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
+	// settings converted to JSON bytes
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+
+	viper.SetConfigType("json")
+	if err := viper.ReadConfig(bytes.NewBuffer(settingsJSON)); err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
 	}
 
 	return nil

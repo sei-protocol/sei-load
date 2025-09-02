@@ -1,8 +1,7 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -71,8 +70,10 @@ func TestArgumentPrecedence(t *testing.T) {
 			// Reset viper for each test
 			viper.Reset()
 
-			// Create temporary config file
-			configFile := createTempConfigFile(t, tt.configContent)
+			// create Settings struct
+			configSettings := &Settings{}
+			err := json.Unmarshal([]byte(tt.configContent), configSettings)
+			require.NoError(t, err, "Failed to unmarshal config file")
 
 			// Create test command with flags
 			cmd := &cobra.Command{
@@ -102,8 +103,8 @@ func TestArgumentPrecedence(t *testing.T) {
 			// Initialize Viper
 			require.NoError(t, InitializeViper(cmd), "Failed to initialize Viper")
 
-			// Load config file
-			require.NoError(t, LoadConfigFile(configFile), "Failed to load config file")
+			// Load settings
+			require.NoError(t, LoadSettings(configSettings), "Failed to load settings")
 
 			// Resolve settings
 			settings := ResolveSettings()
@@ -137,13 +138,4 @@ func TestDefaultSettings(t *testing.T) {
 	if defaults != expected {
 		t.Errorf("DefaultSettings mismatch.\nExpected: %+v\nGot: %+v", expected, defaults)
 	}
-}
-
-// Helper function to create temporary config files for testing
-func createTempConfigFile(t *testing.T, content string) string {
-	t.Helper()
-	destination := filepath.Join(t.TempDir(), "test-config.json")
-	err := os.WriteFile(destination, []byte(content), 0644)
-	require.NoError(t, err, "Failed to create temp config file: %v", err)
-	return destination
 }

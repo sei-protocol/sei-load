@@ -87,15 +87,15 @@ func main() {
 }
 
 func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
-	// Load config file into Viper
-	if err := config.LoadConfigFile(configFile); err != nil {
-		return fmt.Errorf("failed to load config file: %w", err)
-	}
-
 	// Parse the config file into a config.LoadConfig struct
 	cfg, err := loadConfig(configFile)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Load settings into Viper
+	if err := config.LoadSettings(cfg.Settings); err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
 	}
 
 	// Get resolved settings from the config package
