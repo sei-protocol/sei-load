@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,8 +72,10 @@ func TestArgumentPrecedence(t *testing.T) {
 			// Reset viper for each test
 			viper.Reset()
 
-			// Create temporary config file
-			configFile := createTempConfigFile(t, tt.configContent)
+			// create Settings struct
+			configSettings := &Settings{}
+			err := json.Unmarshal([]byte(tt.configContent), configSettings)
+			require.NoError(t, err, "Failed to unmarshal config file")
 
 			// Create test command with flags
 			cmd := &cobra.Command{
@@ -102,8 +105,8 @@ func TestArgumentPrecedence(t *testing.T) {
 			// Initialize Viper
 			require.NoError(t, InitializeViper(cmd), "Failed to initialize Viper")
 
-			// Load config file
-			require.NoError(t, LoadConfigFile(configFile), "Failed to load config file")
+			// Load settings
+			require.NoError(t, LoadSettings(configSettings), "Failed to load settings")
 
 			// Resolve settings
 			settings := ResolveSettings()
