@@ -2,8 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -140,13 +138,4 @@ func TestDefaultSettings(t *testing.T) {
 	if defaults != expected {
 		t.Errorf("DefaultSettings mismatch.\nExpected: %+v\nGot: %+v", expected, defaults)
 	}
-}
-
-// Helper function to create temporary config files for testing
-func createTempConfigFile(t *testing.T, content string) string {
-	t.Helper()
-	destination := filepath.Join(t.TempDir(), "test-config.json")
-	err := os.WriteFile(destination, []byte(content), 0644)
-	require.NoError(t, err, "Failed to create temp config file: %v", err)
-	return destination
 }
