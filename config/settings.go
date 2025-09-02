@@ -40,7 +40,7 @@ func DefaultSettings() Settings {
 		TrackUserLatency: false,
 		Prewarm:          false,
 		RampUp:           false,
-		ReportPath:       "", // TODO: some issue with importing this from config
+		ReportPath:       "",
 	}
 }
 
