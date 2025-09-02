@@ -103,8 +103,6 @@ func LoadSettings(settings *Settings) error {
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
-	// TODO: remove
-	viper.Debug()
 
 	return nil
 }
