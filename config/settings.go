@@ -25,6 +25,8 @@ type Settings struct {
 	RampUp           bool       `json:"rampUp,omitempty"`
 	ReportPath       string     `json:"reportPath,omitempty"`
 	GasPicker        *GasPicker `json:"gasPicker,omitempty"`
+	GasFeeCapPicker  *GasPicker `json:"gasFeeCapPicker,omitempty"`
+	GasTipCapPicker  *GasPicker `json:"gasTipCapPicker,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values

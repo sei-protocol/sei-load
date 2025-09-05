@@ -64,6 +64,20 @@ func (s *EVMTransferScenario) CreateTransaction(config *config.LoadConfig, scena
 			return nil, err
 		}
 	}
+	if s.config != nil && s.config.Settings != nil && s.config.Settings.GasTipCapPicker != nil {
+		gasTipCap, err := s.config.Settings.GasTipCapPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+		tx.GasTipCap = big.NewInt(int64(gasTipCap))
+	}
+	if s.config != nil && s.config.Settings != nil && s.config.Settings.GasFeeCapPicker != nil {
+		gasFeeCap, err := s.config.Settings.GasFeeCapPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+		tx.GasFeeCap = big.NewInt(int64(gasFeeCap))
+	}
 
 	// Sign the transaction
 	signer := ethtypes.NewCancunSigner(config.GetChainID())

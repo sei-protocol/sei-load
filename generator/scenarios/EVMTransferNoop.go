@@ -56,11 +56,27 @@ func (s *EVMTransferNoopScenario) CreateTransaction(config *config.LoadConfig, s
 		Data:      nil,                     // No data for simple transfer
 	}
 
-	if s.config != nil && s.config.Settings != nil && s.config.Settings.GasPicker != nil {
-		var err error
-		tx.Gas, err = s.config.Settings.GasPicker.GenerateGas()
-		if err != nil {
-			return nil, err
+	if s.config != nil && s.config.Settings != nil {
+		if s.config.Settings.GasPicker != nil {
+			var err error
+			tx.Gas, err = s.config.Settings.GasPicker.GenerateGas()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if s.config.Settings.GasTipCapPicker != nil {
+			gasTipCap, err := s.config.Settings.GasTipCapPicker.GenerateGas()
+			if err != nil {
+				return nil, err
+			}
+			tx.GasTipCap = big.NewInt(int64(gasTipCap))
+		}
+		if s.config.Settings.GasFeeCapPicker != nil {
+			gasFeeCap, err := s.config.Settings.GasFeeCapPicker.GenerateGas()
+			if err != nil {
+				return nil, err
+			}
+			tx.GasFeeCap = big.NewInt(int64(gasFeeCap))
 		}
 	}
 

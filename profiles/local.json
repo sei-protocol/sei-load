@@ -45,6 +45,14 @@
     "gasPicker": {
       "name": "fixed",
       "gas": 210000
+    },
+    "gasTipCapPicker": {
+      "name": "fixed",
+      "gas": 2000000000
+    },
+    "gasFeeCapPicker": {
+      "name": "fixed",
+      "gas": 20000000000
     }
   }
 }
