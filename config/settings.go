@@ -12,21 +12,18 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	Workers          int        `json:"workers,omitempty"`
-	TPS              float64    `json:"tps,omitempty"`
-	StatsInterval    Duration   `json:"statsInterval,omitempty"`
-	BufferSize       int        `json:"bufferSize,omitempty"`
-	DryRun           bool       `json:"dryRun,omitempty"`
-	Debug            bool       `json:"debug,omitempty"`
-	TrackReceipts    bool       `json:"trackReceipts,omitempty"`
-	TrackBlocks      bool       `json:"trackBlocks,omitempty"`
-	TrackUserLatency bool       `json:"trackUserLatency,omitempty"`
-	Prewarm          bool       `json:"prewarm,omitempty"`
-	RampUp           bool       `json:"rampUp,omitempty"`
-	ReportPath       string     `json:"reportPath,omitempty"`
-	GasPicker        *GasPicker `json:"gasPicker,omitempty"`
-	GasFeeCapPicker  *GasPicker `json:"gasFeeCapPicker,omitempty"`
-	GasTipCapPicker  *GasPicker `json:"gasTipCapPicker,omitempty"`
+	Workers          int      `json:"workers,omitempty"`
+	TPS              float64  `json:"tps,omitempty"`
+	StatsInterval    Duration `json:"statsInterval,omitempty"`
+	BufferSize       int      `json:"bufferSize,omitempty"`
+	DryRun           bool     `json:"dryRun,omitempty"`
+	Debug            bool     `json:"debug,omitempty"`
+	TrackReceipts    bool     `json:"trackReceipts,omitempty"`
+	TrackBlocks      bool     `json:"trackBlocks,omitempty"`
+	TrackUserLatency bool     `json:"trackUserLatency,omitempty"`
+	Prewarm          bool     `json:"prewarm,omitempty"`
+	RampUp           bool     `json:"rampUp,omitempty"`
+	ReportPath       string   `json:"reportPath,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values

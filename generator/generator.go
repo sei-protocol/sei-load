@@ -57,7 +57,7 @@ func (g *configBasedGenerator) createScenarios() error {
 
 	for i, scenarioCfg := range g.config.Scenarios {
 		// Create scenario instance using factory
-		scenario := scenarios.CreateScenario(scenarioCfg.Name)
+		scenario := scenarios.CreateScenario(scenarioCfg)
 
 		// Determine account pool to use
 		var accountPool types.AccountPool

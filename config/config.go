@@ -61,7 +61,10 @@ type AccountConfig struct {
 
 // Scenario represents each scenario in the load configuration.
 type Scenario struct {
-	Name     string         `json:"name,omitempty"`
-	Weight   int            `json:"weight,omitempty"`
-	Accounts *AccountConfig `json:"accounts,omitempty"`
+	Name            string         `json:"name,omitempty"`
+	Weight          int            `json:"weight,omitempty"`
+	Accounts        *AccountConfig `json:"accounts,omitempty"`
+	GasPicker       *GasPicker     `json:"gasPicker,omitempty"`
+	GasFeeCapPicker *GasPicker     `json:"gasFeeCapPicker,omitempty"`
+	GasTipCapPicker *GasPicker     `json:"gasTipCapPicker,omitempty"`
 }
