@@ -39,6 +39,8 @@ func (g *GasPicker) UnmarshalJSON(data []byte) error {
 	}
 	g.name = temp.Name
 	switch g.name {
+	case "":
+		return nil
 	case "fixed":
 		var fixed FixedGasGenerator
 		if err := json.Unmarshal(data, &fixed); err != nil {

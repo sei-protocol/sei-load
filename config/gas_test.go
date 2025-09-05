@@ -9,6 +9,13 @@ import (
 
 func TestGasPicker(t *testing.T) {
 	t.Parallel()
+	t.Run("empty", func(t *testing.T) {
+		var subject config.GasPicker
+		require.NoError(t, subject.UnmarshalJSON([]byte(`{}`)))
+		gas, err := subject.GenerateGas()
+		require.NoError(t, err)
+		require.Zero(t, gas)
+	})
 	t.Run("fixed", func(t *testing.T) {
 		var subject config.GasPicker
 		require.NoError(t, subject.UnmarshalJSON([]byte(`{"Name":"fixed","Gas":21000}`)))
