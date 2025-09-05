@@ -41,6 +41,10 @@
     "trackBlocks": false,
     "trackUserLatency": false,
     "prewarm": false,
-    "rampUp": false
+    "rampUp": false,
+    "gasPicker": {
+      "name": "fixed",
+      "gas": 210000
+    }
   }
 }

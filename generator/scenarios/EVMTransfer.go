@@ -57,6 +57,14 @@ func (s *EVMTransferScenario) CreateTransaction(config *config.LoadConfig, scena
 		Data:      nil,                     // No data for simple transfer
 	}
 
+	if s.config.Settings.GasPicker != nil {
+		var err error
+		tx.Gas, err = s.config.Settings.GasPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Sign the transaction
 	signer := ethtypes.NewCancunSigner(config.GetChainID())
 	signedTx, err := ethtypes.SignTx(ethtypes.NewTx(tx), signer, scenario.Sender.PrivKey)
