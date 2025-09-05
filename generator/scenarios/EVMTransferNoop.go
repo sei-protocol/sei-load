@@ -18,9 +18,9 @@ type EVMTransferNoopScenario struct {
 }
 
 // NewEVMTransferNoopScenario creates a new ETH transfer scenario
-func NewEVMTransferNoopScenario() TxGenerator {
+func NewEVMTransferNoopScenario(cfg config.Scenario) TxGenerator {
 	scenario := &EVMTransferNoopScenario{}
-	scenario.ScenarioBase = NewScenarioBase(scenario)
+	scenario.ScenarioBase = NewScenarioBase(scenario, cfg)
 	return scenario
 }
 
@@ -54,6 +54,28 @@ func (s *EVMTransferNoopScenario) CreateTransaction(config *config.LoadConfig, s
 		GasTipCap: big.NewInt(2000000000),  // 2 gwei
 		GasFeeCap: big.NewInt(20000000000), // 20 gwei
 		Data:      nil,                     // No data for simple transfer
+	}
+
+	if s.scenarioConfig.GasPicker != nil {
+		var err error
+		tx.Gas, err = s.scenarioConfig.GasPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.scenarioConfig.GasTipCapPicker != nil {
+		gasTipCap, err := s.scenarioConfig.GasTipCapPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+		tx.GasTipCap = big.NewInt(int64(gasTipCap))
+	}
+	if s.scenarioConfig.GasFeeCapPicker != nil {
+		gasFeeCap, err := s.scenarioConfig.GasFeeCapPicker.GenerateGas()
+		if err != nil {
+			return nil, err
+		}
+		tx.GasFeeCap = big.NewInt(int64(gasFeeCap))
 	}
 
 	// Sign the transaction

@@ -25,9 +25,9 @@ func (s *ERC20NoopScenario) Name() string {
 }
 
 // NewERC20NoopScenario creates a new ERC20Noop scenario
-func NewERC20NoopScenario() TxGenerator {
+func NewERC20NoopScenario(cfg config.Scenario) TxGenerator {
 	scenario := &ERC20NoopScenario{}
-	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC20Noop](scenario)
+	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC20Noop](scenario, cfg)
 	return scenario
 }
 

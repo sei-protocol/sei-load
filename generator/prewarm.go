@@ -18,17 +18,17 @@ type PrewarmGenerator struct {
 }
 
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the main generator
-func NewPrewarmGenerator(config *config.LoadConfig, mainGenerator Generator) *PrewarmGenerator {
+func NewPrewarmGenerator(cfg *config.LoadConfig, mainGenerator Generator) *PrewarmGenerator {
 	// Get all account pools from the main generator
 	accountPools := mainGenerator.GetAccountPools()
 
 	// Create EVMTransfer scenario for prewarming
-	evmScenario := scenarios.NewEVMTransferScenario()
+	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
 
 	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
 	deployerAccounts := types.GenerateAccounts(1)
 	deployer := deployerAccounts[0]
-	evmScenario.Deploy(config, deployer)
+	evmScenario.Deploy(cfg, deployer)
 
 	return &PrewarmGenerator{
 		accountPools:   accountPools,

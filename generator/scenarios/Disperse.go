@@ -21,9 +21,9 @@ type DisperseScenario struct {
 }
 
 // NewDisperseScenario creates a new Disperse scenario
-func NewDisperseScenario() TxGenerator {
+func NewDisperseScenario(cfg config.Scenario) TxGenerator {
 	scenario := &DisperseScenario{}
-	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.Disperse](scenario)
+	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.Disperse](scenario, cfg)
 	scenario.pool = types.NewAccountPool(&types.AccountConfig{
 		NewAccountRate: 1.0,
 	})

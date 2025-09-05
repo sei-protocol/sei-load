@@ -20,9 +20,9 @@ type ERC20ConflictScenario struct {
 }
 
 // NewERC20ConflictScenario creates a new ERC20Conflict scenario
-func NewERC20ConflictScenario() TxGenerator {
+func NewERC20ConflictScenario(cfg config.Scenario) TxGenerator {
 	scenario := &ERC20ConflictScenario{}
-	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC20Conflict](scenario)
+	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC20Conflict](scenario, cfg)
 	return scenario
 }
 

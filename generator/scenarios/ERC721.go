@@ -24,9 +24,9 @@ type ERC721Scenario struct {
 }
 
 // NewERC721Scenario creates a new ERC721 scenario
-func NewERC721Scenario() TxGenerator {
+func NewERC721Scenario(cfg config.Scenario) TxGenerator {
 	scenario := &ERC721Scenario{}
-	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC721](scenario)
+	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.ERC721](scenario, cfg)
 	return scenario
 }
 
