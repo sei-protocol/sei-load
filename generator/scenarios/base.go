@@ -66,12 +66,15 @@ type ScenarioBase struct {
 	deployed bool
 	address  common.Address
 	deployer ScenarioDeployer
+
+	scenarioConfig config.Scenario
 }
 
 // NewScenarioBase creates a new base scenario with the given deployer
-func NewScenarioBase(deployer ScenarioDeployer) *ScenarioBase {
+func NewScenarioBase(deployer ScenarioDeployer, cfg config.Scenario) *ScenarioBase {
 	return &ScenarioBase{
-		deployer: deployer,
+		deployer:       deployer,
+		scenarioConfig: cfg,
 	}
 }
 
@@ -123,11 +126,11 @@ type ContractScenarioBase[T any] struct {
 }
 
 // NewContractScenarioBase creates a new base scenario with the given contract deployer
-func NewContractScenarioBase[T any](deployer ContractDeployer[T]) *ContractScenarioBase[T] {
+func NewContractScenarioBase[T any](deployer ContractDeployer[T], cfg config.Scenario) *ContractScenarioBase[T] {
 	base := &ContractScenarioBase[T]{
 		deployer: deployer,
 	}
-	base.ScenarioBase = NewScenarioBase(base)
+	base.ScenarioBase = NewScenarioBase(base, cfg)
 	return base
 }
 

@@ -1,9 +1,13 @@
 package scenarios
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/sei-protocol/sei-load/config"
+)
 
 // ScenarioFactory is a function type that creates a new scenario instance
-type ScenarioFactory func() TxGenerator
+type ScenarioFactory func(s config.Scenario) TxGenerator
 
 // scenarioFactories maps scenario names to their factory functions
 var scenarioFactories = map[string]ScenarioFactory{
@@ -23,10 +27,10 @@ var scenarioFactories = map[string]ScenarioFactory{
 }
 
 // CreateScenario creates a new scenario instance by name
-func CreateScenario(name string) TxGenerator {
-	factory, exists := scenarioFactories[strings.ToLower(name)]
+func CreateScenario(s config.Scenario) TxGenerator {
+	factory, exists := scenarioFactories[strings.ToLower(s.Name)]
 	if !exists {
-		panic("Unknown scenario: " + name)
+		panic("Unknown scenario: " + s.Name)
 	}
-	return factory()
+	return factory(s)
 }
