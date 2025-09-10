@@ -14,20 +14,24 @@ import (
 // implements `Send`
 
 type TxsWriter struct {
-	gasPerBlock uint64
-	nextHeight  uint64
-	txsDir      string
+	gasPerBlock     uint64
+	nextHeight      uint64
+	txsDir          string
+	blocksGenerated uint64
+	numBlocks       uint64
 
 	bufferGas uint64
 	txBuffer  []*types.LoadTx
 }
 
-func NewTxsWriter(gasPerBlock uint64, txsDir string) *TxsWriter {
+func NewTxsWriter(gasPerBlock uint64, txsDir string, startHeight uint64, numBlocks uint64) *TxsWriter {
 	// what height to start at?
 	return &TxsWriter{
-		gasPerBlock: gasPerBlock,
-		nextHeight:  1,
-		txsDir:      txsDir,
+		gasPerBlock:     gasPerBlock,
+		nextHeight:      startHeight,
+		txsDir:          txsDir,
+		blocksGenerated: 0,
+		numBlocks:       numBlocks,
 
 		bufferGas: 0,
 		txBuffer:  make([]*types.LoadTx, 0),
@@ -59,6 +63,7 @@ func (w *TxsWriter) Flush() error {
 		w.txBuffer = make([]*types.LoadTx, 0)
 		w.bufferGas = 0
 		w.nextHeight++
+		w.blocksGenerated++
 	}()
 	// write to dir `~/load_txs`
 	// make dir if it doesn't exist
@@ -81,6 +86,10 @@ func (w *TxsWriter) Flush() error {
 	}
 
 	log.Printf("Flushed %d transactions to %s", len(w.txBuffer), txsFile)
+
+	if w.blocksGenerated >= w.numBlocks {
+		return fmt.Errorf("reached max number of blocks: %d", w.numBlocks)
+	}
 
 	return nil
 }
