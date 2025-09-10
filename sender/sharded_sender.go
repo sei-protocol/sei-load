@@ -23,7 +23,6 @@ type ShardedSender struct {
 	mu         sync.RWMutex
 	collector  *stats.Collector
 	logger     *stats.Logger
-	limiter    *rate.Limiter // Shared rate limiter for all workers
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
@@ -34,7 +33,7 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 
 	workerList := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
-		workerList[i] = NewWorker(i, cfg.SeiChainID, endpoint, bufferSize, workers, limiter)
+		workerList[i] = NewWorker(i, cfg.SeiChainID, endpoint, bufferSize, workers)
 	}
 
 	return &ShardedSender{
@@ -46,13 +45,13 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 }
 
 // Start initializes and starts all workers
-func (s *ShardedSender) Run(ctx context.Context) error {
+func (s *ShardedSender) Run(ctx context.Context, limiter *rate.Limiter) error {
 	s.mu.Lock()
 	workers := s.workers
 	s.mu.Unlock()
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		for _, worker := range workers {
-			s.Spawn(func() error { return worker.Run(ctx) })
+			s.Spawn(func() error { return worker.Run(ctx,limiter) })
 		}
 		return nil
 	})
