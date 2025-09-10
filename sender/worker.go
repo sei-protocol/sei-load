@@ -1,10 +1,14 @@
 package sender
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -32,10 +36,29 @@ type Worker struct {
 	logger        *stats.Logger
 	workers       int
 	trackReceipts bool
+	limiter       *rate.Limiter // Shared rate limiter for transaction sending
+}
+
+func newHttpClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableKeepAlives:     false,
+		},
+	}
 }
 
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int) *Worker {
+func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
 	w := &Worker{
 		id:            id,
 		seiChainID:    seiChainID,
@@ -44,6 +67,7 @@ func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, worke
 		sentTxs:       make(chan *types.LoadTx, bufferSize),
 		workers:       workers,
 		trackReceipts: false,
+		limiter:       limiter,
 	}
 	meterWorkerQueueLength(w)
 	return w
@@ -56,11 +80,12 @@ func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Log
 }
 
 // Start begins the worker's processing loop
-func (w *Worker) Run(ctx context.Context, limiter *rate.Limiter) error {
+func (w *Worker) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Start multiple worker goroutines that share the same channel
+		client := newHttpClient()
 		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx, limiter) })
+			s.Spawn(func() error { return w.processTransactions(ctx, client) })
 		}
 		return w.watchTransactions(ctx)
 	})
@@ -90,13 +115,10 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
-
-	// Create a separate ethclient connection for receipt tracking
-	ethClient, err := ethclient.Dial(w.endpoint)
+	eth, err := ethclient.Dial(w.endpoint)
 	if err != nil {
 		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
 	}
-	defer ethClient.Close()
 	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
@@ -104,7 +126,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 		}
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if err := w.waitForReceipt(ctx, ethClient, tx); err != nil {
+		if err := w.waitForReceipt(ctx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
 		}
 	}
@@ -149,40 +171,35 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 }
 
 // processTransactions is the main worker loop that processes transactions
-func (w *Worker) processTransactions(ctx context.Context, limiter *rate.Limiter) error {
-	// Dial ethclient for this worker goroutine
-	ethClient, err := ethclient.Dial(w.endpoint)
-	if err != nil {
-		return fmt.Errorf("failed to connect to endpoint %s: %w", w.endpoint, err)
-	}
-	defer ethClient.Close()
-
+func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
-		if err := limiter.Wait(ctx); err != nil {
-			return err
+		if w.limiter != nil {
+			if !w.limiter.Allow() {
+				continue
+			}
 		}
+
 		tx, err := utils.Recv(ctx, w.txChan)
 		if err != nil {
 			return err
 		}
 
 		startTime := time.Now()
-		// TODO: we cannot afford losing transactions due to nonce gaps.
-		// Consider retries though.
-		if err := w.sendTransaction(ctx, ethClient, tx); err != nil {
-			return fmt.Errorf("w.sendTransaction(): %w", err)
-		}
+		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
 		if w.collector != nil {
-			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), false)
+			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err == nil)
+		}
+		if err != nil {
+			log.Printf("%v", err)
 		}
 	}
 	return ctx.Err()
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, ethClient *ethclient.Client, tx *types.LoadTx) (_err error) {
+func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
 	defer func(start time.Time) {
 		metrics.sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
@@ -199,11 +216,40 @@ func (w *Worker) sendTransaction(ctx context.Context, ethClient *ethclient.Clien
 		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
-	// Use go-ethereum client to send the transaction
-	err := ethClient.SendTransaction(ctx, tx.EthTx)
+	// Create HTTP request with JSON-RPC payload
+	req, err := http.NewRequestWithContext(ctx, "POST", w.endpoint, bytes.NewReader(tx.JSONRPCPayload))
+	if err != nil {
+		return fmt.Errorf("Worker %d: Failed to create request: %w", w.id, err)
+	}
+
+	// Set headers for JSON-RPC
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Send the request
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
 	}
+	defer func() {
+		// Limit read to prevent memory issues with large responses
+		_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
+		if err != nil && err != io.EOF {
+			log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
+			// Log but don't fail - this is just for connection reuse
+		}
+
+		// Close response body and handle error
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Worker %d: Failed to close response body: %v", w.id, closeErr)
+		}
+	}()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
+	}
+
 	// Write to sentTxs channel without blocking
 	select {
 	case w.sentTxs <- tx:

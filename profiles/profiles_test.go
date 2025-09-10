@@ -80,7 +80,7 @@ func TestProfilesAlignment(t *testing.T) {
 			// Use a decoder with DisallowUnknownFields to catch any extra fields
 			decoder := json.NewDecoder(strings.NewReader(string(data)))
 			decoder.DisallowUnknownFields()
-
+			
 			var strictConfig config.LoadConfig
 			if err := decoder.Decode(&strictConfig); err != nil {
 				t.Errorf("Profile %s contains unexpected/unaligned fields: %v", file.Name(), err)

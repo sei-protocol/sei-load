@@ -160,14 +160,17 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 
 		// Create shared rate limiter for all workers if TPS is specified
-		sharedLimiter := rate.NewLimiter(rate.Inf, 1) // no limit by default
+		var sharedLimiter *rate.Limiter
 		if settings.TPS > 0 {
 			sharedLimiter = rate.NewLimiter(rate.Limit(settings.TPS), 1)
 			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", settings.TPS)
+		} else {
+			// No rate limiting
+			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
 		}
 
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers)
+		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
@@ -237,7 +240,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 
 		// Start the sender (starts all workers)
-		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx, sharedLimiter) })
+		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
 		log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
 
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
