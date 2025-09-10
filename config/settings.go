@@ -24,6 +24,7 @@ type Settings struct {
 	Prewarm          bool     `json:"prewarm,omitempty"`
 	RampUp           bool     `json:"rampUp,omitempty"`
 	ReportPath       string   `json:"reportPath,omitempty"`
+	TxsDir           string   `json:"txsDir,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values
@@ -41,6 +42,7 @@ func DefaultSettings() Settings {
 		Prewarm:          false,
 		RampUp:           false,
 		ReportPath:       "",
+		TxsDir:           "",
 	}
 }
 
@@ -60,6 +62,7 @@ func InitializeViper(cmd *cobra.Command) error {
 		"workers":          "workers",
 		"rampUp":           "ramp-up",
 		"reportPath":       "report-path",
+		"txsDir":           "txs-dir",
 	}
 
 	for viperKey, flagName := range flagBindings {
@@ -82,6 +85,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("workers", defaults.Workers)
 	viper.SetDefault("rampUp", defaults.RampUp)
 	viper.SetDefault("reportPath", defaults.ReportPath)
+	viper.SetDefault("txsDir", defaults.TxsDir)
 	return nil
 }
 
@@ -120,5 +124,6 @@ func ResolveSettings() Settings {
 		Prewarm:          viper.GetBool("prewarm"),
 		RampUp:           viper.GetBool("rampUp"),
 		ReportPath:       viper.GetString("reportPath"),
+		TxsDir:           viper.GetString("txsDir"),
 	}
 }

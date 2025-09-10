@@ -65,6 +65,7 @@ func init() {
 	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
 	rootCmd.Flags().String("report-path", "", "Path to save the report")
+	rootCmd.Flags().String("txs-dir", "", "Path to save the transactions")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -169,12 +170,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
 		}
 
-		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
-		if err != nil {
-			return fmt.Errorf("failed to create sender: %w", err)
-		}
-
 		// Create and start block collector if endpoints are available
 		var blockCollector *stats.BlockCollector
 		if len(cfg.Endpoints) > 0 && settings.TrackBlocks {
@@ -207,6 +202,12 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			})
 		}
 
+		// Create the sender from the config struct
+		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
+		if err != nil {
+			return fmt.Errorf("failed to create sender: %w", err)
+		}
+
 		// Enable dry-run mode in sender if specified
 		if settings.DryRun {
 			snd.SetDryRun(true)
@@ -225,7 +226,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		snd.SetStatsCollector(collector, logger)
 
 		// Create dispatcher
-		dispatcher := sender.NewDispatcher(gen, snd)
+		var dispatcher *sender.Dispatcher
+		if settings.TxsDir != "" {
+			writer := sender.NewTxsWriter(10_000_000, settings.TxsDir)
+			dispatcher = sender.NewDispatcher(gen, writer)
+		} else {
+			dispatcher = sender.NewDispatcher(gen, snd)
+		}
 
 		// Set statistics collector for dispatcher
 		dispatcher.SetStatsCollector(collector)
@@ -239,10 +246,11 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
 		}
 
-		// Start the sender (starts all workers)
-		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-		log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
-
+		if settings.TxsDir == "" {
+			// Start the sender (starts all workers)
+			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
+			log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
+		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if settings.Prewarm {
 			if err := dispatcher.Prewarm(ctx); err != nil {
