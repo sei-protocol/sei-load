@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
@@ -66,6 +67,7 @@ func init() {
 	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
 	rootCmd.Flags().String("report-path", "", "Path to save the report")
 	rootCmd.Flags().String("txs-dir", "", "Path to save the transactions")
+	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -228,7 +230,18 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create dispatcher
 		var dispatcher *sender.Dispatcher
 		if settings.TxsDir != "" {
-			writer := sender.NewTxsWriter(10_000_000, settings.TxsDir)
+			// get latest height
+			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
+			if err != nil {
+				return fmt.Errorf("failed to create ethclient: %w", err)
+			}
+			latestHeight, err := ethclient.BlockNumber(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get latest height: %w", err)
+			}
+			writerHeight := latestHeight + 10 // some buffer
+			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
+			writer := sender.NewTxsWriter(settings.TargetGas, settings.TxsDir, writerHeight, 100)
 			dispatcher = sender.NewDispatcher(gen, writer)
 		} else {
 			dispatcher = sender.NewDispatcher(gen, snd)
