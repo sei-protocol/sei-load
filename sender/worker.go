@@ -60,7 +60,7 @@ func (w *Worker) Run(ctx context.Context, limiter *rate.Limiter) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Start multiple worker goroutines that share the same channel
 		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx,limiter) })
+			s.Spawn(func() error { return w.processTransactions(ctx, limiter) })
 		}
 		return w.watchTransactions(ctx)
 	})
@@ -159,7 +159,7 @@ func (w *Worker) processTransactions(ctx context.Context, limiter *rate.Limiter)
 
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
-		if err := limiter.Wait(ctx); err!=nil {
+		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
 		tx, err := utils.Recv(ctx, w.txChan)

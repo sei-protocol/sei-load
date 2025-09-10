@@ -26,7 +26,7 @@ type ShardedSender struct {
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limiter *rate.Limiter) (*ShardedSender, error) {
+func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
@@ -40,7 +40,6 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 		workers:    workerList,
 		numShards:  len(cfg.Endpoints),
 		bufferSize: bufferSize,
-		limiter:    limiter,
 	}, nil
 }
 
@@ -51,7 +50,7 @@ func (s *ShardedSender) Run(ctx context.Context, limiter *rate.Limiter) error {
 	s.mu.Unlock()
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		for _, worker := range workers {
-			s.Spawn(func() error { return worker.Run(ctx,limiter) })
+			s.Spawn(func() error { return worker.Run(ctx, limiter) })
 		}
 		return nil
 	})
