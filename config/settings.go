@@ -12,35 +12,39 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	Workers          int      `json:"workers,omitempty"`
-	TPS              float64  `json:"tps,omitempty"`
-	StatsInterval    Duration `json:"statsInterval,omitempty"`
-	BufferSize       int      `json:"bufferSize,omitempty"`
-	DryRun           bool     `json:"dryRun,omitempty"`
-	Debug            bool     `json:"debug,omitempty"`
-	TrackReceipts    bool     `json:"trackReceipts,omitempty"`
-	TrackBlocks      bool     `json:"trackBlocks,omitempty"`
-	TrackUserLatency bool     `json:"trackUserLatency,omitempty"`
-	Prewarm          bool     `json:"prewarm,omitempty"`
-	RampUp           bool     `json:"rampUp,omitempty"`
-	ReportPath       string   `json:"reportPath,omitempty"`
+	Workers            int      `json:"workers,omitempty"`
+	TPS                float64  `json:"tps,omitempty"`
+	StatsInterval      Duration `json:"statsInterval,omitempty"`
+	BufferSize         int      `json:"bufferSize,omitempty"`
+	DryRun             bool     `json:"dryRun,omitempty"`
+	Debug              bool     `json:"debug,omitempty"`
+	TrackReceipts      bool     `json:"trackReceipts,omitempty"`
+	TrackBlocks        bool     `json:"trackBlocks,omitempty"`
+	TrackUserLatency   bool     `json:"trackUserLatency,omitempty"`
+	Prewarm            bool     `json:"prewarm,omitempty"`
+	PrewarmTPS         float64  `json:"prewarmTPS,omitempty"`
+	PrewarmParallelism int      `json:"prewarmParallelism,omitempty"`
+	RampUp             bool     `json:"rampUp,omitempty"`
+	ReportPath         string   `json:"reportPath,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values
 func DefaultSettings() Settings {
 	return Settings{
-		Workers:          1,
-		TPS:              0.0,
-		StatsInterval:    Duration(10 * time.Second),
-		BufferSize:       1000,
-		DryRun:           false,
-		Debug:            false,
-		TrackReceipts:    false,
-		TrackBlocks:      false,
-		TrackUserLatency: false,
-		Prewarm:          false,
-		RampUp:           false,
-		ReportPath:       "",
+		Workers:            1,
+		TPS:                0.0,
+		StatsInterval:      Duration(10 * time.Second),
+		BufferSize:         1000,
+		DryRun:             false,
+		Debug:              false,
+		TrackReceipts:      false,
+		TrackBlocks:        false,
+		TrackUserLatency:   false,
+		Prewarm:            false,
+		PrewarmTPS:         100.0,
+		PrewarmParallelism: 100,
+		RampUp:             false,
+		ReportPath:         "",
 	}
 }
 
@@ -48,18 +52,20 @@ func DefaultSettings() Settings {
 func InitializeViper(cmd *cobra.Command) error {
 	// Bind flags to viper with error checking
 	flagBindings := map[string]string{
-		"statsInterval":    "stats-interval",
-		"bufferSize":       "buffer-size",
-		"tps":              "tps",
-		"dryRun":           "dry-run",
-		"debug":            "debug",
-		"trackReceipts":    "track-receipts",
-		"trackBlocks":      "track-blocks",
-		"prewarm":          "prewarm",
-		"trackUserLatency": "track-user-latency",
-		"workers":          "workers",
-		"rampUp":           "ramp-up",
-		"reportPath":       "report-path",
+		"statsInterval":      "stats-interval",
+		"bufferSize":         "buffer-size",
+		"tps":                "tps",
+		"dryRun":             "dry-run",
+		"debug":              "debug",
+		"trackReceipts":      "track-receipts",
+		"trackBlocks":        "track-blocks",
+		"prewarm":            "prewarm",
+		"prewarmTPS":         "prewarm-tps",
+		"prewarmParallelism": "prewarm-parallelism",
+		"trackUserLatency":   "track-user-latency",
+		"workers":            "workers",
+		"rampUp":             "ramp-up",
+		"reportPath":         "report-path",
 	}
 
 	for viperKey, flagName := range flagBindings {
@@ -78,6 +84,8 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("trackReceipts", defaults.TrackReceipts)
 	viper.SetDefault("trackBlocks", defaults.TrackBlocks)
 	viper.SetDefault("prewarm", defaults.Prewarm)
+	viper.SetDefault("prewarmTPS", defaults.PrewarmTPS)
+	viper.SetDefault("prewarmParallelism", defaults.PrewarmParallelism)
 	viper.SetDefault("trackUserLatency", defaults.TrackUserLatency)
 	viper.SetDefault("workers", defaults.Workers)
 	viper.SetDefault("rampUp", defaults.RampUp)
@@ -108,17 +116,19 @@ func LoadSettings(settings *Settings) error {
 // ResolveSettings gets the final resolved settings from Viper
 func ResolveSettings() Settings {
 	return Settings{
-		Workers:          viper.GetInt("workers"),
-		TPS:              viper.GetFloat64("tps"),
-		StatsInterval:    Duration(viper.GetDuration("statsInterval")),
-		BufferSize:       viper.GetInt("bufferSize"),
-		DryRun:           viper.GetBool("dryRun"),
-		Debug:            viper.GetBool("debug"),
-		TrackReceipts:    viper.GetBool("trackReceipts"),
-		TrackBlocks:      viper.GetBool("trackBlocks"),
-		TrackUserLatency: viper.GetBool("trackUserLatency"),
-		Prewarm:          viper.GetBool("prewarm"),
-		RampUp:           viper.GetBool("rampUp"),
-		ReportPath:       viper.GetString("reportPath"),
+		Workers:            viper.GetInt("workers"),
+		TPS:                viper.GetFloat64("tps"),
+		StatsInterval:      Duration(viper.GetDuration("statsInterval")),
+		BufferSize:         viper.GetInt("bufferSize"),
+		DryRun:             viper.GetBool("dryRun"),
+		Debug:              viper.GetBool("debug"),
+		TrackReceipts:      viper.GetBool("trackReceipts"),
+		TrackBlocks:        viper.GetBool("trackBlocks"),
+		TrackUserLatency:   viper.GetBool("trackUserLatency"),
+		Prewarm:            viper.GetBool("prewarm"),
+		PrewarmTPS:         viper.GetFloat64("prewarmTPS"),
+		PrewarmParallelism: viper.GetInt("prewarmParallelism"),
+		RampUp:             viper.GetBool("rampUp"),
+		ReportPath:         viper.GetString("reportPath"),
 	}
 }

@@ -89,6 +89,8 @@ func TestArgumentPrecedence(t *testing.T) {
 			cmd.Flags().Bool("track-receipts", false, "Track receipts")
 			cmd.Flags().Bool("track-blocks", false, "Track blocks")
 			cmd.Flags().Bool("prewarm", false, "Prewarm")
+			cmd.Flags().Float64("prewarm-tps", 0, "Prewarm TPS")
+			cmd.Flags().Int("prewarm-parallelism", 0, "Prewarm parallelism")
 			cmd.Flags().Bool("track-user-latency", false, "Track user latency")
 			cmd.Flags().Int("buffer-size", 0, "Buffer size")
 			cmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
@@ -121,18 +123,20 @@ func TestDefaultSettings(t *testing.T) {
 	defaults := DefaultSettings()
 
 	expected := Settings{
-		Workers:          1,
-		TPS:              0.0,
-		StatsInterval:    Duration(10 * time.Second),
-		BufferSize:       1000,
-		DryRun:           false,
-		Debug:            false,
-		TrackReceipts:    false,
-		TrackBlocks:      false,
-		TrackUserLatency: false,
-		Prewarm:          false,
-		RampUp:           false,
-		ReportPath:       "",
+		Workers:            1,
+		TPS:                0.0,
+		StatsInterval:      Duration(10 * time.Second),
+		BufferSize:         1000,
+		DryRun:             false,
+		Debug:              false,
+		TrackReceipts:      false,
+		TrackBlocks:        false,
+		TrackUserLatency:   false,
+		Prewarm:            false,
+		PrewarmTPS:         100.0,
+		PrewarmParallelism: 100,
+		RampUp:             false,
+		ReportPath:         "",
 	}
 
 	if defaults != expected {

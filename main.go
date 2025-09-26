@@ -59,6 +59,8 @@ func init() {
 	rootCmd.Flags().Bool("track-receipts", false, "Track receipts")
 	rootCmd.Flags().Bool("track-blocks", false, "Track blocks")
 	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
+	rootCmd.Flags().Float64("prewarm-tps", 100, "Target transactions per second during prewarm (0 = unlimited)")
+	rootCmd.Flags().Int("prewarm-parallelism", 100, "Maximum number of in-flight prewarm transactions (0 = default)")
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
 	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
@@ -234,9 +236,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		if settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
 			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
-			dispatcher.SetPrewarmGenerator(prewarmGen, cfg.Endpoints[0])
+			dispatcher.SetPrewarmGenerator(prewarmGen, cfg.Endpoints[0], settings.PrewarmTPS, settings.PrewarmParallelism)
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
+			if settings.PrewarmParallelism > 1 {
+				log.Printf("🔥 Prewarm parallelism: %d in-flight transactions", settings.PrewarmParallelism)
+			}
+			if settings.PrewarmTPS > 0 {
+				log.Printf("🔥 Prewarm TPS limit: %.2f", settings.PrewarmTPS)
+			}
 		}
 
 		// Start the sender (starts all workers)
