@@ -234,7 +234,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		if settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
 			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
-			dispatcher.SetPrewarmGenerator(prewarmGen)
+			dispatcher.SetPrewarmGenerator(prewarmGen, cfg.Endpoints[0])
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
 		}
