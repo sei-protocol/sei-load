@@ -60,6 +60,8 @@ Edit `my-config.json`:
 | `--track-blocks` | false | Track block statistics |
 | `--track-user-latency` | false | Track user latency metrics |
 | `--prewarm` | false | Prewarm accounts before test |
+| `--prewarm-tps` | 100 | Target transactions per second during prewarm (0 = unlimited) |
+| `--prewarm-parallelism` | 100 | Maximum in-flight prewarm transactions |
 
 ## Examples
 
@@ -142,6 +144,8 @@ Available settings:
 - `trackBlocks`: Track block statistics
 - `trackUserLatency`: Track user latency metrics
 - `prewarm`: Prewarm accounts before test
+- `prewarmTPS`: Target transactions per second during prewarm (0 = unlimited)
+- `prewarmParallelism`: Maximum number of concurrent prewarm transactions
 
 ## Available Scenarios
 
