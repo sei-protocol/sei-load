@@ -15,6 +15,7 @@ type LoadTx struct {
 	JSONRPCPayload []byte
 	Payload        []byte
 	Scenario       *TxScenario
+	CosmosTx       []byte
 }
 
 // JSONRPCRequest represents json rpc request.

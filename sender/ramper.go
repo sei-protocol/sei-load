@@ -18,7 +18,7 @@ import (
 // If we successfully pass a given TPS, we will pause for PauseTime, and then start the next step.
 // If we fail to pass a given TPS, we will stop the loadtest.
 
-var ErrRampTestFailedSLO = errors.New("Ramp Test failed SLO")
+var ErrRampTestFailedSLO = errors.New("ramp test failed SLO")
 
 func (r *Ramper) FormatRampStats() string {
 	return fmt.Sprintf(`
