@@ -107,7 +107,7 @@ func (s *ScenarioBase) Generate(scenario *types.TxScenario) *types.LoadTx {
 		panic("Failed to create transaction: " + err.Error())
 	}
 
-	cosmosTxBytes, err := seievmtx.EncodeCosmosTxFromEthTx(tx)
+	cosmosTxBytes, _ := seievmtx.EncodeCosmosTxFromEthTx(tx)
 	res := types.CreateTxFromEthTx(tx, scenario)
 	res.CosmosTx = cosmosTxBytes
 	return res

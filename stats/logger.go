@@ -365,7 +365,11 @@ func (l *Logger) LogFinalStats() {
 			log.Printf("Error creating report file: %v", err)
 			return
 		}
-		defer reportFile.Close()
+		defer func() {
+			if err := reportFile.Close(); err != nil {
+				log.Printf("Error closing report file: %v", err)
+			}
+		}()
 		_, err = reportFile.WriteString(finalStats.String())
 		if err != nil {
 			log.Printf("Error writing report file: %v", err)
