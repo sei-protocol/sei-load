@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/sei-protocol/sei-load/utils/seievmtx"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/utils"
@@ -106,7 +107,10 @@ func (s *ScenarioBase) Generate(scenario *types.TxScenario) *types.LoadTx {
 		panic("Failed to create transaction: " + err.Error())
 	}
 
-	return types.CreateTxFromEthTx(tx, scenario)
+	cosmosTxBytes, err := seievmtx.EncodeCosmosTxFromEthTx(tx)
+	res := types.CreateTxFromEthTx(tx, scenario)
+	res.CosmosTx = cosmosTxBytes
+	return res
 }
 
 // GetConfig returns the configuration
