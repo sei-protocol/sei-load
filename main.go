@@ -68,6 +68,7 @@ func init() {
 	rootCmd.Flags().String("report-path", "", "Path to save the report")
 	rootCmd.Flags().String("txs-dir", "", "Path to save the transactions")
 	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
+	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -239,9 +240,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to get latest height: %w", err)
 			}
+			numBlocksToWrite := settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			writer := sender.NewTxsWriter(settings.TargetGas, settings.TxsDir, writerHeight, 100)
+			writer := sender.NewTxsWriter(settings.TargetGas, settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 			dispatcher = sender.NewDispatcher(gen, writer)
 		} else {
 			dispatcher = sender.NewDispatcher(gen, snd)
