@@ -1,7 +1,11 @@
 package scenarios
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -174,10 +178,28 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	}
 
 	// Deploy using contract-specific logic
-	address, _, err := c.deployer.DeployContract(auth, client)
+	address, tx, err := c.deployer.DeployContract(auth, client)
 	if err != nil {
 		panic("Failed to deploy contract: " + err.Error())
 	}
+
+	log.Printf("📤 Deployment transaction sent: %s", tx.Hash().Hex())
+
+	// Wait for the deployment transaction to be mined
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	receipt, err := bind.WaitMined(ctx, client, tx)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to wait for deployment transaction to be mined: %v", err))
+	}
+
+	// Check if deployment was successful
+	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
+		panic(fmt.Sprintf("Deployment transaction failed with status %d (tx: %s)", receipt.Status, tx.Hash().Hex()))
+	}
+
+	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
 	// Bind contract instance using the provided bind function
 	bindFunc := c.deployer.GetBindFunc()
