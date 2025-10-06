@@ -186,7 +186,7 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	log.Printf("📤 Deployment transaction sent: %s", tx.Hash().Hex())
 
 	// Wait for the deployment transaction to be mined
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	receipt, err := bind.WaitMined(ctx, client, tx)
@@ -200,6 +200,7 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	}
 
 	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
+	deployer.GetAndIncrementNonce()
 
 	// Bind contract instance using the provided bind function
 	bindFunc := c.deployer.GetBindFunc()
