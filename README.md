@@ -21,7 +21,7 @@ Edit `my-config.json`:
 ```json
 {
   "endpoints": ["http://localhost:8545"],
-  "chainId": 1329,
+  "chainId": 713714,
   "scenarios": [
     {"name": "EVMTransfer", "weight": 100}
   ],
@@ -94,7 +94,7 @@ Edit `my-config.json`:
 ```json
 {
   "endpoints": ["http://localhost:8545"],
-  "chainId": 1329,
+  "chainId": 713714,
   "scenarios": [...],
   "accounts": {...},
   "settings": {...}

@@ -134,15 +134,13 @@ func (g *configBasedGenerator) deployAll() error {
 	// Deploy sequentially to ensure proper nonce management
 	for _, instance := range g.instances {
 		// Deploy the scenario
+		log.Printf("Deploying scenario %s", instance.Name)
 		address := instance.Scenario.Deploy(g.config, g.deployer)
 		instance.Deployed = true
 
 		if address.Cmp(common.Address{}) != 0 {
 			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
-
-		// Increment deployer nonce for next deployment
-		g.deployer.GetAndIncrementNonce()
 	}
 
 	return nil

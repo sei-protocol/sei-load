@@ -49,7 +49,6 @@ func (tx *LoadTx) ShardID(n int) int {
 // TxScenario captures the scenario of this test transaction.
 type TxScenario struct {
 	Name     string
-	Nonce    uint64
 	Sender   *Account
 	Receiver common.Address
 }

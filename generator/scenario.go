@@ -40,7 +40,6 @@ func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
 		Name:     g.scenario.Name(),
 		Sender:   sender,
 		Receiver: receiver.Address,
-		Nonce:    sender.GetAndIncrementNonce(),
 	}), true
 }
 

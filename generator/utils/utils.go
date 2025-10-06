@@ -2,7 +2,6 @@ package utils
 
 import (
 	"math/big"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -46,9 +45,8 @@ func createTransactOpts(chainID *big.Int, account *loadtypes.Account, gasLimit u
 	}
 
 	// Set transaction parameters
-	auth.Nonce = big.NewInt(int64(account.Nonce))
+	auth.Nonce = big.NewInt(int64(account.GetAndIncrementNonce()))
 	auth.NoSend = noSend
-	auth.Value = big.NewInt(time.Now().Unix())
 
 	auth.GasLimit = gasLimit
 	auth.GasTipCap = big.NewInt(2000000000)  // 2 gwei tip (priority fee)
@@ -70,6 +68,5 @@ func CreateTransactionOpts(chainID *big.Int, scenario *loadtypes.TxScenario) *bi
 	if err != nil {
 		panic("Failed to create transaction options: " + err.Error())
 	}
-	opts.Nonce.SetUint64(scenario.Nonce)
 	return opts
 }
