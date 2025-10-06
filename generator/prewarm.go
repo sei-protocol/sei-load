@@ -79,7 +79,6 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 		Name:     "EVMTransfer",
 		Sender:   account,
 		Receiver: account.Address, // Send to self
-		Nonce:    account.GetAndIncrementNonce(),
 	}
 
 	// Generate the transaction using EVMTransfer scenario

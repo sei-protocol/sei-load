@@ -200,7 +200,6 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	}
 
 	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
-	deployer.GetAndIncrementNonce()
 
 	// Bind contract instance using the provided bind function
 	bindFunc := c.deployer.GetBindFunc()

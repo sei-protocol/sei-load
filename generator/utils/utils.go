@@ -45,7 +45,7 @@ func createTransactOpts(chainID *big.Int, account *loadtypes.Account, gasLimit u
 	}
 
 	// Set transaction parameters
-	auth.Nonce = big.NewInt(int64(account.Nonce))
+	auth.Nonce = big.NewInt(int64(account.GetAndIncrementNonce()))
 	auth.NoSend = noSend
 
 	auth.GasLimit = gasLimit
@@ -68,6 +68,5 @@ func CreateTransactionOpts(chainID *big.Int, scenario *loadtypes.TxScenario) *bi
 	if err != nil {
 		panic("Failed to create transaction options: " + err.Error())
 	}
-	opts.Nonce.SetUint64(scenario.Nonce)
 	return opts
 }

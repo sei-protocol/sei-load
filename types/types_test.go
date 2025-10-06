@@ -250,18 +250,18 @@ func TestCreateTxFromEthTx(t *testing.T) {
 	account, err := NewAccount()
 	require.NoError(t, err)
 
+	account.Nonce = 42
 	receiver := common.HexToAddress("0x1234567890123456789012345678901234567890")
 	scenario := &TxScenario{
 		Name:     "TestScenario",
-		Nonce:    42,
 		Sender:   account,
 		Receiver: receiver,
 	}
 
 	// Create a test transaction using DynamicFeeTx (EIP-1559)
 	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   big.NewInt(1329), // Sei testnet chain ID
-		Nonce:     scenario.Nonce,
+		ChainID:   big.NewInt(713714), // Sei testnet chain ID
+		Nonce:     scenario.Sender.Nonce,
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit
@@ -314,15 +314,15 @@ func TestLoadTxShardID(t *testing.T) {
 				account := accounts[i%len(accounts)]
 				scenario := &TxScenario{
 					Name:     "TestScenario",
-					Nonce:    uint64(i),
 					Sender:   account,
 					Receiver: common.Address{},
 				}
 
+				scenario.Sender.Nonce = uint64(i)
 				// Create a simple transaction
 				tx := types.NewTx(&types.DynamicFeeTx{
-					ChainID:   big.NewInt(1329), // Sei testnet chain ID
-					Nonce:     scenario.Nonce,
+					ChainID:   big.NewInt(713714), // Sei testnet chain ID
+					Nonce:     scenario.Sender.Nonce,
 					GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 					GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 					Gas:       21000,                   // Gas limit
@@ -374,14 +374,13 @@ func TestLoadTxShardIDConsistency(t *testing.T) {
 
 	scenario := &TxScenario{
 		Name:     "TestScenario",
-		Nonce:    0,
 		Sender:   account,
 		Receiver: common.Address{},
 	}
 
 	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   big.NewInt(1329), // Sei testnet chain ID
-		Nonce:     scenario.Nonce,
+		ChainID:   big.NewInt(713714), // Sei testnet chain ID
+		Nonce:     scenario.Sender.Nonce,
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit
@@ -408,16 +407,17 @@ func TestTxScenario(t *testing.T) {
 
 	receiver := common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
 
+	account.Nonce = 123
+
 	scenario := &TxScenario{
 		Name:     "TestScenario",
-		Nonce:    123,
 		Sender:   account,
 		Receiver: receiver,
 	}
 
 	// Verify all fields are set correctly
 	assert.Equal(t, "TestScenario", scenario.Name)
-	assert.Equal(t, uint64(123), scenario.Nonce)
+	assert.Equal(t, uint64(123), scenario.Sender.Nonce)
 	assert.Equal(t, account, scenario.Sender)
 	assert.Equal(t, receiver, scenario.Receiver)
 }
@@ -477,14 +477,13 @@ func BenchmarkCreateTxFromEthTx(b *testing.B) {
 
 	scenario := &TxScenario{
 		Name:     "BenchmarkScenario",
-		Nonce:    0,
 		Sender:   account,
 		Receiver: common.Address{},
 	}
 
 	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   big.NewInt(1329), // Sei testnet chain ID
-		Nonce:     scenario.Nonce,
+		ChainID:   big.NewInt(713714), // Sei testnet chain ID
+		Nonce:     scenario.Sender.Nonce,
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit
