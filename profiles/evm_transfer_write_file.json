@@ -26,7 +26,7 @@
       "trackUserLatency": false,
       "prewarm": false,
       "rampUp": false,
-      "txsDir": "~/load_txs",
+      "txsDir": "/root/load_txs",
       "targetGas": 30000000,
       "numBlocksToWrite": 1000
     }
