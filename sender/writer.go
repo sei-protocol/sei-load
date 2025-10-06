@@ -67,7 +67,10 @@ func (w *TxsWriter) Flush() error {
 	}()
 	// write to dir `~/load_txs`
 	// make dir if it doesn't exist
-	os.MkdirAll(w.txsDir, 0755)
+	err := os.MkdirAll(w.txsDir, 0755)
+	if err != nil {
+		return err
+	}
 	txsFile := filepath.Join(w.txsDir, fmt.Sprintf("%d_txs.json", w.nextHeight))
 	txData := TxWriteData{
 		TxPayloads: make([][]byte, 0),

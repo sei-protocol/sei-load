@@ -34,19 +34,22 @@ func TestTxsWriter_Flush(t *testing.T) {
 
 	txs := generator.GenerateN(3)
 
-	writer.Send(context.Background(), txs[0])
+	err := writer.Send(context.Background(), txs[0])
+	require.NoError(t, err)
 	require.Equal(t, uint64(1), writer.nextHeight)
 	require.Equal(t, uint64(21000), writer.bufferGas)
 	require.Len(t, writer.txBuffer, 1)
 	require.Equal(t, txs[0], writer.txBuffer[0])
 
-	writer.Send(context.Background(), txs[1])
+	err = writer.Send(context.Background(), txs[1])
+	require.NoError(t, err)
 	require.Equal(t, uint64(1), writer.nextHeight)
 	require.Equal(t, uint64(42000), writer.bufferGas)
 	require.Len(t, writer.txBuffer, 2)
 	require.Equal(t, txs[1], writer.txBuffer[1])
 
-	writer.Send(context.Background(), txs[2])
+	err = writer.Send(context.Background(), txs[2])
+	require.NoError(t, err)
 	// now should be flushed and have the new tx
 	require.Equal(t, uint64(2), writer.nextHeight)
 	require.Equal(t, uint64(21000), writer.bufferGas)
