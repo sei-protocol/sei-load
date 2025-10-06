@@ -26,7 +26,7 @@
       "trackUserLatency": false,
       "prewarm": false,
       "rampUp": false,
-      "txsDir": "/home/ubuntu/load_txs",
+      "txsDir": "~/load_txs",
       "targetGas": 30000000,
       "numBlocksToWrite": 1000
     }
