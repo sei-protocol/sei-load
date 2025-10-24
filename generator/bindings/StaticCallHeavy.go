@@ -31,8 +31,8 @@ var (
 
 // StaticCallHeavyMetaData contains all meta data concerning the StaticCallHeavy contract.
 var StaticCallHeavyMetaData = &bind.MetaData{
-	ABI: "[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"counter\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"performStaticCalls\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_targetContract\",\"type\":\"address\"}],\"name\":\"setTargetContract\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"targetContract\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]",
-	Bin: "0x6080604052348015600e575f5ffd5b505f805561026e8061001f5f395ff3fe608060405234801561000f575f5ffd5b506004361061004a575f3560e01c80632d2f38151461004e57806347fc822f1461005857806361bc221a14610088578063bd90df70146100a3575b5f5ffd5b6100566100ce565b005b6100566100663660046101af565b600180546001600160a01b0319166001600160a01b0392909216919091179055565b6100905f5481565b6040519081526020015b60405180910390f35b6001546100b6906001600160a01b031681565b6040516001600160a01b03909116815260200161009a565b5f5b60648110156101ac576001546001600160a01b0316156101905760015f9054906101000a90046001600160a01b03166001600160a01b031663209652556040518163ffffffff1660e01b8152600401602060405180830381865afa925050508015610158575060408051601f3d908101601f19168201909252610155918101906101dc565b60015b610174575f8054908061016a83610207565b91905055506101a4565b805f5f828254610184919061021f565b909155506101a4915050565b5f8054908061019e83610207565b91905055505b6001016100d0565b50565b5f602082840312156101bf575f5ffd5b81356001600160a01b03811681146101d5575f5ffd5b9392505050565b5f602082840312156101ec575f5ffd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b5f60018201610218576102186101f3565b5060010190565b80820180821115610232576102326101f3565b9291505056fea2646970667358221220cfdb3f3d2a1761ff21d479367f44a9c9d285353655b57f105cccf5002341519964736f6c634300081e0033",
+	ABI: "[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"counters\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"performStaticCalls\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_targetContract\",\"type\":\"address\"}],\"name\":\"setTargetContract\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"targetContract\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600e575f5ffd5b506102ab8061001c5f395ff3fe608060405234801561000f575f5ffd5b506004361061004a575f3560e01c80632d2f38151461004e57806347fc822f14610058578063bd90df7014610088578063be65ab8c146100b8575b5f5ffd5b6100566100e5565b005b6100566100663660046101ec565b600180546001600160a01b0319166001600160a01b0392909216919091179055565b60015461009b906001600160a01b031681565b6040516001600160a01b0390911681526020015b60405180910390f35b6100d76100c63660046101ec565b5f6020819052908152604090205481565b6040519081526020016100af565b5f5b60648110156101e9576001546001600160a01b0316156101c15760015f9054906101000a90046001600160a01b03166001600160a01b031663209652556040518163ffffffff1660e01b8152600401602060405180830381865afa92505050801561016f575060408051601f3d908101601f1916820190925261016c91810190610219565b60015b61019757335f90815260208190526040812080549161018d83610244565b91905055506101e1565b335f90815260208190526040812080548392906101b590849061025c565b909155506101e1915050565b335f9081526020819052604081208054916101db83610244565b91905055505b6001016100e7565b50565b5f602082840312156101fc575f5ffd5b81356001600160a01b0381168114610212575f5ffd5b9392505050565b5f60208284031215610229575f5ffd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b5f6001820161025557610255610230565b5060010190565b8082018082111561026f5761026f610230565b9291505056fea2646970667358221220ec23e36c3d797ed9e7b72d69121a287285a3a57cbd50986d4958a27cbeb61c5c64736f6c634300081e0033",
 }
 
 // StaticCallHeavyABI is the input ABI used to generate the binding from.
@@ -202,12 +202,12 @@ func (_StaticCallHeavy *StaticCallHeavyTransactorRaw) Transact(opts *bind.Transa
 	return _StaticCallHeavy.Contract.contract.Transact(opts, method, params...)
 }
 
-// Counter is a free data retrieval call binding the contract method 0x61bc221a.
+// Counters is a free data retrieval call binding the contract method 0xbe65ab8c.
 //
-// Solidity: function counter() view returns(uint256)
-func (_StaticCallHeavy *StaticCallHeavyCaller) Counter(opts *bind.CallOpts) (*big.Int, error) {
+// Solidity: function counters(address ) view returns(uint256)
+func (_StaticCallHeavy *StaticCallHeavyCaller) Counters(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error) {
 	var out []interface{}
-	err := _StaticCallHeavy.contract.Call(opts, &out, "counter")
+	err := _StaticCallHeavy.contract.Call(opts, &out, "counters", arg0)
 
 	if err != nil {
 		return *new(*big.Int), err
@@ -219,18 +219,18 @@ func (_StaticCallHeavy *StaticCallHeavyCaller) Counter(opts *bind.CallOpts) (*bi
 
 }
 
-// Counter is a free data retrieval call binding the contract method 0x61bc221a.
+// Counters is a free data retrieval call binding the contract method 0xbe65ab8c.
 //
-// Solidity: function counter() view returns(uint256)
-func (_StaticCallHeavy *StaticCallHeavySession) Counter() (*big.Int, error) {
-	return _StaticCallHeavy.Contract.Counter(&_StaticCallHeavy.CallOpts)
+// Solidity: function counters(address ) view returns(uint256)
+func (_StaticCallHeavy *StaticCallHeavySession) Counters(arg0 common.Address) (*big.Int, error) {
+	return _StaticCallHeavy.Contract.Counters(&_StaticCallHeavy.CallOpts, arg0)
 }
 
-// Counter is a free data retrieval call binding the contract method 0x61bc221a.
+// Counters is a free data retrieval call binding the contract method 0xbe65ab8c.
 //
-// Solidity: function counter() view returns(uint256)
-func (_StaticCallHeavy *StaticCallHeavyCallerSession) Counter() (*big.Int, error) {
-	return _StaticCallHeavy.Contract.Counter(&_StaticCallHeavy.CallOpts)
+// Solidity: function counters(address ) view returns(uint256)
+func (_StaticCallHeavy *StaticCallHeavyCallerSession) Counters(arg0 common.Address) (*big.Int, error) {
+	return _StaticCallHeavy.Contract.Counters(&_StaticCallHeavy.CallOpts, arg0)
 }
 
 // TargetContract is a free data retrieval call binding the contract method 0xbd90df70.
