@@ -10,13 +10,13 @@
     },
     "scenarios": [
       {
-        "name": "ERC20",
+        "name": "StaticCallHeavy",
         "weight": 1
       }
     ],
     "settings": {
       "workers": 1,
-      "tps": 0,
+      "tps": 10,
       "statsInterval": "5s",
       "bufferSize": 1000,
       "dryRun": false,

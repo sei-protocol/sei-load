@@ -15,7 +15,7 @@ ifeq ($(GOPATH),)
 endif
 
 # Tools
-SOLC := /tmp/solc
+SOLC := solc
 ABIGEN := abigen
 NVM_DIR := $(HOME)/.nvm
 NODE_VERSION := 20

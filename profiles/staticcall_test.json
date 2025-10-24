@@ -1,0 +1,28 @@
+{
+  "name": "StaticCall Test",
+  "description": "Test profile for StaticCallHeavy with comprehensive logging",
+  "scenarios": [
+    {
+      "name": "staticcallheavy",
+      "weight": 1.0,
+      "gas_picker": {
+        "type": "fixed",
+        "value": 200000
+      },
+      "gas_tip_cap_picker": {
+        "type": "fixed",
+        "value": 2000000000
+      },
+      "gas_fee_cap_picker": {
+        "type": "fixed",
+        "value": 20000000000
+      }
+    }
+  ],
+  "ramp_up_duration": "10s",
+  "duration": "1m",
+  "tps": 1,
+  "endpoints": ["http://localhost:8545"],
+  "chain_id": 1328,
+  "mock_deploy": false
+}
