@@ -51,10 +51,10 @@ func (s *EVMTransferScenario) CreateTransaction(config *config.LoadConfig, scena
 		Nonce:     scenario.Sender.GetAndIncrementNonce(),
 		To:        &scenario.Receiver,
 		Value:     big.NewInt(time.Now().Unix()),
-		Gas:       21000,                   // Standard gas limit for ETH transfer
-		GasTipCap: big.NewInt(2000000000),  // 2 gwei
-		GasFeeCap: big.NewInt(20000000000), // 20 gwei
-		Data:      nil,                     // No data for simple transfer
+		Gas:       21000,                    // Standard gas limit for ETH transfer
+		GasTipCap: big.NewInt(2000000000),   // 2 gwei
+		GasFeeCap: big.NewInt(200000000000), // 200 gwei
+		Data:      nil,                      // No data for simple transfer
 	}
 
 	if s.scenarioConfig.GasPicker != nil {
