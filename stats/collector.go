@@ -96,7 +96,7 @@ func (c *Collector) RecordTransaction(scenario, endpoint string, latency time.Du
 	c.recordOverallTPS()
 
 	// Record window stats
-	c.recordWindowStats(endpoint, latency)
+	c.recordWindowStats(endpoint, latency, success)
 }
 
 // recordLatency adds a latency measurement, maintaining history limit
@@ -168,15 +168,20 @@ func (c *Collector) recordOverallTPS() {
 }
 
 // recordWindowStats updates the window stats for an endpoint
-func (c *Collector) recordWindowStats(endpoint string, latency time.Duration) {
+func (c *Collector) recordWindowStats(endpoint string, latency time.Duration, success bool) {
 	windowStats := c.windowStats[endpoint]
 
 	// Update tx count
 	windowStats.txCount++
+	if success {
+		windowStats.successfulTxCount++
+	}
 
-	// Update latency sum and count
-	windowStats.latencySum += latency
-	windowStats.latencyCount++
+	// Update latency sum and count (only for successful transactions)
+	if success {
+		windowStats.latencySum += latency
+		windowStats.latencyCount++
+	}
 
 	// Update max and min latency
 	if latency > windowStats.maxLatency {
@@ -212,6 +217,7 @@ func (c *Collector) ResetWindowStats() {
 		// Reset window stats
 		c.windowStats[endpoint] = &WindowStats{
 			windowStart:          now,
+			successfulTxCount:    0,
 			cumulativeMaxTPS:     cumulativeMaxTPS,
 			cumulativeMaxLatency: cumulativeMaxLatency,
 		}
@@ -278,6 +284,7 @@ func (c *Collector) GetStats() Stats {
 		// Get window stats
 		if windowStats := c.windowStats[endpoint]; windowStats != nil {
 			endpointStats.WindowTxCount = windowStats.txCount
+			endpointStats.WindowSuccessfulTxCount = windowStats.successfulTxCount
 			endpointStats.WindowLatencySum = windowStats.latencySum
 			endpointStats.WindowLatencyCount = windowStats.latencyCount
 			endpointStats.WindowMaxLatency = windowStats.maxLatency
@@ -360,19 +367,21 @@ type EndpointStats struct {
 	QueueDepth  int // Current queue depth for monitoring backpressure
 
 	// Window stats
-	WindowTxCount        uint64
-	WindowLatencySum     time.Duration
-	WindowLatencyCount   int
-	WindowMaxLatency     time.Duration
-	WindowMinLatency     time.Duration
-	CumulativeMaxTPS     float64
-	CumulativeMaxLatency time.Duration
+	WindowTxCount           uint64
+	WindowSuccessfulTxCount uint64 // Count of successful transactions in window
+	WindowLatencySum        time.Duration
+	WindowLatencyCount      int
+	WindowMaxLatency        time.Duration
+	WindowMinLatency        time.Duration
+	CumulativeMaxTPS        float64
+	CumulativeMaxLatency    time.Duration
 }
 
 // WindowStats tracks metrics for the current reporting window
 type WindowStats struct {
 	windowStart          time.Time
 	txCount              uint64
+	successfulTxCount    uint64 // Count of successful transactions
 	latencySum           time.Duration
 	latencyCount         int
 	maxLatency           time.Duration

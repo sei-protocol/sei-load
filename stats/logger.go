@@ -31,18 +31,19 @@ type LoadTestStatistics struct {
 
 // EndpointPerformance represents detailed performance metrics for an endpoint
 type EndpointPerformance struct {
-	LatencyP50           time.Duration `json:"latency_p50"`
-	LatencyP99           time.Duration `json:"latency_p99"`
-	SampleCount          int           `json:"sample_count"`
-	CurrentTPS           float64       `json:"current_tps"`
-	MaxTPS               float64       `json:"max_tps"`
-	WindowTxCount        uint64        `json:"window_tx_count"`
-	WindowLatencySum     time.Duration `json:"window_latency_sum"`
-	WindowLatencyCount   int           `json:"window_latency_count"`
-	WindowMaxLatency     time.Duration `json:"window_max_latency"`
-	WindowMinLatency     time.Duration `json:"window_min_latency"`
-	CumulativeMaxTPS     float64       `json:"cumulative_max_tps"`
-	CumulativeMaxLatency time.Duration `json:"cumulative_max_latency"`
+	LatencyP50              time.Duration `json:"latency_p50"`
+	LatencyP99              time.Duration `json:"latency_p99"`
+	SampleCount             int           `json:"sample_count"`
+	CurrentTPS              float64       `json:"current_tps"`
+	MaxTPS                  float64       `json:"max_tps"`
+	WindowTxCount           uint64        `json:"window_tx_count"`
+	WindowSuccessfulTxCount uint64        `json:"window_successful_tx_count"`
+	WindowLatencySum        time.Duration `json:"window_latency_sum"`
+	WindowLatencyCount      int           `json:"window_latency_count"`
+	WindowMaxLatency        time.Duration `json:"window_max_latency"`
+	WindowMinLatency        time.Duration `json:"window_min_latency"`
+	CumulativeMaxTPS        float64       `json:"cumulative_max_tps"`
+	CumulativeMaxLatency    time.Duration `json:"cumulative_max_latency"`
 }
 
 // OverallTPS represents overall throughput metrics
@@ -90,8 +91,9 @@ func (fs *FinalStats) String() string {
 			perf.SampleCount)
 		result += fmt.Sprintf("    TPS Current: %.2f | Max (10s): %.2f\n",
 			perf.CurrentTPS, perf.MaxTPS)
-		result += fmt.Sprintf("    Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
+		result += fmt.Sprintf("    Window TXs: %d (successful: %d) | Latency Sum: %v | Latency Count: %d\n",
 			perf.WindowTxCount,
+			perf.WindowSuccessfulTxCount,
 			perf.WindowLatencySum.Round(time.Millisecond),
 			perf.WindowLatencyCount)
 		result += fmt.Sprintf("    Window Max Latency: %v | Window Min Latency: %v\n",
@@ -174,18 +176,19 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 	endpointPerformance := make(map[string]EndpointPerformance)
 	for endpoint, endpointStats := range stats.EndpointStats {
 		endpointPerformance[endpoint] = EndpointPerformance{
-			LatencyP50:           endpointStats.P50Latency,
-			LatencyP99:           endpointStats.P99Latency,
-			SampleCount:          endpointStats.SampleCount,
-			CurrentTPS:           endpointStats.CurrentTPS,
-			MaxTPS:               endpointStats.MaxTPS,
-			WindowTxCount:        endpointStats.WindowTxCount,
-			WindowLatencySum:     endpointStats.WindowLatencySum,
-			WindowLatencyCount:   endpointStats.WindowLatencyCount,
-			WindowMaxLatency:     endpointStats.WindowMaxLatency,
-			WindowMinLatency:     endpointStats.WindowMinLatency,
-			CumulativeMaxTPS:     endpointStats.CumulativeMaxTPS,
-			CumulativeMaxLatency: endpointStats.CumulativeMaxLatency,
+			LatencyP50:              endpointStats.P50Latency,
+			LatencyP99:              endpointStats.P99Latency,
+			SampleCount:             endpointStats.SampleCount,
+			CurrentTPS:              endpointStats.CurrentTPS,
+			MaxTPS:                  endpointStats.MaxTPS,
+			WindowTxCount:           endpointStats.WindowTxCount,
+			WindowSuccessfulTxCount: endpointStats.WindowSuccessfulTxCount,
+			WindowLatencySum:        endpointStats.WindowLatencySum,
+			WindowLatencyCount:      endpointStats.WindowLatencyCount,
+			WindowMaxLatency:        endpointStats.WindowMaxLatency,
+			WindowMinLatency:        endpointStats.WindowMinLatency,
+			CumulativeMaxTPS:        endpointStats.CumulativeMaxTPS,
+			CumulativeMaxLatency:    endpointStats.CumulativeMaxLatency,
 		}
 	}
 
@@ -259,8 +262,10 @@ func (l *Logger) logCurrentStats() {
 
 	// Aggregate metrics for overall summary
 	var totalWindowTxs uint64
+	var totalWindowSuccessfulTxs uint64
 	var totalTxs uint64
 	var totalWindowTPS float64
+	var totalWindowSuccessfulTPS float64
 	var totalCumulativeMaxTPS float64
 	var weightedLatencySum time.Duration
 	var totalLatencyCount int
@@ -271,10 +276,12 @@ func (l *Logger) logCurrentStats() {
 	for endpoint, endpointStats := range stats.EndpointStats {
 		// Calculate window TPS based on actual window duration
 		var windowTPS float64
+		var windowSuccessfulTPS float64
 		if endpointStats.WindowTxCount > 0 {
 			// Use the logging interval as the window duration
 			windowDuration := l.interval.Seconds()
 			windowTPS = float64(endpointStats.WindowTxCount) / windowDuration
+			windowSuccessfulTPS = float64(endpointStats.WindowSuccessfulTxCount) / windowDuration
 		}
 
 		// Calculate window average latency
@@ -293,8 +300,10 @@ func (l *Logger) logCurrentStats() {
 
 		// Aggregate for overall summary
 		totalWindowTxs += endpointStats.WindowTxCount
+		totalWindowSuccessfulTxs += endpointStats.WindowSuccessfulTxCount
 		totalTxs += totalTxsForEndpoint
 		totalWindowTPS += windowTPS
+		totalWindowSuccessfulTPS += windowSuccessfulTPS
 		totalCumulativeMaxTPS += endpointStats.CumulativeMaxTPS
 		weightedLatencySum += endpointStats.WindowLatencySum
 		totalLatencyCount += endpointStats.WindowLatencyCount
@@ -309,12 +318,13 @@ func (l *Logger) logCurrentStats() {
 		}
 
 		if l.debug {
-			// Format: [timestamp] endpoint | TXs: total | TPS: window(max) | Latency: avg(max) | P50: x P99: x
-			log.Printf("[%s] %s | TXs: %d | TPS: %.1f(%.1f) | Lat: %v(%v) | P50: %v P99: %v",
+			// Format: [timestamp] endpoint | TXs: total | TPS: window(successful)(max) | Latency: avg(max) | P50: x P99: x
+			log.Printf("[%s] %s | TXs: %d | TPS: %.1f(%.1f)(%.1f) | Lat: %v(%v) | P50: %v P99: %v",
 				time.Now().Format("15:04:05"),
 				endpoint,
 				totalTxsForEndpoint,
 				windowTPS,
+				windowSuccessfulTPS,
 				endpointStats.CumulativeMaxTPS,
 				windowAvgLatency.Round(time.Millisecond),
 				endpointStats.CumulativeMaxLatency.Round(time.Millisecond),
@@ -329,9 +339,10 @@ func (l *Logger) logCurrentStats() {
 		overallAvgLatency = weightedLatencySum / time.Duration(totalLatencyCount)
 	}
 
-	// Print overall summary line
-	log.Printf("throughput tps=%.2f, txs=%d,  latency(avg=%v p50=%v p99=%v max=%v)",
+	// Print overall summary line with both sent and successful TPS
+	log.Printf("throughput tps=%.2f (successful=%.2f), txs=%d,  latency(avg=%v p50=%v p99=%v max=%v)",
 		totalWindowTPS,
+		totalWindowSuccessfulTPS,
 		totalTxs,
 		overallAvgLatency.Round(time.Millisecond),
 		maxP50.Round(time.Millisecond),
