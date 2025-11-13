@@ -166,8 +166,38 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Create shared rate limiter for all workers if TPS is specified
 		var sharedLimiter *rate.Limiter
 		if settings.TPS > 0 {
-			sharedLimiter = rate.NewLimiter(rate.Limit(settings.TPS), 1)
-			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", settings.TPS)
+			// Set burst size to allow for bursts: at least 10% of TPS, minimum 10, or number of workers
+			burstSize := int(settings.TPS * 0.1)
+			if burstSize < 10 {
+				burstSize = 10
+			}
+			if burstSize < settings.Workers {
+				burstSize = settings.Workers
+			}
+			// For ramping scenarios, use a larger burst size to handle high TPS
+			// The ramper can reach 800+ TPS, so we need adequate burst capacity
+			if settings.RampUp {
+				// Use a more generous burst size for ramping (at least 100 or 10% of expected max)
+				// Ramper starts at 100 and increments by 100, so we expect high TPS
+				if burstSize < 100 {
+					burstSize = 100
+				}
+			}
+			// Cap burst size to prevent excessive memory usage
+			if burstSize > 1000 {
+				burstSize = 1000
+			}
+			sharedLimiter = rate.NewLimiter(rate.Limit(settings.TPS), burstSize)
+			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers (burst: %d)", settings.TPS, burstSize)
+		} else if settings.RampUp {
+			// When ramping is enabled but no initial TPS, use a reasonable burst size
+			// The ramper will set the limit dynamically, but burst size can't be changed
+			burstSize := 100 // Adequate for ramping up to 800+ TPS
+			if burstSize < settings.Workers {
+				burstSize = settings.Workers
+			}
+			sharedLimiter = rate.NewLimiter(rate.Inf, burstSize)
+			log.Printf("📈 Rate limiting enabled for ramping: unlimited TPS initially (burst: %d)", burstSize)
 		} else {
 			// No rate limiting
 			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
