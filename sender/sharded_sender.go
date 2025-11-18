@@ -10,6 +10,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
 
@@ -34,7 +35,8 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 
 	workerList := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
-		workerList[i] = NewWorker(i, cfg.SeiChainID, endpoint, bufferSize, workers, limiter)
+		wsEndpoint := utils.GetWSEndpoint(endpoint)
+		workerList[i] = NewWorker(i, cfg.SeiChainID, wsEndpoint, bufferSize, workers, limiter)
 	}
 
 	return &ShardedSender{

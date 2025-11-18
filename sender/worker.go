@@ -1,14 +1,10 @@
 package sender
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net"
-	"net/http"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -39,24 +35,6 @@ type Worker struct {
 	limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
 
-func newHttpClient() *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			DisableKeepAlives:     false,
-		},
-	}
-}
-
 // NewWorker creates a new worker for a specific endpoint
 func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
 	w := &Worker{
@@ -83,9 +61,8 @@ func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Log
 func (w *Worker) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Start multiple worker goroutines that share the same channel
-		client := newHttpClient()
 		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx, client) })
+			s.Spawn(func() error { return w.processTransactions(ctx) })
 		}
 		return w.watchTransactions(ctx)
 	})
@@ -171,7 +148,11 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 }
 
 // processTransactions is the main worker loop that processes transactions
-func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
+func (w *Worker) processTransactions(ctx context.Context) error {
+	client, err := ethclient.Dial(w.endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to create ethclient: %w", err)
+	}
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
 		if w.limiter != nil {
@@ -199,7 +180,7 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, tx *types.LoadTx) (_err error) {
 	defer func(start time.Time) {
 		metrics.sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
@@ -216,38 +197,9 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
-	// Create HTTP request with JSON-RPC payload
-	req, err := http.NewRequestWithContext(ctx, "POST", w.endpoint, bytes.NewReader(tx.JSONRPCPayload))
+	err := client.SendTransaction(ctx, tx.EthTx)
 	if err != nil {
-		return fmt.Errorf("Worker %d: Failed to create request: %w", w.id, err)
-	}
-
-	// Set headers for JSON-RPC
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Send the request
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
-	}
-	defer func() {
-		// Limit read to prevent memory issues with large responses
-		_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
-		if err != nil && err != io.EOF {
-			log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
-			// Log but don't fail - this is just for connection reuse
-		}
-
-		// Close response body and handle error
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Worker %d: Failed to close response body: %v", w.id, closeErr)
-		}
-	}()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
+		return fmt.Errorf("failed to send transaction: %w", err)
 	}
 
 	// Write to sentTxs channel without blocking
