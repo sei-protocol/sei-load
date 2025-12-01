@@ -9,9 +9,11 @@ var (
 	meter = otel.Meter("seiload/stats")
 
 	metrics = struct {
-		gasUsed     metric.Int64Histogram
-		blockNumber metric.Int64Gauge
-		blockTime   metric.Float64Histogram
+		gasUsed      metric.Int64Histogram
+		blockNumber  metric.Int64Gauge
+		blockTime    metric.Float64Histogram
+		blockTxCount metric.Int64Histogram
+		blockTPS     metric.Float64Histogram
 	}{
 		gasUsed: must(meter.Int64Histogram(
 			"gas_used",
@@ -27,6 +29,16 @@ var (
 			metric.WithDescription("Time taken to produce a block"),
 			metric.WithUnit("s"),
 			metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 5.0, 10.0, 20.0))),
+		blockTxCount: must(meter.Int64Histogram(
+			"block_tx_count",
+			metric.WithDescription("Number of transactions per block"),
+			metric.WithUnit("{tx}"),
+			metric.WithExplicitBucketBoundaries(0, 1, 10, 50, 100, 200, 500, 1000, 2000, 5000, 10000))),
+		blockTPS: must(meter.Float64Histogram(
+			"block_tps",
+			metric.WithDescription("Actual on-chain TPS (transactions per second based on block time)"),
+			metric.WithUnit("{tx/s}"),
+			metric.WithExplicitBucketBoundaries(1, 10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000))),
 	}
 )
 

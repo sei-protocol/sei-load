@@ -70,13 +70,13 @@ func (fs *FinalStats) String() string {
 
 	// Load test statistics
 	result += "=== Load Test Statistics ===\n"
-	result += fmt.Sprintf("Runtime: %v | Total TXs: %d | Avg TPS: %.2f\n\n",
+	result += fmt.Sprintf("Runtime: %v | Sent TXs: %d | Avg Sent TPS: %.2f\n\n",
 		fs.LoadTestStatistics.Runtime.Round(time.Second),
 		fs.LoadTestStatistics.TotalTxs,
 		fs.LoadTestStatistics.AvgTPS)
 
 	// Transaction counts by scenario
-	result += "Transaction Counts by Scenario:\n"
+	result += "Sent TX Counts by Scenario:\n"
 	for scenario, total := range fs.ScenarioDistribution {
 		result += fmt.Sprintf("  %s: %d\n", scenario, total)
 	}
@@ -89,9 +89,9 @@ func (fs *FinalStats) String() string {
 			perf.LatencyP50.Round(time.Millisecond),
 			perf.LatencyP99.Round(time.Millisecond),
 			perf.SampleCount)
-		result += fmt.Sprintf("    TPS Current: %.2f | Max (10s): %.2f\n",
+		result += fmt.Sprintf("    Sent TPS Current: %.2f | Max (10s): %.2f\n",
 			perf.CurrentTPS, perf.MaxTPS)
-		result += fmt.Sprintf("    Window TXs: %d (successful: %d) | Latency Sum: %v | Latency Count: %d\n",
+		result += fmt.Sprintf("    Window Sent TXs: %d (successful: %d) | Latency Sum: %v | Latency Count: %d\n",
 			perf.WindowTxCount,
 			perf.WindowSuccessfulTxCount,
 			perf.WindowLatencySum.Round(time.Millisecond),
@@ -99,20 +99,20 @@ func (fs *FinalStats) String() string {
 		result += fmt.Sprintf("    Window Max Latency: %v | Window Min Latency: %v\n",
 			perf.WindowMaxLatency.Round(time.Millisecond),
 			perf.WindowMinLatency.Round(time.Millisecond))
-		result += fmt.Sprintf("    Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
+		result += fmt.Sprintf("    Cumulative Max Sent TPS: %.2f | Cumulative Max Latency: %v\n",
 			perf.CumulativeMaxTPS,
 			perf.CumulativeMaxLatency.Round(time.Millisecond))
 	}
 
-	// Overall TPS
-	result += fmt.Sprintf("\nOverall TPS: Current: %.2f | Max (10s): %.2f\n",
+	// Overall sent TPS
+	result += fmt.Sprintf("\nOverall Sent TPS: Current: %.2f | Max (10s): %.2f\n",
 		fs.OverallTPS.Current, fs.OverallTPS.Max)
 
-	// Block stats
+	// Block stats (window)
 	if fs.BlockStatistics != nil && fs.BlockStatistics.SampleCount > 0 {
-		result += "\nBlock Statistics:\n"
-		result += fmt.Sprintf("  Height: %d | Samples: %d\n",
-			fs.BlockStatistics.MaxBlockNumber, fs.BlockStatistics.SampleCount)
+		result += "\nBlock Statistics (Window):\n"
+		result += fmt.Sprintf("  Height: %d | Blocks: %d | On-chain TXs: %d\n",
+			fs.BlockStatistics.MaxBlockNumber, fs.BlockStatistics.SampleCount, fs.BlockStatistics.TotalTxCount)
 		result += fmt.Sprintf("  Block Times: P50=%v | P99=%v | Max=%v\n",
 			fs.BlockStatistics.P50BlockTime.Round(time.Millisecond),
 			fs.BlockStatistics.P99BlockTime.Round(time.Millisecond),
@@ -121,26 +121,32 @@ func (fs *FinalStats) String() string {
 			fs.BlockStatistics.P50GasUsed,
 			fs.BlockStatistics.P99GasUsed,
 			fs.BlockStatistics.MaxGasUsed)
+		result += fmt.Sprintf("  On-chain TPS: Avg=%.1f | P50=%.1f | P99=%.1f | Max=%.1f\n",
+			fs.BlockStatistics.AvgTPS,
+			fs.BlockStatistics.P50TPS,
+			fs.BlockStatistics.P99TPS,
+			fs.BlockStatistics.MaxTPS)
 	}
 
-	// Overall performance summary
-	result += "\nOverall Performance Summary:\n"
+	// Overall performance summary (sent txs)
+	result += "\nOverall Sent TX Performance:\n"
 	result += fmt.Sprintf("  Total Runtime: %v\n", fs.OverallPerformance.TotalRuntime.Round(time.Second))
-	result += fmt.Sprintf("  Total Transactions: %d\n", fs.OverallPerformance.TotalTransactions)
-	result += fmt.Sprintf("  Average TPS: %.2f\n", fs.OverallPerformance.AverageTPS)
-	result += fmt.Sprintf("  Max TPS: %.2f\n", fs.OverallPerformance.MaxTPS)
+	result += fmt.Sprintf("  Total Sent TXs: %d\n", fs.OverallPerformance.TotalTransactions)
+	result += fmt.Sprintf("  Average Sent TPS: %.2f\n", fs.OverallPerformance.AverageTPS)
+	result += fmt.Sprintf("  Max Sent TPS (10s window): %.2f\n", fs.OverallPerformance.MaxTPS)
 
-	// Scenario distribution
-	result += "\nScenario Distribution:\n"
+	// Scenario distribution (sent txs)
+	result += "\nSent TX Distribution by Scenario:\n"
 	for scenario, total := range fs.ScenarioDistribution {
 		percentage := float64(total) / float64(fs.LoadTestStatistics.TotalTxs) * 100
 		result += fmt.Sprintf("  %s: %d (%.1f%%)\n", scenario, total, percentage)
 	}
 
-	// Gas statistics
+	// Cumulative block statistics (on-chain)
 	if fs.GasStatistics != nil && fs.GasStatistics.SampleCount > 0 {
-		result += "\nOverall Gas Statistics:\n"
-		result += fmt.Sprintf("  Max Block Number: %d\n", fs.GasStatistics.MaxBlockNumber)
+		result += "\nCumulative Block Statistics (On-chain):\n"
+		result += fmt.Sprintf("  Max Block Number: %d | Blocks: %d | On-chain TXs: %d\n",
+			fs.GasStatistics.MaxBlockNumber, fs.GasStatistics.SampleCount, fs.GasStatistics.TotalTxCount)
 		result += fmt.Sprintf("  Block Times: p50=%v p99=%v max=%v\n",
 			fs.GasStatistics.P50BlockTime.Round(time.Millisecond),
 			fs.GasStatistics.P99BlockTime.Round(time.Millisecond),
@@ -149,7 +155,11 @@ func (fs *FinalStats) String() string {
 			fs.GasStatistics.P50GasUsed,
 			fs.GasStatistics.P99GasUsed,
 			fs.GasStatistics.MaxGasUsed)
-		result += fmt.Sprintf("  Block Samples: %d\n", fs.GasStatistics.SampleCount)
+		result += fmt.Sprintf("  On-chain TPS: Avg=%.1f | P50=%.1f | P99=%.1f | Max=%.1f\n",
+			fs.GasStatistics.AvgTPS,
+			fs.GasStatistics.P50TPS,
+			fs.GasStatistics.P99TPS,
+			fs.GasStatistics.MaxTPS)
 	}
 
 	result += "==============================\n"

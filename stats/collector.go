@@ -192,8 +192,11 @@ func (c *Collector) recordWindowStats(endpoint string, latency time.Duration, su
 	}
 
 	// Update cumulative max TPS and latency
-	if windowStats.txCount > 0 {
-		currentTPS := float64(windowStats.txCount) / time.Since(windowStats.windowStart).Seconds()
+	// Only update max TPS after at least 1 second to avoid artificially high values
+	// at the start of each window (e.g., 1 tx / 0.001s = 1000 TPS)
+	windowDuration := time.Since(windowStats.windowStart).Seconds()
+	if windowStats.txCount > 0 && windowDuration >= 1.0 {
+		currentTPS := float64(windowStats.txCount) / windowDuration
 		if currentTPS > windowStats.cumulativeMaxTPS {
 			windowStats.cumulativeMaxTPS = currentTPS
 		}
