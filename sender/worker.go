@@ -9,19 +9,27 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
+	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
+
+var senderTracer = sync.OnceValue(func() trace.Tracer {
+	return observability.Tracer("github.com/sei-protocol/sei-load/sender")
+})
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
@@ -54,7 +62,11 @@ func WithMaxIdleConnsPerHost(n int) HttpClientOption {
 	return func(t *http.Transport) { t.MaxIdleConnsPerHost = n }
 }
 
-func newHttpClient(opts ...HttpClientOption) *http.Client {
+// newHttpTransport builds the tunable base *http.Transport. Split out from
+// newHttpClient so tests can inspect the transport's fields directly —
+// newHttpClient returns the transport already wrapped in otelhttp, whose
+// inner transport isn't publicly accessible.
+func newHttpTransport(opts ...HttpClientOption) *http.Transport {
 	t := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -70,9 +82,18 @@ func newHttpClient(opts ...HttpClientOption) *http.Client {
 	for _, opt := range opts {
 		opt(t)
 	}
+	return t
+}
+
+// newHttpClient returns a client whose Transport is wrapped by otelhttp so
+// outbound requests inject W3C traceparent + baggage and emit the standard
+// http.client.* metrics. Requires the global TextMapPropagator installed by
+// observability.Setup — otherwise spans are created but traceparent is not
+// injected (silent propagation failure).
+func newHttpClient(opts ...HttpClientOption) *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: t,
+		Transport: otelhttp.NewTransport(newHttpTransport(opts...)),
 	}
 }
 
@@ -134,10 +155,18 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
+	_, dialSpan := senderTracer().Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.String("seiload.chain_id", w.seiChainID),
+		attribute.Int("seiload.worker_id", w.id),
+	))
 	eth, err := ethclient.Dial(w.endpoint)
 	if err != nil {
+		dialSpan.RecordError(err)
+		dialSpan.End()
 		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
 	}
+	dialSpan.End()
 	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
@@ -153,8 +182,20 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 }
 
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
+	ctx, span := senderTracer().Start(ctx, "sender.check_receipt", trace.WithAttributes(
+		attribute.String("seiload.scenario", tx.Scenario.Name),
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.Int("seiload.worker_id", w.id),
+		attribute.String("seiload.chain_id", w.seiChainID),
+	))
 	defer func(start time.Time) {
-		metrics.receiptLatency.Record(ctx, time.Since(start).Seconds(),
+		if _err != nil {
+			span.RecordError(_err)
+		}
+		span.End()
+		// Recording inside the span context makes _err's recorded sample
+		// eligible for an exemplar linking to this trace.
+		senderMetrics().receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
@@ -219,8 +260,20 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 
 // sendTransaction sends a single transaction to the endpoint
 func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+	ctx, span := senderTracer().Start(ctx, "sender.send_tx", trace.WithAttributes(
+		attribute.String("seiload.scenario", tx.Scenario.Name),
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.Int("seiload.worker_id", w.id),
+		attribute.String("seiload.chain_id", w.seiChainID),
+	))
 	defer func(start time.Time) {
-		metrics.sendLatency.Record(ctx, time.Since(start).Seconds(),
+		if _err != nil {
+			span.RecordError(_err)
+		}
+		span.End()
+		// Recording inside the span context makes samples eligible for
+		// exemplars linking the histogram bucket to this trace.
+		senderMetrics().sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
@@ -248,6 +301,11 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	// Send the request
 	resp, err := client.Do(req)
 	if err != nil {
+		senderMetrics().txsRejected.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("endpoint", w.endpoint),
+			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("reason", "transport"),
+		))
 		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
 	}
 	defer func() {
@@ -266,8 +324,22 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
+		senderMetrics().httpErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.Int("status_code", resp.StatusCode),
+			attribute.String("endpoint", w.endpoint),
+		))
+		senderMetrics().txsRejected.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("endpoint", w.endpoint),
+			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("reason", "http_status"),
+		))
 		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
 	}
+
+	senderMetrics().txsAccepted.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("endpoint", w.endpoint),
+		attribute.String("scenario", tx.Scenario.Name),
+	))
 
 	// Write to sentTxs channel without blocking
 	select {

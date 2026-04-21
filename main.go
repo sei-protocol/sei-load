@@ -16,12 +16,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/sdk/metric"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
+	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/utils"
@@ -147,9 +146,40 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	listenAddr := cmd.Flag("metricsListenAddr").Value.String()
 	log.Printf("serving metrics at %s/metrics", listenAddr)
 
-	if err := exportPrometheusMetrics(ctx, listenAddr); err != nil {
-		return err
+	// Install OTel providers, Resource (from SEILOAD_* env), Prometheus reader,
+	// optional OTLP exporter (gated on OTEL_EXPORTER_OTLP_ENDPOINT), and
+	// composite W3C propagator. See docs/designs/sei-load-observability.md.
+	obsShutdown, err := observability.Setup(ctx, observability.Config{
+		RunScope:     observability.RunScopeFromEnv(),
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if err != nil {
+		return fmt.Errorf("observability setup: %w", err)
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obsShutdown(shutdownCtx); err != nil {
+			log.Printf("observability shutdown: %v", err)
+		}
+	}()
+
+	// Serve /metrics for the Prometheus PodMonitor scrape. The exporter
+	// registered by observability.Setup is attached to the default
+	// prometheus.DefaultGatherer via the SDK's prometheus reader.
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(listenAddr, mux); err != nil {
+			log.Printf("failed to serve metrics: %v", err)
+		}
+	}()
+
+	// Top-level run span. Wraps the entire load-test invocation so per-request
+	// spans in the sender package inherit this parent and Grafana's trace view
+	// shows the full run as a single timeline.
+	ctx, runSpan := otel.Tracer("github.com/sei-protocol/sei-load").Start(ctx, "seiload.run")
+	defer runSpan.End()
 
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
@@ -315,26 +345,12 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
+	// Emit run-summary gauges (one series per metric per run via Resource
+	// join) so benchmark dashboards and the AutobakeRunFailed alert have a
+	// durable record of this run even if the next scrape misses final state.
+	collector.EmitRunSummary(ctx)
 	log.Printf("👋 Shutdown complete")
 	return err
-}
-
-func exportPrometheusMetrics(ctx context.Context, listenAddr string) error {
-	metricsExporter, err := prometheus.New(prometheus.WithNamespace("seiload"))
-	if err != nil {
-		return fmt.Errorf("failed to create Prometheus exporter: %w", err)
-	}
-	otel.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(metricsExporter)))
-	go func() {
-		defer func() { _ = metricsExporter.Shutdown(ctx) }()
-		http.Handle("/metrics", promhttp.Handler())
-		err := http.ListenAndServe(listenAddr, nil)
-		if err != nil {
-			log.Printf("failed to serve metrics: %v", err)
-			return
-		}
-	}()
-	return nil
 }
 
 // loadConfig reads and parses the configuration file

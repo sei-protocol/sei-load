@@ -94,10 +94,10 @@ func (bc *BlockCollector) processNewBlock(header *types.Header) {
 		now := time.Now()
 		blockNum := header.Number.Uint64()
 		gasUsed := header.GasUsed
-		metrics.gasUsed.Record(context.Background(), int64(gasUsed), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+		statsMetrics().gasUsed.Record(context.Background(), int64(gasUsed), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 		// Update max block number
 		if blockNum > stats.maxBlockNum {
-			metrics.blockNumber.Record(context.Background(), int64(blockNum), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+			statsMetrics().blockNumber.Record(context.Background(), int64(blockNum), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.maxBlockNum = blockNum
 		}
 
@@ -108,7 +108,7 @@ func (bc *BlockCollector) processNewBlock(header *types.Header) {
 		// Calculate time between blocks
 		if !stats.lastBlockTime.IsZero() {
 			timeBetween := now.Sub(stats.lastBlockTime)
-			metrics.blockTime.Record(context.Background(), timeBetween.Seconds(), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+			statsMetrics().blockTime.Record(context.Background(), timeBetween.Seconds(), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.allBlockTimes = append(stats.allBlockTimes, timeBetween)
 			stats.windowBlockTimes = append(stats.windowBlockTimes, timeBetween)
 		}
