@@ -39,21 +39,40 @@ type Worker struct {
 	limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
 
-func newHttpClient() *http.Client {
+// HttpClientOption configures the Transport used by newHttpClient.
+type HttpClientOption func(*http.Transport)
+
+// WithMaxIdleConns overrides the global idle-connection pool size.
+func WithMaxIdleConns(n int) HttpClientOption {
+	return func(t *http.Transport) { t.MaxIdleConns = n }
+}
+
+// WithMaxIdleConnsPerHost overrides the per-host idle-connection pool size.
+// Scale this with the goroutine count sharing the client to avoid forcing
+// TCP re-dial (and ephemeral-port exhaustion) on most completions.
+func WithMaxIdleConnsPerHost(n int) HttpClientOption {
+	return func(t *http.Transport) { t.MaxIdleConnsPerHost = n }
+}
+
+func newHttpClient(opts ...HttpClientOption) *http.Client {
+	t := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          500,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableKeepAlives:     false,
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			DisableKeepAlives:     false,
-		},
+		Timeout:   30 * time.Second,
+		Transport: t,
 	}
 }
 
@@ -83,7 +102,10 @@ func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Log
 func (w *Worker) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Start multiple worker goroutines that share the same channel
-		client := newHttpClient()
+		client := newHttpClient(
+			WithMaxIdleConns(w.workers),
+			WithMaxIdleConnsPerHost(w.workers),
+		)
 		for range w.workers {
 			s.Spawn(func() error { return w.processTransactions(ctx, client) })
 		}
