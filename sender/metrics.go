@@ -4,51 +4,32 @@ import (
 	"context"
 	"sync"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
-	"github.com/sei-protocol/sei-load/observability"
 )
 
-// metricsBundle holds every instrument owned by this package. Acquired lazily
-// on first access (see senderMetrics) so package init order can't capture the
-// NoOp meter before observability.Setup has installed the real MeterProvider.
-type metricsBundle struct {
-	// --- existing instruments ---
-	sendLatency       metric.Float64Histogram
-	receiptLatency    metric.Float64Histogram
-	workerQueueLength metric.Int64ObservableGauge
+// Package-level instrumentation. The OTel Go global MeterProvider uses a
+// delegation mechanism (internal/global) — meters and instruments created
+// before observability.Setup runs are rebound to the real provider when it's
+// installed, so these package-var declarations are safe.
 
-	// --- new instruments (per sei-load-observability design) ---
-	// tpsAchieved is a gauge updated periodically by the stats package; it
-	// reflects the sender's most recent TPS sample per endpoint/scenario.
-	tpsAchieved metric.Float64ObservableGauge
-	// httpErrors counts failed HTTP request attempts by status code. Omitted
-	// for non-HTTP errors (e.g., DNS); those land in txsRejected.
-	httpErrors metric.Int64Counter
-	// txsAccepted counts successfully-submitted transactions.
-	txsAccepted metric.Int64Counter
-	// txsRejected counts transactions rejected by the target (or the local
-	// client). Reason attribute narrows the failure mode.
-	txsRejected metric.Int64Counter
-}
+var meter = otel.Meter("github.com/sei-protocol/sei-load/sender")
 
-var senderMetrics = sync.OnceValue(func() *metricsBundle {
-	m := observability.Meter("github.com/sei-protocol/sei-load/sender")
-	b := &metricsBundle{}
-
-	latencyBoundaries := []float64{0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0}
-	b.sendLatency = must(m.Float64Histogram(
+var (
+	sendLatency = must(meter.Float64Histogram(
 		"send_latency",
 		metric.WithDescription("Latency of sending transactions in seconds"),
 		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(latencyBoundaries...)))
-	b.receiptLatency = must(m.Float64Histogram(
+		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
+
+	receiptLatency = must(meter.Float64Histogram(
 		"receipt_latency",
 		metric.WithDescription("Latency of sending transactions in seconds"),
 		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(latencyBoundaries...)))
-	b.workerQueueLength = must(m.Int64ObservableGauge(
+		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
+
+	workerQueueLength = must(meter.Int64ObservableGauge(
 		"worker_queue_length",
 		metric.WithDescription("Length of the worker's queue"),
 		metric.WithUnit("{count}"),
@@ -65,26 +46,30 @@ var senderMetrics = sync.OnceValue(func() *metricsBundle {
 			return nil
 		})))
 
-	b.tpsAchieved = must(m.Float64ObservableGauge(
+	// tpsAchieved reads samples from tpsObserverRegistry, populated via
+	// RecordTPSSample. No producer is wired today; the gauge is registered
+	// so future producers slot in without adding to the public API.
+	tpsAchieved = must(meter.Float64ObservableGauge(
 		"tps_achieved",
 		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
 		metric.WithUnit("{transactions}/s"),
 		metric.WithFloat64Callback(observeTPS)))
-	b.httpErrors = must(m.Int64Counter(
+
+	httpErrors = must(meter.Int64Counter(
 		"http_errors",
 		metric.WithDescription("HTTP error responses from the target endpoint, by status code"),
 		metric.WithUnit("{errors}")))
-	b.txsAccepted = must(m.Int64Counter(
+
+	txsAccepted = must(meter.Int64Counter(
 		"txs_accepted",
 		metric.WithDescription("Transactions successfully submitted to an endpoint"),
 		metric.WithUnit("{transactions}")))
-	b.txsRejected = must(m.Int64Counter(
+
+	txsRejected = must(meter.Int64Counter(
 		"txs_rejected",
 		metric.WithDescription("Transactions rejected by the target or local client, by reason"),
 		metric.WithUnit("{transactions}")))
-
-	return b
-})
+)
 
 // meteredChainWorkers tracks Workers for the queue-length observable. Kept
 // as a package-level value because the observable callback needs a stable
@@ -115,9 +100,8 @@ func meterWorkerQueueLength(worker *Worker) {
 }
 
 // tpsObserverRegistry holds a per-(endpoint,chain_id,scenario) sample that
-// Worker.processTransactions updates; the observable gauge reads it on each
-// scrape. Writes are under write-lock; reads inside the callback are under
-// read-lock.
+// callers update via RecordTPSSample; the observable gauge reads it on each
+// scrape.
 var tpsObserverRegistry = struct {
 	lock    sync.RWMutex
 	samples map[tpsSampleKey]float64

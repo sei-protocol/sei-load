@@ -21,8 +21,7 @@ func (c *Collector) EmitRunSummary(ctx context.Context) {
 	finalTPS := c.overallTpsWindow.maxTPS
 	c.mu.RUnlock()
 
-	b := statsMetrics()
-	b.runDurationSeconds.Record(ctx, duration.Seconds())
-	b.runTPSFinal.Record(ctx, finalTPS)
-	b.runTxsAcceptedTotal.Record(ctx, int64(totalTxs))
+	runDurationSeconds.Record(ctx, duration.Seconds())
+	runTPSFinal.Record(ctx, finalTPS)
+	runTxsAcceptedTotal.Record(ctx, int64(totalTxs))
 }

@@ -9,27 +9,24 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
-	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
 
-var senderTracer = sync.OnceValue(func() trace.Tracer {
-	return observability.Tracer("github.com/sei-protocol/sei-load/sender")
-})
+var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
@@ -155,7 +152,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
-	_, dialSpan := senderTracer().Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
+	_, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
 		attribute.String("seiload.endpoint", w.endpoint),
 		attribute.String("seiload.chain_id", w.seiChainID),
 		attribute.Int("seiload.worker_id", w.id),
@@ -185,7 +182,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 }
 
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
-	ctx, span := senderTracer().Start(ctx, "sender.check_receipt", trace.WithAttributes(
+	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
 		attribute.String("seiload.endpoint", w.endpoint),
 		attribute.Int("seiload.worker_id", w.id),
@@ -202,7 +199,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		// count by ~50 and breach the cardinality guardrail. Worker-level
 		// investigation is preserved via the span attribute above (queried
 		// via exemplar pivot), not per-sample Prometheus labels.
-		senderMetrics().receiptLatency.Record(ctx, time.Since(start).Seconds(),
+		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
@@ -266,7 +263,7 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 
 // sendTransaction sends a single transaction to the endpoint
 func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
-	ctx, span := senderTracer().Start(ctx, "sender.send_tx", trace.WithAttributes(
+	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
 		attribute.String("seiload.endpoint", w.endpoint),
 		attribute.Int("seiload.worker_id", w.id),
@@ -281,7 +278,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		// exemplars linking the histogram bucket to this trace. worker_id
 		// deliberately omitted — see receiptLatency above for the
 		// cardinality rationale; worker-level attribution lives on the span.
-		senderMetrics().sendLatency.Record(ctx, time.Since(start).Seconds(),
+		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
@@ -308,7 +305,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	// Send the request
 	resp, err := client.Do(req)
 	if err != nil {
-		senderMetrics().txsRejected.Add(ctx, 1, metric.WithAttributes(
+		txsRejected.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("endpoint", w.endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "transport"),
@@ -331,11 +328,11 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		senderMetrics().httpErrors.Add(ctx, 1, metric.WithAttributes(
+		httpErrors.Add(ctx, 1, metric.WithAttributes(
 			attribute.Int("status_code", resp.StatusCode),
 			attribute.String("endpoint", w.endpoint),
 		))
-		senderMetrics().txsRejected.Add(ctx, 1, metric.WithAttributes(
+		txsRejected.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("endpoint", w.endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "http_status"),
@@ -343,7 +340,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
 	}
 
-	senderMetrics().txsAccepted.Add(ctx, 1, metric.WithAttributes(
+	txsAccepted.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("endpoint", w.endpoint),
 		attribute.String("scenario", tx.Scenario.Name),
 	))
