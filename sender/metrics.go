@@ -11,6 +11,7 @@ import (
 
 var meter = otel.Meter("github.com/sei-protocol/sei-load/sender")
 
+// Synchronous instruments — read by Record/Add call sites.
 var (
 	sendLatency = must(meter.Float64Histogram(
 		"send_latency",
@@ -23,29 +24,6 @@ var (
 		metric.WithDescription("Latency of sending transactions in seconds"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
-
-	workerQueueLength = must(meter.Int64ObservableGauge(
-		"worker_queue_length",
-		metric.WithDescription("Length of the worker's queue"),
-		metric.WithUnit("{count}"),
-		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
-			meteredChainWorkers.lock.RLock()
-			defer meteredChainWorkers.lock.RUnlock()
-			for _, worker := range meteredChainWorkers.workers {
-				observer.Observe(int64(worker.GetChannelLength()), metric.WithAttributes(
-					attribute.String("endpoint", worker.GetEndpoint()),
-					attribute.Int("worker_id", worker.id),
-					attribute.String("chain_id", worker.seiChainID),
-				))
-			}
-			return nil
-		})))
-
-	tpsAchieved = must(meter.Float64ObservableGauge(
-		"tps_achieved",
-		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
-		metric.WithUnit("{transactions}/s"),
-		metric.WithFloat64Callback(observeTPS)))
 
 	httpErrors = must(meter.Int64Counter(
 		"http_errors",
@@ -62,6 +40,34 @@ var (
 		metric.WithDescription("Transactions rejected by the target or local client, by reason"),
 		metric.WithUnit("{transactions}")))
 )
+
+// Observable instruments — registered in init for their callback side effect.
+// Return values are discarded because OTel invokes the callbacks on each
+// collection; we never read the instrument handles.
+func init() {
+	must(meter.Int64ObservableGauge(
+		"worker_queue_length",
+		metric.WithDescription("Length of the worker's queue"),
+		metric.WithUnit("{count}"),
+		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
+			meteredChainWorkers.lock.RLock()
+			defer meteredChainWorkers.lock.RUnlock()
+			for _, worker := range meteredChainWorkers.workers {
+				observer.Observe(int64(worker.GetChannelLength()), metric.WithAttributes(
+					attribute.String("endpoint", worker.GetEndpoint()),
+					attribute.Int("worker_id", worker.id),
+					attribute.String("chain_id", worker.seiChainID),
+				))
+			}
+			return nil
+		})))
+
+	must(meter.Float64ObservableGauge(
+		"tps_achieved",
+		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
+		metric.WithUnit("{transactions}/s"),
+		metric.WithFloat64Callback(observeTPS)))
+}
 
 // meteredChainWorkers is the registry the worker_queue_length callback reads.
 var meteredChainWorkers = &chainWorkerObserver{
