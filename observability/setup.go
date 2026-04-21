@@ -185,10 +185,6 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 		sdktrace.WithResource(res),
 	}
 
-	shutdowns := []func(context.Context) error{
-		promExporter.Shutdown,
-	}
-
 	if cfg.OTLPEndpoint != "" {
 		metricExp, mErr := otlpmetricgrpc.New(ctx,
 			otlpmetricgrpc.WithEndpoint(stripScheme(cfg.OTLPEndpoint)),
@@ -198,7 +194,6 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 			return nil, fmt.Errorf("otlp metric exporter: %w", mErr)
 		}
 		meterOpts = append(meterOpts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)))
-		shutdowns = append(shutdowns, metricExp.Shutdown)
 
 		traceExp, tErr := otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(stripScheme(cfg.OTLPEndpoint)),
@@ -208,16 +203,26 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 			return nil, fmt.Errorf("otlp trace exporter: %w", tErr)
 		}
 		tracerOpts = append(tracerOpts, sdktrace.WithBatcher(traceExp))
-		shutdowns = append(shutdowns, traceExp.Shutdown)
 	}
 
 	mp := sdkmetric.NewMeterProvider(meterOpts...)
 	otel.SetMeterProvider(mp)
-	shutdowns = append(shutdowns, mp.Shutdown)
 
 	tp := sdktrace.NewTracerProvider(tracerOpts...)
 	otel.SetTracerProvider(tp)
-	shutdowns = append(shutdowns, tp.Shutdown)
+
+	// Shutdown order is load-bearing. Providers must shut down FIRST — they
+	// cascade a final flush into their readers and exporters, which is the
+	// only chance to push the last batch of metrics/spans (OTLP periodic
+	// reader + batch span processor both buffer in-memory). If the exporter
+	// is shut down ahead of its provider, the provider's flush fails
+	// silently and the tail data is lost. The Prometheus pull-reader is
+	// immune (no buffer) but we keep the same rule for both paths so the
+	// ordering invariant is uniform.
+	shutdowns := []func(context.Context) error{
+		mp.Shutdown,
+		tp.Shutdown,
+	}
 
 	// Composite propagator: traceparent for trace context, baggage for
 	// arbitrary cross-process K/V. Without this, otelhttp will create spans

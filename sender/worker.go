@@ -172,11 +172,14 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := w.waitForReceipt(ctx, eth, tx); err != nil {
+		// Per-iteration timeout; cancel explicitly at end-of-iteration to
+		// avoid accumulating deferred cancels (one per tx × run duration
+		// grows unboundedly under sustained load).
+		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := w.waitForReceipt(waitCtx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
 		}
+		cancel()
 	}
 	return ctx.Err()
 }
@@ -193,13 +196,16 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 			span.RecordError(_err)
 		}
 		span.End()
-		// Recording inside the span context makes _err's recorded sample
-		// eligible for an exemplar linking to this trace.
+		// Recording inside the span context makes this sample eligible for
+		// an exemplar linking to the trace. worker_id is intentionally NOT
+		// a histogram label here — per-worker fan-out would multiply series
+		// count by ~50 and breach the cardinality guardrail. Worker-level
+		// investigation is preserved via the span attribute above (queried
+		// via exemplar pivot), not per-sample Prometheus labels.
 		senderMetrics().receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
-				attribute.Int("worker_id", w.id),
 				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)
@@ -272,12 +278,13 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		}
 		span.End()
 		// Recording inside the span context makes samples eligible for
-		// exemplars linking the histogram bucket to this trace.
+		// exemplars linking the histogram bucket to this trace. worker_id
+		// deliberately omitted — see receiptLatency above for the
+		// cardinality rationale; worker-level attribution lives on the span.
 		senderMetrics().sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
-				attribute.Int("worker_id", w.id),
 				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)

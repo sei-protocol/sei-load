@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
@@ -165,11 +166,23 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	}()
 
 	// Serve /metrics for the Prometheus PodMonitor scrape. The exporter
-	// registered by observability.Setup is attached to the default
-	// prometheus.DefaultGatherer via the SDK's prometheus reader.
+	// registered by observability.Setup attaches to prometheus.DefaultGatherer
+	// via the SDK's prometheus reader.
+	//
+	// EnableOpenMetrics=true is load-bearing: promhttp.Handler()'s default
+	// opts leave it off, which makes the handler never respond with the
+	// OpenMetrics content type regardless of the scraper's Accept header.
+	// The OTel SDK still computes exemplars, but the handler then silently
+	// strips them. With OpenMetrics negotiation on, Prometheus and Alloy
+	// receive exemplars alongside each histogram sample. Pair with
+	// enableFeatures: [exemplar-storage] on the Prometheus server (see
+	// clusters/harbor/monitoring/prometheus-operator.yaml).
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
+		mux.Handle("/metrics", promhttp.HandlerFor(
+			prometheus.DefaultGatherer,
+			promhttp.HandlerOpts{EnableOpenMetrics: true},
+		))
 		if err := http.ListenAndServe(listenAddr, mux); err != nil {
 			log.Printf("failed to serve metrics: %v", err)
 		}
