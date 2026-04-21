@@ -102,10 +102,7 @@ func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Log
 func (w *Worker) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Start multiple worker goroutines that share the same channel
-		client := newHttpClient(
-			WithMaxIdleConns(w.workers),
-			WithMaxIdleConnsPerHost(w.workers),
-		)
+		client := newHttpClient()
 		for range w.workers {
 			s.Spawn(func() error { return w.processTransactions(ctx, client) })
 		}
