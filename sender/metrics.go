@@ -9,11 +9,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Package-level instrumentation. The OTel Go global MeterProvider uses a
-// delegation mechanism (internal/global) — meters and instruments created
-// before observability.Setup runs are rebound to the real provider when it's
-// installed, so these package-var declarations are safe.
-
 var meter = otel.Meter("github.com/sei-protocol/sei-load/sender")
 
 var (
@@ -46,9 +41,6 @@ var (
 			return nil
 		})))
 
-	// tpsAchieved reads samples from tpsObserverRegistry, populated via
-	// RecordTPSSample. No producer is wired today; the gauge is registered
-	// so future producers slot in without adding to the public API.
 	tpsAchieved = must(meter.Float64ObservableGauge(
 		"tps_achieved",
 		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
@@ -71,9 +63,7 @@ var (
 		metric.WithUnit("{transactions}")))
 )
 
-// meteredChainWorkers tracks Workers for the queue-length observable. Kept
-// as a package-level value because the observable callback needs a stable
-// reference; Worker registration is lock-synchronized.
+// meteredChainWorkers is the registry the worker_queue_length callback reads.
 var meteredChainWorkers = &chainWorkerObserver{
 	workers: make(map[chainWorkerID]*Worker),
 }
@@ -99,9 +89,6 @@ func meterWorkerQueueLength(worker *Worker) {
 	}
 }
 
-// tpsObserverRegistry holds a per-(endpoint,chain_id,scenario) sample that
-// callers update via RecordTPSSample; the observable gauge reads it on each
-// scrape.
 var tpsObserverRegistry = struct {
 	lock    sync.RWMutex
 	samples map[tpsSampleKey]float64
@@ -115,8 +102,7 @@ type tpsSampleKey struct {
 	scenario string
 }
 
-// RecordTPSSample sets the latest TPS sample for a given (endpoint, chain_id,
-// scenario) triple. Called from the sender as it rolls its TPS window.
+// RecordTPSSample publishes the latest TPS sample read by the tps_achieved gauge.
 func RecordTPSSample(endpoint, chainID, scenario string, tps float64) {
 	tpsObserverRegistry.lock.Lock()
 	defer tpsObserverRegistry.lock.Unlock()
@@ -144,7 +130,6 @@ func statusAttrFromError(err error) attribute.KeyValue {
 	return attribute.String(key, "failure")
 }
 
-// must panics if err is non-nil, otherwise returns v.
 func must[V any](v V, err error) V {
 	if err != nil {
 		panic(err)

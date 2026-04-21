@@ -53,16 +53,14 @@ func WithMaxIdleConns(n int) HttpClientOption {
 }
 
 // WithMaxIdleConnsPerHost overrides the per-host idle-connection pool size.
-// Scale this with the goroutine count sharing the client to avoid forcing
-// TCP re-dial (and ephemeral-port exhaustion) on most completions.
+// Scale with goroutine count to avoid TCP re-dial on each completion.
 func WithMaxIdleConnsPerHost(n int) HttpClientOption {
 	return func(t *http.Transport) { t.MaxIdleConnsPerHost = n }
 }
 
-// newHttpTransport builds the tunable base *http.Transport. Split out from
-// newHttpClient so tests can inspect the transport's fields directly —
-// newHttpClient returns the transport already wrapped in otelhttp, whose
-// inner transport isn't publicly accessible.
+// newHttpTransport is the base transport factory. Exists separately so tests
+// can inspect the unwrapped *http.Transport; newHttpClient returns it wrapped
+// in otelhttp, whose inner transport isn't publicly accessible.
 func newHttpTransport(opts ...HttpClientOption) *http.Transport {
 	t := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -82,11 +80,9 @@ func newHttpTransport(opts ...HttpClientOption) *http.Transport {
 	return t
 }
 
-// newHttpClient returns a client whose Transport is wrapped by otelhttp so
-// outbound requests inject W3C traceparent + baggage and emit the standard
-// http.client.* metrics. Requires the global TextMapPropagator installed by
-// observability.Setup — otherwise spans are created but traceparent is not
-// injected (silent propagation failure).
+// newHttpClient returns an otelhttp-wrapped client: injects traceparent on
+// outbound, emits http.client.* metrics. Requires observability.Setup to have
+// installed the global TextMapPropagator.
 func newHttpClient(opts ...HttpClientOption) *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
@@ -169,9 +165,7 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Per-iteration timeout; cancel explicitly at end-of-iteration to
-		// avoid accumulating deferred cancels (one per tx × run duration
-		// grows unboundedly under sustained load).
+		// Cancel per-iteration; defer would leak contexts under sustained load.
 		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := w.waitForReceipt(waitCtx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
@@ -193,12 +187,8 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 			span.RecordError(_err)
 		}
 		span.End()
-		// Recording inside the span context makes this sample eligible for
-		// an exemplar linking to the trace. worker_id is intentionally NOT
-		// a histogram label here — per-worker fan-out would multiply series
-		// count by ~50 and breach the cardinality guardrail. Worker-level
-		// investigation is preserved via the span attribute above (queried
-		// via exemplar pivot), not per-sample Prometheus labels.
+		// Record inside the span ctx so exemplars link to the trace.
+		// worker_id stays off the histogram (cardinality); available via span.
 		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
@@ -274,10 +264,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 			span.RecordError(_err)
 		}
 		span.End()
-		// Recording inside the span context makes samples eligible for
-		// exemplars linking the histogram bucket to this trace. worker_id
-		// deliberately omitted — see receiptLatency above for the
-		// cardinality rationale; worker-level attribution lives on the span.
+		// See receiptLatency above re: span-context recording + no worker_id.
 		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),

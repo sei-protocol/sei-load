@@ -2,8 +2,6 @@ package observability
 
 import (
 	"context"
-	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -137,8 +135,6 @@ func TestStripScheme(t *testing.T) {
 	}
 }
 
-// resourceAttrs flattens a Resource's attribute slice into a map for test
-// assertions.
 func resourceAttrs(kvs []attribute.KeyValue) map[string]string {
 	out := make(map[string]string, len(kvs))
 	for _, kv := range kvs {
@@ -146,7 +142,3 @@ func resourceAttrs(kvs []attribute.KeyValue) map[string]string {
 	}
 	return out
 }
-
-// ignore unused-import warnings in case of refactor churn
-var _ = os.Getenv
-var _ = strings.TrimSpace

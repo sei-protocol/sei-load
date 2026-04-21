@@ -147,9 +147,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	listenAddr := cmd.Flag("metricsListenAddr").Value.String()
 	log.Printf("serving metrics at %s/metrics", listenAddr)
 
-	// Install OTel providers, Resource (from SEILOAD_* env), Prometheus reader,
-	// optional OTLP exporter (gated on OTEL_EXPORTER_OTLP_ENDPOINT), and
-	// composite W3C propagator. See docs/designs/sei-load-observability.md.
 	obsShutdown, err := observability.Setup(ctx, observability.Config{
 		RunScope:     observability.RunScopeFromEnv(),
 		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
@@ -165,18 +162,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Serve /metrics for the Prometheus PodMonitor scrape. The exporter
-	// registered by observability.Setup attaches to prometheus.DefaultGatherer
-	// via the SDK's prometheus reader.
-	//
-	// EnableOpenMetrics=true is load-bearing: promhttp.Handler()'s default
-	// opts leave it off, which makes the handler never respond with the
-	// OpenMetrics content type regardless of the scraper's Accept header.
-	// The OTel SDK still computes exemplars, but the handler then silently
-	// strips them. With OpenMetrics negotiation on, Prometheus and Alloy
-	// receive exemplars alongside each histogram sample. Pair with
-	// enableFeatures: [exemplar-storage] on the Prometheus server (see
-	// clusters/harbor/monitoring/prometheus-operator.yaml).
+	// EnableOpenMetrics is load-bearing: the default promhttp.Handler() strips
+	// exemplars regardless of the scraper's Accept header.
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(
@@ -188,9 +175,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Top-level run span. Wraps the entire load-test invocation so per-request
-	// spans in the sender package inherit this parent and Grafana's trace view
-	// shows the full run as a single timeline.
 	ctx, runSpan := otel.Tracer("github.com/sei-protocol/sei-load").Start(ctx, "seiload.run")
 	defer runSpan.End()
 
@@ -358,9 +342,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
-	// Emit run-summary gauges (one series per metric per run via Resource
-	// join) so benchmark dashboards and the AutobakeRunFailed alert have a
-	// durable record of this run even if the next scrape misses final state.
 	collector.EmitRunSummary(ctx)
 	log.Printf("👋 Shutdown complete")
 	return err

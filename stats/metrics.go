@@ -5,9 +5,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Package-level instrumentation. See note in sender/metrics.go — the OTel Go
-// global delegation mechanism makes var declarations at package init safe.
-
 var meter = otel.Meter("github.com/sei-protocol/sei-load/stats")
 
 var (
@@ -28,10 +25,7 @@ var (
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 5.0, 10.0, 20.0)))
 
-	// --- run-summary instruments (per sei-load-observability design) ---
-	// Gauges, not counters: single emission at run end produces exactly 1
-	// series per metric per run after the Resource join — the right shape
-	// for cross-run comparison dashboards.
+	// Run-summary: gauges emitted once at run end → 1 series/run via Resource join.
 	runTPSFinal = must(meter.Float64Gauge(
 		"run_tps_final",
 		metric.WithDescription("Final observed TPS for this run (emitted once at run end)"),
@@ -48,7 +42,6 @@ var (
 		metric.WithUnit("{transactions}")))
 )
 
-// must panics if err is non-nil, otherwise returns v.
 func must[V any](v V, err error) V {
 	if err != nil {
 		panic(err)

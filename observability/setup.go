@@ -1,15 +1,5 @@
 // Package observability configures OpenTelemetry for sei-load.
-//
-// Setup wires a MeterProvider + TracerProvider backed by a Resource populated
-// from the SEILOAD_* run-scope env vars, exports metrics via a Prometheus
-// reader (always) and an OTLP gRPC exporter (when OTEL_EXPORTER_OTLP_ENDPOINT
-// is set), and installs the composite TraceContext+Baggage propagator for
-// W3C context propagation on outbound HTTP.
-//
-// See docs/designs/sei-load-observability.md (in the platform repo) for the
-// design rationale — run scope rides as Resource attributes (never per-sample
-// labels), exemplars are enabled via trace_based filter by default, and the
-// package supports future cluster-of-seiload deployments via service.instance.id.
+// See README.md for invariants and exemplar requirements.
 package observability
 
 import (
@@ -31,44 +21,18 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// RunScope is the set of attributes that identify a single sei-load process
-// invocation. The values travel on the OTel Resource (one series per process)
-// rather than on per-sample metric labels — see the design doc for the
-// cardinality rationale.
+// RunScope identifies a single sei-load invocation. Values ride on the OTel
+// Resource, not per-sample metric labels (see README cardinality rationale).
 type RunScope struct {
-	// ServiceVersion is sei-load's own build version, separate from CommitID
-	// below (which names the commit under test). Built via -ldflags or pulled
-	// from runtime/debug.ReadBuildInfo. Optional.
-	ServiceVersion string
-
-	// RunID uniquely identifies a single run (e.g., GHA run id for autobake,
-	// benchmark job id for the benchmarks namespace).
-	RunID string
-
-	// ChainID names the ephemeral test chain for this run (e.g.
-	// "autobake-24702101866-1").
-	ChainID string
-
-	// CommitID is the full sei-chain commit SHA being exercised. Lives on the
-	// Resource as seiload.commit_id and (truncated to 8 chars) as
-	// seiload.commit_id_short for label-friendly uses.
-	CommitID string
-
-	// Workload names the invocation's purpose: "autobake", "benchmark",
-	// "loadtest". Used by alert rules to scope matchers.
-	Workload string
-
-	// InstanceID uniquely identifies a single sei-load process within a run —
-	// typically the pod name via the downward API. Populated for cluster-of-
-	// seiload deployments where multiple pods share a RunID/ChainID but each
-	// emits its own metrics stream. Exported as service.instance.id
-	// (OTel semconv) so dashboards can aggregate or disaggregate naturally.
-	InstanceID string
+	ServiceVersion string // sei-load's own build version (distinct from CommitID, which names what's under test)
+	RunID          string // e.g. GHA run id for autobake, benchmark job id elsewhere
+	ChainID        string // ephemeral test chain for this run
+	CommitID       string // sei-chain commit under test; exported as seiload.commit_id + 8-char seiload.commit_id_short
+	Workload       string // "autobake" | "benchmark" | "loadtest"; alert rules match on this
+	InstanceID     string // unique per process; falls back to hostname. Disambiguates cluster-of-seiload pods.
 }
 
-// RunScopeFromEnv reads SEILOAD_RUN_ID / SEILOAD_CHAIN_ID / SEILOAD_COMMIT_ID
-// / SEILOAD_WORKLOAD / SEILOAD_INSTANCE_ID and OTEL_SERVICE_VERSION. Missing
-// values remain empty strings — the caller decides whether that's fatal.
+// RunScopeFromEnv reads SEILOAD_* and OTEL_SERVICE_VERSION. Missing values stay empty.
 func RunScopeFromEnv() RunScope {
 	return RunScope{
 		ServiceVersion: os.Getenv("OTEL_SERVICE_VERSION"),
@@ -80,8 +44,6 @@ func RunScopeFromEnv() RunScope {
 	}
 }
 
-// shortCommit returns the first 8 chars of a commit SHA for label-friendly
-// use (Alertmanager grouping, dashboard variable values). Empty in / empty out.
 func shortCommit(full string) string {
 	if len(full) <= 8 {
 		return full
@@ -89,10 +51,6 @@ func shortCommit(full string) string {
 	return full[:8]
 }
 
-// buildResource composes the OTel Resource from the run scope plus standard
-// service identity. service.instance.id defaults to the hostname when
-// InstanceID is empty — this keeps single-pod deployments behaving sensibly
-// without requiring explicit wiring.
 func buildResource(rs RunScope) (*resource.Resource, error) {
 	instanceID := rs.InstanceID
 	if instanceID == "" {
@@ -125,43 +83,22 @@ func buildResource(rs RunScope) (*resource.Resource, error) {
 		attrs = append(attrs, attribute.String("seiload.workload", rs.Workload))
 	}
 
-	// NewSchemaless lets us merge with resource.Default() (which tracks its
-	// own schema URL) without the "conflicting Schema URL" error that occurs
-	// when both sides declare a schema. App-specific attributes are schema-
-	// agnostic; the SDK Default covers the OS/process identity schema.
+	// NewSchemaless avoids "conflicting Schema URL" on merge with Default().
 	return resource.Merge(
 		resource.Default(),
 		resource.NewSchemaless(attrs...),
 	)
 }
 
-// Config is the knob set for Setup. Zero-value Config is usable: it produces a
-// Prometheus-only metrics pipeline, no OTLP, no tracing exporter. Populate
-// PrometheusNamespace to set the exporter's metric name prefix.
+// Config knobs for Setup. Zero value is usable (Prometheus-only, no OTLP).
 type Config struct {
-	// RunScope populates the Resource. Typically built via RunScopeFromEnv().
-	RunScope RunScope
-
-	// PrometheusNamespace prefixes all exported metric names. Defaults to
-	// "seiload" when empty — matches the existing convention.
-	PrometheusNamespace string
-
-	// OTLPEndpoint, when non-empty, activates the OTLP gRPC exporter for
-	// BOTH metrics and traces, wired to this endpoint. Use the standard
-	// OTEL_EXPORTER_OTLP_ENDPOINT env var to populate this — see Setup.
-	OTLPEndpoint string
+	RunScope            RunScope
+	PrometheusNamespace string // defaults to "seiload"
+	OTLPEndpoint        string // non-empty activates OTLP gRPC for metrics + traces
 }
 
-// Setup installs the global MeterProvider and TracerProvider, wires the
-// Prometheus reader (always) and the OTLP gRPC exporter (when OTLPEndpoint is
-// non-empty), attaches the composite W3C TraceContext+Baggage propagator, and
-// returns a shutdown function that flushes and stops all providers.
-//
-// Call once from main, before any code path that emits telemetry. The
-// Meter/Tracer accessors in this package respect the configured providers;
-// code that still uses otel.Meter / otel.Tracer at package init will silently
-// capture the NoOp provider and drop its emissions — migrate those sites to
-// the lazy accessors (see observability.Meter / observability.Tracer).
+// Setup installs MeterProvider, TracerProvider, W3C propagator, and returns a
+// shutdown func. Call once from main before any telemetry emits.
 func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) error, err error) {
 	res, err := buildResource(cfg.RunScope)
 	if err != nil {
@@ -207,27 +144,12 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 
 	mp := sdkmetric.NewMeterProvider(meterOpts...)
 	otel.SetMeterProvider(mp)
-
 	tp := sdktrace.NewTracerProvider(tracerOpts...)
 	otel.SetTracerProvider(tp)
 
-	// Shutdown order is load-bearing. Providers must shut down FIRST — they
-	// cascade a final flush into their readers and exporters, which is the
-	// only chance to push the last batch of metrics/spans (OTLP periodic
-	// reader + batch span processor both buffer in-memory). If the exporter
-	// is shut down ahead of its provider, the provider's flush fails
-	// silently and the tail data is lost. The Prometheus pull-reader is
-	// immune (no buffer) but we keep the same rule for both paths so the
-	// ordering invariant is uniform.
-	shutdowns := []func(context.Context) error{
-		mp.Shutdown,
-		tp.Shutdown,
-	}
+	// Provider.Shutdown cascades flush into exporters; see README.
+	shutdowns := []func(context.Context) error{mp.Shutdown, tp.Shutdown}
 
-	// Composite propagator: traceparent for trace context, baggage for
-	// arbitrary cross-process K/V. Without this, otelhttp will create spans
-	// but NOT inject traceparent on outbound requests — silent propagation
-	// failure, a well-known OTel footgun.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
@@ -244,8 +166,8 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 	}, nil
 }
 
-// stripScheme removes a leading scheme like "http://" or "grpc://" from an
-// endpoint — otlpmetricgrpc.WithEndpoint expects host:port without a scheme.
+// stripScheme trims http://, https://, grpc://, dns:/// so the value fits
+// otlpmetricgrpc.WithEndpoint (which wants bare host:port).
 func stripScheme(endpoint string) string {
 	for _, prefix := range []string{"http://", "https://", "grpc://", "dns:///"} {
 		if strings.HasPrefix(endpoint, prefix) {
@@ -254,4 +176,3 @@ func stripScheme(endpoint string) string {
 	}
 	return endpoint
 }
-
