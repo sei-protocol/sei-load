@@ -23,7 +23,7 @@ func TestRunScopeFromEnv(t *testing.T) {
 	t.Setenv("SEILOAD_COMMIT_ID", "deadbeefcafef00d")
 	t.Setenv("SEILOAD_WORKLOAD", "autobake")
 	t.Setenv("SEILOAD_INSTANCE_ID", "seiload-abc-0")
-	t.Setenv("OTEL_SERVICE_VERSION", "v1.2.3")
+	t.Setenv("SEILOAD_SERVICE_VERSION", "v1.2.3")
 
 	rs := RunScopeFromEnv()
 	require.Equal(t, "run-42", rs.RunID)

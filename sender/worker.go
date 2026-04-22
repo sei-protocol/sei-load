@@ -148,12 +148,12 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
-	_, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
+	dialCtx, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
 		attribute.String("seiload.endpoint", w.endpoint),
 		attribute.String("seiload.chain_id", w.seiChainID),
 		attribute.Int("seiload.worker_id", w.id),
 	))
-	eth, err := ethclient.Dial(w.endpoint)
+	eth, err := ethclient.DialContext(dialCtx, w.endpoint)
 	if err != nil {
 		dialSpan.RecordError(err)
 		dialSpan.End()

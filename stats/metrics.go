@@ -5,6 +5,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// See sender/metrics.go for why package-level acquisition is safe before Setup.
 var meter = otel.Meter("github.com/sei-protocol/sei-load/stats")
 
 var (

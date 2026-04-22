@@ -32,10 +32,10 @@ type RunScope struct {
 	InstanceID     string // unique per process; falls back to hostname. Disambiguates cluster-of-seiload pods.
 }
 
-// RunScopeFromEnv reads SEILOAD_* and OTEL_SERVICE_VERSION. Missing values stay empty.
+// RunScopeFromEnv reads SEILOAD_*. Missing values stay empty.
 func RunScopeFromEnv() RunScope {
 	return RunScope{
-		ServiceVersion: os.Getenv("OTEL_SERVICE_VERSION"),
+		ServiceVersion: os.Getenv("SEILOAD_SERVICE_VERSION"),
 		RunID:          os.Getenv("SEILOAD_RUN_ID"),
 		ChainID:        os.Getenv("SEILOAD_CHAIN_ID"),
 		CommitID:       os.Getenv("SEILOAD_COMMIT_ID"),

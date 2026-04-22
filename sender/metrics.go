@@ -9,6 +9,10 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// Acquired at package init, before observability.Setup installs the real
+// MeterProvider. Safe because OTel Go's global is a delegating provider:
+// meters and instruments created against it forward to the real provider
+// once SetMeterProvider is called. See go.opentelemetry.io/otel/internal/global.
 var meter = otel.Meter("github.com/sei-protocol/sei-load/sender")
 
 // Synchronous instruments — read by Record/Add call sites.
@@ -21,7 +25,7 @@ var (
 
 	receiptLatency = must(meter.Float64Histogram(
 		"receipt_latency",
-		metric.WithDescription("Latency of sending transactions in seconds"),
+		metric.WithDescription("Latency from transaction submission to receipt confirmation in seconds"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
 
