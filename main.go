@@ -70,6 +70,7 @@ func init() {
 	rootCmd.Flags().String("txs-dir", "", "Path to save the transactions")
 	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
+	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -356,6 +357,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		ramper.LogFinalStats()
 	}
 	collector.EmitRunSummary(ctx)
+	if d := settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
+		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
+		time.Sleep(d)
+	}
 	log.Printf("👋 Shutdown complete")
 	return err
 }
