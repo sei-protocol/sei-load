@@ -25,8 +25,9 @@ type Settings struct {
 	RampUp           bool     `json:"rampUp,omitempty"`
 	ReportPath       string   `json:"reportPath,omitempty"`
 	TxsDir           string   `json:"txsDir,omitempty"`
-	TargetGas        uint64   `json:"targetGas,omitempty"`
-	NumBlocksToWrite int      `json:"numBlocksToWrite,omitempty"`
+	TargetGas             uint64   `json:"targetGas,omitempty"`
+	NumBlocksToWrite      int      `json:"numBlocksToWrite,omitempty"`
+	PostSummaryFlushDelay Duration `json:"postSummaryFlushDelay,omitempty"`
 }
 
 // DefaultSettings returns the default configuration values
@@ -45,8 +46,9 @@ func DefaultSettings() Settings {
 		RampUp:           false,
 		ReportPath:       "",
 		TxsDir:           "",
-		TargetGas:        10_000_000,
-		NumBlocksToWrite: 100,
+		TargetGas:             10_000_000,
+		NumBlocksToWrite:      100,
+		PostSummaryFlushDelay: Duration(25 * time.Second),
 	}
 }
 
@@ -67,8 +69,9 @@ func InitializeViper(cmd *cobra.Command) error {
 		"rampUp":           "ramp-up",
 		"reportPath":       "report-path",
 		"txsDir":           "txs-dir",
-		"targetGas":        "target-gas",
-		"numBlocksToWrite": "num-blocks-to-write",
+		"targetGas":             "target-gas",
+		"numBlocksToWrite":      "num-blocks-to-write",
+		"postSummaryFlushDelay": "post-summary-flush-delay",
 	}
 
 	for viperKey, flagName := range flagBindings {
@@ -94,6 +97,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("txsDir", defaults.TxsDir)
 	viper.SetDefault("targetGas", defaults.TargetGas)
 	viper.SetDefault("numBlocksToWrite", defaults.NumBlocksToWrite)
+	viper.SetDefault("postSummaryFlushDelay", defaults.PostSummaryFlushDelay.ToDuration())
 	return nil
 }
 
@@ -133,7 +137,8 @@ func ResolveSettings() Settings {
 		RampUp:           viper.GetBool("rampUp"),
 		ReportPath:       viper.GetString("reportPath"),
 		TxsDir:           viper.GetString("txsDir"),
-		TargetGas:        viper.GetUint64("targetGas"),
-		NumBlocksToWrite: viper.GetInt("numBlocksToWrite"),
+		TargetGas:             viper.GetUint64("targetGas"),
+		NumBlocksToWrite:      viper.GetInt("numBlocksToWrite"),
+		PostSummaryFlushDelay: Duration(viper.GetDuration("postSummaryFlushDelay")),
 	}
 }

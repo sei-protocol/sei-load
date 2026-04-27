@@ -13,8 +13,11 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/stats"
@@ -22,6 +25,8 @@ import (
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
+
+var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
@@ -39,21 +44,49 @@ type Worker struct {
 	limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
 
-func newHttpClient() *http.Client {
+// HttpClientOption configures the Transport used by newHttpClient.
+type HttpClientOption func(*http.Transport)
+
+// WithMaxIdleConns overrides the global idle-connection pool size.
+func WithMaxIdleConns(n int) HttpClientOption {
+	return func(t *http.Transport) { t.MaxIdleConns = n }
+}
+
+// WithMaxIdleConnsPerHost overrides the per-host idle-connection pool size.
+// Scale with goroutine count to avoid TCP re-dial on each completion.
+func WithMaxIdleConnsPerHost(n int) HttpClientOption {
+	return func(t *http.Transport) { t.MaxIdleConnsPerHost = n }
+}
+
+// newHttpTransport is the base transport factory. Exists separately so tests
+// can inspect the unwrapped *http.Transport; newHttpClient returns it wrapped
+// in otelhttp, whose inner transport isn't publicly accessible.
+func newHttpTransport(opts ...HttpClientOption) *http.Transport {
+	t := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          500,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableKeepAlives:     false,
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// newHttpClient returns an otelhttp-wrapped client: injects traceparent on
+// outbound, emits http.client.* metrics. Requires observability.Setup to have
+// installed the global TextMapPropagator.
+func newHttpClient(opts ...HttpClientOption) *http.Client {
 	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			DisableKeepAlives:     false,
-		},
+		Timeout:   30 * time.Second,
+		Transport: otelhttp.NewTransport(newHttpTransport(opts...)),
 	}
 }
 
@@ -115,31 +148,51 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
-	eth, err := ethclient.Dial(w.endpoint)
+	dialCtx, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.String("seiload.chain_id", w.seiChainID),
+		attribute.Int("seiload.worker_id", w.id),
+	))
+	eth, err := ethclient.DialContext(dialCtx, w.endpoint)
 	if err != nil {
+		dialSpan.RecordError(err)
+		dialSpan.End()
 		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
 	}
+	dialSpan.End()
 	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := w.waitForReceipt(ctx, eth, tx); err != nil {
+		// Cancel per-iteration; defer would leak contexts under sustained load.
+		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := w.waitForReceipt(waitCtx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
 		}
+		cancel()
 	}
 	return ctx.Err()
 }
 
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
+	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
+		attribute.String("seiload.scenario", tx.Scenario.Name),
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.Int("seiload.worker_id", w.id),
+		attribute.String("seiload.chain_id", w.seiChainID),
+	))
 	defer func(start time.Time) {
-		metrics.receiptLatency.Record(ctx, time.Since(start).Seconds(),
+		if _err != nil {
+			span.RecordError(_err)
+		}
+		span.End()
+		// Record inside the span ctx so exemplars link to the trace.
+		// worker_id stays off the histogram (cardinality); available via span.
+		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
-				attribute.Int("worker_id", w.id),
 				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)
@@ -200,12 +253,22 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 
 // sendTransaction sends a single transaction to the endpoint
 func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
+		attribute.String("seiload.scenario", tx.Scenario.Name),
+		attribute.String("seiload.endpoint", w.endpoint),
+		attribute.Int("seiload.worker_id", w.id),
+		attribute.String("seiload.chain_id", w.seiChainID),
+	))
 	defer func(start time.Time) {
-		metrics.sendLatency.Record(ctx, time.Since(start).Seconds(),
+		if _err != nil {
+			span.RecordError(_err)
+		}
+		span.End()
+		// See receiptLatency above re: span-context recording + no worker_id.
+		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
 				attribute.String("endpoint", w.endpoint),
-				attribute.Int("worker_id", w.id),
 				attribute.String("chain_id", w.seiChainID),
 				statusAttrFromError(_err)),
 		)
@@ -229,6 +292,11 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 	// Send the request
 	resp, err := client.Do(req)
 	if err != nil {
+		txsRejected.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("endpoint", w.endpoint),
+			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("reason", "transport"),
+		))
 		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
 	}
 	defer func() {
@@ -247,8 +315,22 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
+		httpErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.Int("status_code", resp.StatusCode),
+			attribute.String("endpoint", w.endpoint),
+		))
+		txsRejected.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("endpoint", w.endpoint),
+			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("reason", "http_status"),
+		))
 		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
 	}
+
+	txsAccepted.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("endpoint", w.endpoint),
+		attribute.String("scenario", tx.Scenario.Name),
+	))
 
 	// Write to sentTxs channel without blocking
 	select {

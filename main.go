@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,15 +14,15 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/sdk/metric"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
+	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/utils"
@@ -69,6 +70,7 @@ func init() {
 	rootCmd.Flags().String("txs-dir", "", "Path to save the transactions")
 	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
+	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -147,9 +149,48 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	listenAddr := cmd.Flag("metricsListenAddr").Value.String()
 	log.Printf("serving metrics at %s/metrics", listenAddr)
 
-	if err := exportPrometheusMetrics(ctx, listenAddr); err != nil {
-		return err
+	obsShutdown, err := observability.Setup(ctx, observability.Config{
+		RunScope:     observability.RunScopeFromEnv(),
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if err != nil {
+		return fmt.Errorf("observability setup: %w", err)
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obsShutdown(shutdownCtx); err != nil {
+			log.Printf("observability shutdown: %v", err)
+		}
+	}()
+
+	// EnableOpenMetrics is load-bearing: the default promhttp.Handler() strips
+	// exemplars regardless of the scraper's Accept header.
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(
+		prometheus.DefaultGatherer,
+		promhttp.HandlerOpts{EnableOpenMetrics: true},
+	))
+	metricsServer := &http.Server{
+		Addr:              listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("failed to serve metrics: %v", err)
+		}
+	}()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("metrics server shutdown: %v", err)
+		}
+	}()
+
+	ctx, runSpan := otel.Tracer("github.com/sei-protocol/sei-load").Start(ctx, "seiload.run")
+	defer runSpan.End()
 
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
@@ -315,26 +356,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
+	collector.EmitRunSummary(ctx)
+	if d := settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
+		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
+		time.Sleep(d)
+	}
 	log.Printf("👋 Shutdown complete")
 	return err
-}
-
-func exportPrometheusMetrics(ctx context.Context, listenAddr string) error {
-	metricsExporter, err := prometheus.New(prometheus.WithNamespace("seiload"))
-	if err != nil {
-		return fmt.Errorf("failed to create Prometheus exporter: %w", err)
-	}
-	otel.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(metricsExporter)))
-	go func() {
-		defer func() { _ = metricsExporter.Shutdown(ctx) }()
-		http.Handle("/metrics", promhttp.Handler())
-		err := http.ListenAndServe(listenAddr, nil)
-		if err != nil {
-			log.Printf("failed to serve metrics: %v", err)
-			return
-		}
-	}()
-	return nil
 }
 
 // loadConfig reads and parses the configuration file

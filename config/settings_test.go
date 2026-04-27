@@ -96,6 +96,7 @@ func TestArgumentPrecedence(t *testing.T) {
 			cmd.Flags().String("txs-dir", "", "Txs dir")
 			cmd.Flags().Uint64("target-gas", 0, "Target gas")
 			cmd.Flags().Int("num-blocks-to-write", 0, "Number of blocks to write")
+			cmd.Flags().Duration("post-summary-flush-delay", 0, "Post-summary flush delay")
 
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
@@ -137,8 +138,9 @@ func TestDefaultSettings(t *testing.T) {
 		RampUp:           false,
 		ReportPath:       "",
 		TxsDir:           "",
-		TargetGas:        10_000_000,
-		NumBlocksToWrite: 100,
+		TargetGas:             10_000_000,
+		NumBlocksToWrite:      100,
+		PostSummaryFlushDelay: Duration(25 * time.Second),
 	}
 
 	if defaults != expected {

@@ -93,22 +93,22 @@ func (bc *BlockCollector) processNewBlock(header *types.Header) {
 	for stats := range bc.stats.Lock() {
 		now := time.Now()
 		blockNum := header.Number.Uint64()
-		gasUsed := header.GasUsed
-		metrics.gasUsed.Record(context.Background(), int64(gasUsed), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+		gas := header.GasUsed
+		gasUsed.Record(context.Background(), int64(gas), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 		// Update max block number
 		if blockNum > stats.maxBlockNum {
-			metrics.blockNumber.Record(context.Background(), int64(blockNum), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+			blockNumber.Record(context.Background(), int64(blockNum), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.maxBlockNum = blockNum
 		}
 
 		// Track gas used
-		stats.allGasUsed = append(stats.allGasUsed, gasUsed)
-		stats.windowGasUsed = append(stats.windowGasUsed, gasUsed)
+		stats.allGasUsed = append(stats.allGasUsed, gas)
+		stats.windowGasUsed = append(stats.windowGasUsed, gas)
 
 		// Calculate time between blocks
 		if !stats.lastBlockTime.IsZero() {
 			timeBetween := now.Sub(stats.lastBlockTime)
-			metrics.blockTime.Record(context.Background(), timeBetween.Seconds(), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
+			blockTime.Record(context.Background(), timeBetween.Seconds(), metric.WithAttributes(attribute.String("chain_id", bc.seiChainID)))
 			stats.allBlockTimes = append(stats.allBlockTimes, timeBetween)
 			stats.windowBlockTimes = append(stats.windowBlockTimes, timeBetween)
 		}
