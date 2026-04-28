@@ -33,7 +33,7 @@ var (
 		metric.WithUnit("{transactions}/s")))
 
 	runDurationSeconds = must(meter.Float64Gauge(
-		"run_duration_seconds",
+		"run_duration",
 		metric.WithDescription("Wall-clock duration of this run (emitted once at run end)"),
 		metric.WithUnit("s")))
 
