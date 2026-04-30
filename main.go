@@ -362,6 +362,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		time.Sleep(d)
 	}
 	log.Printf("👋 Shutdown complete")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		err = nil
+	}
 	return err
 }
 
