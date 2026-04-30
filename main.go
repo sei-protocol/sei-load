@@ -71,6 +71,7 @@ func init() {
 	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
 	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
+	rootCmd.Flags().Duration("duration", 0, "Run duration (0 = until SIGTERM/SIGINT)")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -188,6 +189,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			log.Printf("metrics server shutdown: %v", err)
 		}
 	}()
+
+	if duration, _ := cmd.Flags().GetDuration("duration"); duration > 0 {
+		log.Printf("⏰ Run duration: %s", duration)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, duration)
+		defer cancel()
+	}
 
 	ctx, runSpan := otel.Tracer("github.com/sei-protocol/sei-load").Start(ctx, "seiload.run")
 	defer runSpan.End()
