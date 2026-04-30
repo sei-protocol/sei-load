@@ -71,7 +71,7 @@ func init() {
 	rootCmd.Flags().Uint64("target-gas", 10_000_000, "Target gas per block")
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
 	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
-	rootCmd.Flags().Duration("duration", 0, "Run duration; the load test ctx is canceled after this elapses, the existing graceful-shutdown path runs, and the process exits 0. 0 means run until SIGTERM/SIGINT.")
+	rootCmd.Flags().Duration("duration", 0, "Run duration (0 = until SIGTERM/SIGINT)")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
