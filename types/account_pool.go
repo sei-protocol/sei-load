@@ -12,8 +12,9 @@ type AccountPool interface {
 
 // AccountConfig stores the configuration for account generation.
 type AccountConfig struct {
-	Accounts       []*Account
-	NewAccountRate float64
+	Accounts         []*Account
+	NewAccountRate   float64
+	SingleUseSenders bool
 }
 
 type accountPool struct {
@@ -39,6 +40,16 @@ func (a *accountPool) NextAccount() *Account {
 		if randomNumber <= a.cfg.NewAccountRate {
 			return GenerateAccounts(1)[0]
 		}
+	}
+	if a.cfg.SingleUseSenders {
+		a.mx.Lock()
+		defer a.mx.Unlock()
+		if a.idx >= len(a.Accounts) {
+			return nil
+		}
+		acc := a.Accounts[a.idx]
+		a.idx++
+		return acc
 	}
 	return a.Accounts[a.nextIndex()]
 }

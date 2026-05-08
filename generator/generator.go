@@ -22,11 +22,22 @@ type Generator interface {
 
 // scenarioInstance represents a scenario instance with its configuration
 type scenarioInstance struct {
-	Name     string
-	Weight   int
-	Scenario scenarios.TxGenerator
-	Accounts types.AccountPool
-	Deployed bool
+	Name           string
+	Weight         int
+	Scenario       scenarios.TxGenerator
+	ScenarioConfig config.Scenario
+	Accounts       types.AccountPool
+	Deployed       bool
+}
+
+func accountsFromConfig(ac *config.AccountConfig) []*types.Account {
+	if ac == nil {
+		return nil
+	}
+	if ac.DeterministicEvmStressKeys {
+		return types.GenerateEvmStressSenderAccounts(ac.Accounts)
+	}
+	return types.GenerateAccounts(ac.Accounts)
 }
 
 // configBasedGenerator manages scenario creation and deployment from config
@@ -47,10 +58,11 @@ func (g *configBasedGenerator) createScenarios() error {
 
 	// Create shared account pool if top-level account config exists
 	if g.config.Accounts != nil {
-		accounts := types.GenerateAccounts(g.config.Accounts.Accounts)
+		accounts := accountsFromConfig(g.config.Accounts)
 		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
-			Accounts:       accounts,
-			NewAccountRate: g.config.Accounts.NewAccountRate,
+			Accounts:         accounts,
+			NewAccountRate:   g.config.Accounts.NewAccountRate,
+			SingleUseSenders: g.config.Accounts.SingleUseSenders,
 		})
 		g.accountPools = append(g.accountPools, g.sharedAccounts)
 	}
@@ -63,13 +75,12 @@ func (g *configBasedGenerator) createScenarios() error {
 		var accountPool types.AccountPool
 		if scenarioCfg.Accounts != nil {
 			// Scenario defines its own account settings - create separate pool
-			accountCount := scenarioCfg.Accounts.Accounts
-			newAccountRate := scenarioCfg.Accounts.NewAccountRate
-
-			accounts := types.GenerateAccounts(accountCount)
+			sa := scenarioCfg.Accounts
+			accounts := accountsFromConfig(sa)
 			accountPool = types.NewAccountPool(&types.AccountConfig{
-				Accounts:       accounts,
-				NewAccountRate: newAccountRate,
+				Accounts:         accounts,
+				NewAccountRate:   sa.NewAccountRate,
+				SingleUseSenders: sa.SingleUseSenders,
 			})
 			g.accountPools = append(g.accountPools, accountPool)
 		} else if g.sharedAccounts != nil {
@@ -98,11 +109,12 @@ func (g *configBasedGenerator) createScenarios() error {
 
 		// Create scenario instance
 		instance := &scenarioInstance{
-			Name:     name,
-			Weight:   scenarioCfg.Weight,
-			Scenario: scenario,
-			Accounts: accountPool,
-			Deployed: false,
+			Name:           name,
+			Weight:         scenarioCfg.Weight,
+			Scenario:       scenario,
+			ScenarioConfig: scenarioCfg,
+			Accounts:       accountPool,
+			Deployed:       false,
 		}
 
 		g.instances = append(g.instances, instance)
@@ -170,7 +182,7 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 			continue
 		}
 		// Create a scenarioGenerator for this scenario instance
-		gen := NewScenarioGenerator(instance.Accounts, instance.Scenario)
+		gen := NewScenarioGenerator(instance.Accounts, instance.Scenario, instance.ScenarioConfig)
 
 		// Add to weighted config with the specified weight
 		weightedConfigs = append(weightedConfigs, WeightedConfig(instance.Weight, gen))

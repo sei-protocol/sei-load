@@ -12,9 +12,10 @@ type ScenarioFactory func(s config.Scenario) TxGenerator
 // scenarioFactories maps scenario names to their factory functions
 var scenarioFactories = map[string]ScenarioFactory{
 	// Manual entries for non-contract scenarios
-	EVMTransfer:     NewEVMTransferScenario,
-	EVMTransferFast: NewEVMTransferFastScenario,
-	EVMTransferNoop: NewEVMTransferNoopScenario,
+	EVMTransfer:       NewEVMTransferScenario,
+	EVMTransferFast:   NewEVMTransferFastScenario,
+	EVMTransferNoop:   NewEVMTransferNoopScenario,
+	EVMTransferStress: NewEVMTransferStressScenario,
 
 	// Auto-generated entries will be added below this line by make generate
 	// DO NOT EDIT BELOW THIS LINE - AUTO-GENERATED CONTENT

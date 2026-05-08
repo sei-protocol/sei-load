@@ -1,0 +1,33 @@
+{
+    "chainId": 713714,
+    "seiChainId": "sei-chain",
+    "endpoints": [
+      "http://127.0.0.1:8545"
+    ],
+    "accounts": {
+      "count": 50000,
+      "newAccountRate": 0.0,
+      "deterministicEvmStressKeys": true,
+      "singleUseSenders": true
+    },
+    "scenarios": [
+      {
+        "name": "EVMTransferStress",
+        "weight": 1,
+        "fixedReceiver": "0xDC5b20847F43d67928F49Cd4f85D696b5A7617B5"
+      }
+    ],
+    "settings": {
+      "workers": 250,
+      "tps": 500,
+      "statsInterval": "5s",
+      "bufferSize": 1000,
+      "dryRun": false,
+      "debug": false,
+      "trackReceipts": false,
+      "trackBlocks": false,
+      "trackUserLatency": false,
+      "prewarm": false,
+      "rampUp": false
+    }
+  }

@@ -120,6 +120,18 @@ func TestGenerateAccounts(t *testing.T) {
 	}
 }
 
+func TestAccountPoolSingleUseExhausted(t *testing.T) {
+	accounts := GenerateAccounts(2)
+	pool := NewAccountPool(&AccountConfig{
+		Accounts:         accounts,
+		NewAccountRate:   0,
+		SingleUseSenders: true,
+	})
+	require.Equal(t, accounts[0].Address, pool.NextAccount().Address)
+	require.Equal(t, accounts[1].Address, pool.NextAccount().Address)
+	require.Nil(t, pool.NextAccount())
+}
+
 func TestAccountPoolRoundRobin(t *testing.T) {
 	accounts := GenerateAccounts(3)
 	config := &AccountConfig{

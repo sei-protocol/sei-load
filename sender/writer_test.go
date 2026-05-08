@@ -30,7 +30,10 @@ func TestTxsWriter_Flush(t *testing.T) {
 	})
 	evmScenario.Deploy(loadConfig, sharedAccounts.NextAccount())
 
-	generator := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
+	generator := generator.NewScenarioGenerator(sharedAccounts, evmScenario, config.Scenario{
+		Name:   "EVMTransfer",
+		Weight: 1,
+	})
 
 	txs := generator.GenerateN(3)
 

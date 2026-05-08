@@ -57,6 +57,13 @@ func (c *LoadConfig) GetChainID() *big.Int {
 type AccountConfig struct {
 	NewAccountRate float64 `json:"newAccountRate,omitempty"`
 	Accounts       int     `json:"count,omitempty"`
+	// DeterministicEvmStressKeys uses types.EvmStressPrivateKey (sender indices
+	// 1..count). Fund those Cosmos accounts in genesis to match the pool.
+	DeterministicEvmStressKeys bool `json:"deterministicEvmStressKeys,omitempty"`
+	// SingleUseSenders gives each pooled account at most one turn as sender;
+	// when exhausted, generation stops (ok=false). One transaction per pooled sender.
+	// Do not enable together with settings.prewarm (prewarm shares the same pool).
+	SingleUseSenders bool `json:"singleUseSenders,omitempty"`
 }
 
 // Scenario represents each scenario in the load configuration.
@@ -67,4 +74,8 @@ type Scenario struct {
 	GasPicker       *GasPicker     `json:"gasPicker,omitempty"`
 	GasFeeCapPicker *GasPicker     `json:"gasFeeCapPicker,omitempty"`
 	GasTipCapPicker *GasPicker     `json:"gasTipCapPicker,omitempty"`
+	// FixedReceiver is an optional hex EVM address. When set, all transactions
+	// in this scenario are sent to this single address (single-recipient stress
+	// mode). If empty, the receiver is picked from the account pool as usual.
+	FixedReceiver string `json:"fixedReceiver,omitempty"`
 }
