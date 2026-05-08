@@ -120,13 +120,25 @@ func TestGenerateAccounts(t *testing.T) {
 	}
 }
 
+func TestNewAccountPool_RejectsSingleUseWithNewAccountRate(t *testing.T) {
+	accounts := GenerateAccounts(2)
+	_, err := NewAccountPool(&AccountConfig{
+		Accounts:         accounts,
+		NewAccountRate:   0.5,
+		SingleUseSenders: true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "singleUseSenders")
+}
+
 func TestAccountPoolSingleUseExhausted(t *testing.T) {
 	accounts := GenerateAccounts(2)
-	pool := NewAccountPool(&AccountConfig{
+	pool, err := NewAccountPool(&AccountConfig{
 		Accounts:         accounts,
 		NewAccountRate:   0,
 		SingleUseSenders: true,
 	})
+	require.NoError(t, err)
 	require.Equal(t, accounts[0].Address, pool.NextAccount().Address)
 	require.Equal(t, accounts[1].Address, pool.NextAccount().Address)
 	require.Nil(t, pool.NextAccount())
@@ -139,7 +151,8 @@ func TestAccountPoolRoundRobin(t *testing.T) {
 		NewAccountRate: 0.0, // No new accounts, pure round-robin
 	}
 
-	pool := NewAccountPool(config)
+	pool, err := NewAccountPool(config)
+	require.NoError(t, err)
 
 	// The account pool starts from index 1 (due to nextIndex() incrementing first)
 	// So the first call returns accounts[1], second returns accounts[2], third returns accounts[0]
@@ -164,7 +177,8 @@ func TestAccountPoolNewAccountRate(t *testing.T) {
 		NewAccountRate: 1.0, // Always generate new accounts
 	}
 
-	pool := NewAccountPool(config)
+	pool, err := NewAccountPool(config)
+	require.NoError(t, err)
 
 	// With 100% new account rate, should never get original accounts
 	originalAddresses := make(map[common.Address]bool)
@@ -187,7 +201,8 @@ func TestAccountPoolMixedRate(t *testing.T) {
 		NewAccountRate: 0.5, // 50% new accounts
 	}
 
-	pool := NewAccountPool(config)
+	pool, err := NewAccountPool(config)
+	require.NoError(t, err)
 
 	originalAddresses := make(map[common.Address]bool)
 	for _, account := range accounts {
@@ -223,7 +238,8 @@ func TestAccountPoolConcurrency(t *testing.T) {
 		NewAccountRate: 0.0, // Pure round-robin for predictable testing
 	}
 
-	pool := NewAccountPool(config)
+	pool, err := NewAccountPool(config)
+	require.NoError(t, err)
 
 	const numGoroutines = 50
 	const selectionsPerGoroutine = 20
@@ -461,7 +477,10 @@ func BenchmarkAccountPoolNextAccount(b *testing.B) {
 		Accounts:       accounts,
 		NewAccountRate: 0.0,
 	}
-	pool := NewAccountPool(config)
+	pool, err := NewAccountPool(config)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

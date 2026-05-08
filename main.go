@@ -142,6 +142,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		log.Printf("📝 Track user latency: enabled")
 	}
 
+	if err := config.ValidatePrewarmAccountPools(cfg, settings.Prewarm); err != nil {
+		return err
+	}
+	if err := config.ValidateFixedReceiverAddresses(cfg); err != nil {
+		return err
+	}
+
 	// Enable mock deployment in dry-run mode
 	if settings.DryRun {
 		cfg.MockDeploy = true

@@ -59,11 +59,15 @@ func (g *configBasedGenerator) createScenarios() error {
 	// Create shared account pool if top-level account config exists
 	if g.config.Accounts != nil {
 		accounts := accountsFromConfig(g.config.Accounts)
-		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
+		pool, err := types.NewAccountPool(&types.AccountConfig{
 			Accounts:         accounts,
 			NewAccountRate:   g.config.Accounts.NewAccountRate,
 			SingleUseSenders: g.config.Accounts.SingleUseSenders,
 		})
+		if err != nil {
+			return fmt.Errorf("shared account pool: %w", err)
+		}
+		g.sharedAccounts = pool
 		g.accountPools = append(g.accountPools, g.sharedAccounts)
 	}
 
@@ -77,11 +81,15 @@ func (g *configBasedGenerator) createScenarios() error {
 			// Scenario defines its own account settings - create separate pool
 			sa := scenarioCfg.Accounts
 			accounts := accountsFromConfig(sa)
-			accountPool = types.NewAccountPool(&types.AccountConfig{
+			pool, err := types.NewAccountPool(&types.AccountConfig{
 				Accounts:         accounts,
 				NewAccountRate:   sa.NewAccountRate,
 				SingleUseSenders: sa.SingleUseSenders,
 			})
+			if err != nil {
+				return fmt.Errorf("scenario %q account pool: %w", scenarioCfg.Name, err)
+			}
+			accountPool = pool
 			g.accountPools = append(g.accountPools, accountPool)
 		} else if g.sharedAccounts != nil {
 			// Use shared account pool from top-level config

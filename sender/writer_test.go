@@ -1,7 +1,6 @@
 package sender
 
 import (
-	"context"
 	"testing"
 
 	"github.com/sei-protocol/sei-load/config"
@@ -19,10 +18,11 @@ func TestTxsWriter_Flush(t *testing.T) {
 		ChainID: 7777,
 	}
 
-	sharedAccounts := types.NewAccountPool(&types.AccountConfig{
+	sharedAccounts, err := types.NewAccountPool(&types.AccountConfig{
 		Accounts:       types.GenerateAccounts(10),
 		NewAccountRate: 0.0,
 	})
+	require.NoError(t, err)
 
 	evmScenario := scenarios.CreateScenario(config.Scenario{
 		Name:   "EVMTransfer",
@@ -37,21 +37,21 @@ func TestTxsWriter_Flush(t *testing.T) {
 
 	txs := generator.GenerateN(3)
 
-	err := writer.Send(context.Background(), txs[0])
+	err = writer.Send(t.Context(), txs[0])
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), writer.nextHeight)
 	require.Equal(t, uint64(21000), writer.bufferGas)
 	require.Len(t, writer.txBuffer, 1)
 	require.Equal(t, txs[0], writer.txBuffer[0])
 
-	err = writer.Send(context.Background(), txs[1])
+	err = writer.Send(t.Context(), txs[1])
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), writer.nextHeight)
 	require.Equal(t, uint64(42000), writer.bufferGas)
 	require.Len(t, writer.txBuffer, 2)
 	require.Equal(t, txs[1], writer.txBuffer[1])
 
-	err = writer.Send(context.Background(), txs[2])
+	err = writer.Send(t.Context(), txs[2])
 	require.NoError(t, err)
 	// now should be flushed and have the new tx
 	require.Equal(t, uint64(2), writer.nextHeight)

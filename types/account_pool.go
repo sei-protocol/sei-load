@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 )
@@ -12,8 +13,10 @@ type AccountPool interface {
 
 // AccountConfig stores the configuration for account generation.
 type AccountConfig struct {
-	Accounts         []*Account
-	NewAccountRate   float64
+	Accounts       []*Account
+	NewAccountRate float64
+	// SingleUseSenders requires NewAccountRate == 0 (enforced by NewAccountPool).
+	// Incompatible with settings.prewarm (enforced at seiload startup in config.ValidatePrewarmAccountPools).
 	SingleUseSenders bool
 }
 
@@ -55,9 +58,18 @@ func (a *accountPool) NextAccount() *Account {
 }
 
 // NewAccountPool creates a new account generator from a config.
-func NewAccountPool(cfg *AccountConfig) AccountPool {
+func NewAccountPool(cfg *AccountConfig) (AccountPool, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("account pool config is nil")
+	}
+	if cfg.SingleUseSenders && cfg.NewAccountRate > 0 {
+		return nil, fmt.Errorf(
+			"account pool: singleUseSenders is incompatible with newAccountRate > 0 (got newAccountRate=%g)",
+			cfg.NewAccountRate,
+		)
+	}
 	return &accountPool{
 		Accounts: cfg.Accounts,
 		cfg:      cfg,
-	}
+	}, nil
 }

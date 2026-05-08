@@ -13,11 +13,12 @@ import (
 
 func TestScenarioGenerator_FixedReceiverUsesOnePoolAccount(t *testing.T) {
 	accs := types.GenerateAccounts(2)
-	pool := types.NewAccountPool(&types.AccountConfig{
+	pool, err := types.NewAccountPool(&types.AccountConfig{
 		Accounts:         accs,
 		NewAccountRate:   0,
 		SingleUseSenders: true,
 	})
+	require.NoError(t, err)
 	evm := scenarios.NewEVMTransferScenario(config.Scenario{})
 	cfg := &config.LoadConfig{ChainID: 713714}
 	evm.Deploy(cfg, accs[0])
