@@ -8,6 +8,10 @@ import (
 // AccountPool returns a next account for load generation.
 type AccountPool interface {
 	NextAccount() *Account
+	// GetAccounts returns the fixed accounts backing the pool (excludes any
+	// on-demand accounts minted via NewAccountRate). Used to enumerate the pool
+	// for one-time funding.
+	GetAccounts() []*Account
 }
 
 // AccountConfig stores the configuration for account generation.
@@ -41,6 +45,11 @@ func (a *accountPool) NextAccount() *Account {
 		}
 	}
 	return a.Accounts[a.nextIndex()]
+}
+
+// GetAccounts returns the fixed accounts backing the pool.
+func (a *accountPool) GetAccounts() []*Account {
+	return a.Accounts
 }
 
 // NewAccountPool creates a new account generator from a config.

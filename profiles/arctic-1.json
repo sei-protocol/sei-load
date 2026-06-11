@@ -1,0 +1,31 @@
+{
+  "chainId": 713715,
+  "seiChainID": "arctic-1",
+  "endpoints": ["http://REPLACE-rpc-internal.arctic-1.svc.cluster.local:8545"],
+  "accounts": {
+    "count": 500,
+    "newAccountRate": 0.0
+  },
+  "funding": {
+    "rootKeyFile": "/etc/seiload-key/root-key.hex",
+    "fundAmountWei": "1000000000000000000",
+    "batchSize": 200
+  },
+  "scenarios": [
+    { "name": "EVMTransfer", "weight": 1 }
+  ],
+  "settings": {
+    "workers": 50,
+    "tps": 19,
+    "statsInterval": "10s",
+    "bufferSize": 1000,
+    "dryRun": false,
+    "debug": false,
+    "trackReceipts": false,
+    "trackBlocks": true,
+    "trackUserLatency": false,
+    "prewarm": true,
+    "rampUp": false,
+    "reportPath": "/dev/stdout"
+  }
+}

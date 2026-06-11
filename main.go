@@ -21,6 +21,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/funder"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
@@ -277,6 +278,14 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Set statistics collector for sender and its workers
 		snd.SetStatsCollector(collector, logger)
 
+		// Fund the pool before prewarm/dispatch — both spend gas the accounts
+		// don't have until funded.
+		if cfg.Funding != nil && !settings.DryRun {
+			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
+				return fmt.Errorf("failed to fund accounts: %w", err)
+			}
+		}
+
 		// Create dispatcher
 		var dispatcher *sender.Dispatcher
 		if settings.TxsDir != "" {
@@ -395,6 +404,10 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 
 	if len(cfg.Scenarios) == 0 {
 		return nil, fmt.Errorf("no scenarios specified in config")
+	}
+
+	if err := cfg.ValidateFunding(); err != nil {
+		return nil, err
 	}
 
 	return &cfg, nil
