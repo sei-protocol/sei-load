@@ -17,6 +17,9 @@ type LoadConfig struct {
 	Scenarios  []Scenario     `json:"scenarios,omitempty"`
 	MockDeploy bool           `json:"mockDeploy,omitempty"`
 	Settings   *Settings      `json:"settings,omitempty"`
+	// Funding, when set, funds the generated account pool from a root key at
+	// startup so the run works against a real chain. See funding.go.
+	Funding *FundingConfig `json:"funding,omitempty"`
 	// Path to write a JSON report of the load test.
 	ReportPath string `json:"reportPath,omitempty"`
 }
