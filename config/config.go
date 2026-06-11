@@ -19,6 +19,10 @@ type LoadConfig struct {
 	Settings   *Settings      `json:"settings,omitempty"`
 	// Path to write a JSON report of the load test.
 	ReportPath string `json:"reportPath,omitempty"`
+	// Seed roots the deterministic PRNG sub-streams that drive the run; same
+	// seed + config replays byte-identically. A nil Seed means "unseeded": the
+	// generator resolves a random one and records it for after-the-fact replay.
+	Seed *uint64 `json:"seed,omitempty"`
 }
 
 // Duration wraps time.Duration to provide JSON unmarshaling support

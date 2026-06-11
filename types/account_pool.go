@@ -1,8 +1,10 @@
 package types
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"sync"
+
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // AccountPool returns a next account for load generation.
@@ -14,6 +16,9 @@ type AccountPool interface {
 type AccountConfig struct {
 	Accounts       []*Account
 	NewAccountRate float64
+	// Stream, when non-nil, makes the new-account roll deterministic. A nil
+	// Stream leaves the pool on the unseeded global RNG.
+	Stream *rng.Stream
 }
 
 type accountPool struct {
@@ -35,7 +40,12 @@ func (a *accountPool) nextIndex() int {
 // NextAccount returns the next account.
 func (a *accountPool) NextAccount() *Account {
 	if a.cfg.NewAccountRate > 0 {
-		randomNumber := rand.Float64()
+		var randomNumber float64
+		if a.cfg.Stream != nil {
+			randomNumber = a.cfg.Stream.Float64()
+		} else {
+			randomNumber = rand.Float64()
+		}
 		if randomNumber <= a.cfg.NewAccountRate {
 			return GenerateAccounts(1)[0]
 		}

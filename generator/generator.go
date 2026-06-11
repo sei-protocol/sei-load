@@ -11,6 +11,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // Generator interface defines the contract for transaction generators
@@ -32,6 +33,7 @@ type scenarioInstance struct {
 // configBasedGenerator manages scenario creation and deployment from config
 type configBasedGenerator struct {
 	config         *config.LoadConfig
+	rng            *rng.Source
 	instances      []*scenarioInstance
 	deployer       *types.Account
 	sharedAccounts types.AccountPool   // Shared account pool when using top-level config
@@ -51,6 +53,7 @@ func (g *configBasedGenerator) createScenarios() error {
 		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
 			Accounts:       accounts,
 			NewAccountRate: g.config.Accounts.NewAccountRate,
+			Stream:         g.rng.Stream("accounts:shared"),
 		})
 		g.accountPools = append(g.accountPools, g.sharedAccounts)
 	}
@@ -58,6 +61,7 @@ func (g *configBasedGenerator) createScenarios() error {
 	for i, scenarioCfg := range g.config.Scenarios {
 		// Create scenario instance using factory
 		scenario := scenarios.CreateScenario(scenarioCfg)
+		g.bindGasStreams(i, scenarioCfg)
 
 		// Determine account pool to use
 		var accountPool types.AccountPool
@@ -70,6 +74,7 @@ func (g *configBasedGenerator) createScenarios() error {
 			accountPool = types.NewAccountPool(&types.AccountConfig{
 				Accounts:       accounts,
 				NewAccountRate: newAccountRate,
+				Stream:         g.rng.Stream(fmt.Sprintf("accounts:scenario:%d", i)),
 			})
 			g.accountPools = append(g.accountPools, accountPool)
 		} else if g.sharedAccounts != nil {
@@ -109,6 +114,21 @@ func (g *configBasedGenerator) createScenarios() error {
 	}
 
 	return nil
+}
+
+// bindGasStreams binds each configured gas picker for a scenario to its own
+// deterministic sub-stream. The stream ids are keyed by the scenario's config
+// index so they stay stable across runs of the same config.
+func (g *configBasedGenerator) bindGasStreams(i int, cfg config.Scenario) {
+	if cfg.GasPicker != nil {
+		cfg.GasPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:base", i)))
+	}
+	if cfg.GasTipCapPicker != nil {
+		cfg.GasTipCapPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:tip", i)))
+	}
+	if cfg.GasFeeCapPicker != nil {
+		cfg.GasFeeCapPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:feecap", i)))
+	}
 }
 
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).
@@ -181,7 +201,7 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 	}
 
 	// Create and return the weighted scenarioGenerator
-	return NewWeightedGenerator(weightedConfigs...), nil
+	return NewWeightedGenerator(g.rng.Stream("weighted:shuffle"), weightedConfigs...), nil
 }
 
 // GetAccountPools returns all account pools managed by this generator
@@ -195,10 +215,24 @@ func (g *configBasedGenerator) GetAccountPools() []types.AccountPool {
 	return pools
 }
 
+// resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
+// random seed. The resolved seed is written back to cfg.Seed and logged so any
+// run is replayable after the fact; the run summary (PLT-467) reads it there.
+func resolveSeed(cfg *config.LoadConfig) *rng.Source {
+	if cfg.Seed != nil {
+		return rng.NewSource(*cfg.Seed)
+	}
+	src, seed := rng.NewRandomSource()
+	cfg.Seed = &seed
+	log.Printf("🎲 No seed configured; generated random seed %d (set \"seed\" to replay)", seed)
+	return src
+}
+
 // NewConfigBasedGenerator is a convenience method that combines all steps
 func NewConfigBasedGenerator(cfg *config.LoadConfig) (Generator, error) {
 	generator := &configBasedGenerator{
 		config:    cfg,
+		rng:       resolveSeed(cfg),
 		instances: make([]*scenarioInstance, 0),
 		deployer:  types.GenerateAccounts(1)[0],
 	}
