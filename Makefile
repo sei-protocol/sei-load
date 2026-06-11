@@ -20,6 +20,28 @@ ABIGEN := abigen
 NVM_DIR := $(HOME)/.nvm
 NODE_VERSION := 20
 
+# Pinned solc release + integrity hash (supply-chain). Single source of truth
+# for both `setup-node` and the CI download step. Verified against the official
+# Solidity release index https://binaries.soliditylang.org/linux-amd64/list.json
+# (0.8.19 -> sha256 0x7a5c1d3d...cd9eb48), which matches the GitHub
+# solc-static-linux artifact. Bump version + hash together.
+SOLC_VERSION := 0.8.19
+SOLC_SHA256 := 7a5c1d3dc9a8eba62bb2ec37192c9178ae5fe8a54a56e5573fd3c9c17cd9eb48
+
+# EVM target for solc. `paris` is solc 0.8.19's highest supported target (its
+# implicit default), so we pin it explicitly to make that default a written
+# invariant: a future solc bump can't silently emit newer opcodes (e.g.
+# PUSH0/MCOPY/TSTORE) and shift the bytecode/gas surface under us. paris is a
+# strict subset of Sei's Cancun/Pectra-era forks (paris ⊂ Sei), so paris-targeted
+# bytecode is unconditionally safe to deploy; runtime gas is set by the chain's
+# active fork regardless of compile target, so the target never distorts
+# measurements.
+SOLC_EVM_VERSION := paris
+
+# go-ethereum version sourced from go.mod (pins abigen for reproducible bindings).
+# Falls back to grepping go.mod if `go list` is unavailable.
+GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
+
 # Find all .sol files in contracts directory
 SOL_FILES := $(wildcard $(CONTRACTS_DIR)/*.sol)
 CONTRACT_NAMES := $(basename $(notdir $(SOL_FILES)))
@@ -30,20 +52,23 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate clean help build-cli install setup-node build test lint
+.PHONY: generate generate-bindings check-bindings install-abigen clean help build-cli install setup-node build test lint
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build        - Build the seiload CLI (alias for build-cli)"
-	@echo "  test         - Run tests with coverage"
-	@echo "  lint         - Run linting and static analysis"
-	@echo "  setup-node   - Install nvm, Node.js 20, and solc"
-	@echo "  generate     - Generate Go bindings and scenario templates for all contracts"
-	@echo "  clean        - Remove generated files"
-	@echo "  help         - Show this help message"
-	@echo "  build-cli    - Build the seiload CLI"
-	@echo "  install      - Install the seiload CLI"
+	@echo "  build             - Build the seiload CLI (alias for build-cli)"
+	@echo "  test              - Run tests with coverage"
+	@echo "  lint              - Run linting and static analysis"
+	@echo "  setup-node        - Install nvm, Node.js 20, and solc"
+	@echo "  generate          - Generate Go bindings and scenario templates for all contracts"
+	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
+	@echo "  check-bindings    - Fail if committed bindings are out of sync with contracts"
+	@echo "  install-abigen    - Install abigen pinned to the go.mod go-ethereum version"
+	@echo "  clean             - Remove generated files"
+	@echo "  help              - Show this help message"
+	@echo "  build-cli         - Build the seiload CLI"
+	@echo "  install           - Install the seiload CLI"
 
 # Setup Node.js environment with nvm
 setup-node:
@@ -63,8 +88,10 @@ setup-node:
 	nvm install $(NODE_VERSION) && \
 	nvm use $(NODE_VERSION)
 	@echo "📦 Installing native solc binary..."
-	@curl -L https://github.com/ethereum/solidity/releases/download/v0.8.19/solc-static-linux -o /tmp/solc && \
-	chmod +x /tmp/solc
+	@curl --fail --proto '=https' --tlsv1.2 -L https://github.com/ethereum/solidity/releases/download/v$(SOLC_VERSION)/solc-static-linux -o /tmp/solc
+	@echo "🔒 Verifying solc sha256..."
+	@echo "$(SOLC_SHA256)  /tmp/solc" | sha256sum -c -
+	@chmod +x /tmp/solc
 	@echo "✅ Node.js environment setup complete"
 	@echo "ℹ️  Note: You may need to restart your shell or run 'source ~/.bashrc' to use nvm in new sessions"
 
@@ -73,6 +100,12 @@ generate: $(BINDING_FILES) $(SCENARIO_TEMPLATE_FILES)
 	@echo "🏭 Updating scenario factory..."
 	@./scripts/update_factory.sh $(CONTRACT_NAMES)
 	@echo "✅ Generated bindings and scenario templates for contracts: $(CONTRACT_NAMES)"
+
+# Bindings-only target: rebuilds the .sol -> .abi/.bin -> binding chain WITHOUT
+# touching human-edited scenario templates or the scenario factory. This is the
+# "write a contract, regenerate its binding" path that CI validates.
+generate-bindings: $(BINDING_FILES)
+	@echo "✅ Generated bindings for contracts: $(CONTRACT_NAMES)"
 
 # Create build directory
 $(BUILD_DIR):
@@ -86,10 +119,14 @@ $(BINDINGS_DIR):
 $(SCENARIOS_DIR):
 	@mkdir -p $(SCENARIOS_DIR)
 
-# Compile a single contract to ABI and bytecode
+# Compile a single contract to ABI and bytecode.
+# --evm-version pins the target (see SOLC_EVM_VERSION above).
+# --metadata-hash none strips the trailing CBOR metadata hash so bytecode is
+# reproducible across repo paths / build hosts (the hash embeds source paths)
+# and is slightly smaller; it does not affect the ABI or function selectors.
 $(BUILD_DIR)/%.abi $(BUILD_DIR)/%.bin: $(CONTRACTS_DIR)/%.sol | $(BUILD_DIR)
 	@echo "🔨 Compiling contract: $*"
-	@$(SOLC) --abi --bin --optimize --overwrite -o $(BUILD_DIR) $<
+	@$(SOLC) --abi --bin --optimize --evm-version $(SOLC_EVM_VERSION) --metadata-hash none --overwrite -o $(BUILD_DIR) $<
 	@echo "✅ Compiled: $*"
 
 # Generate Go binding from ABI and bytecode
@@ -115,11 +152,43 @@ check-tools:
 	@which $(ABIGEN) > /dev/null || (echo "❌ abigen not found. Run 'make install-tools' to install" && exit 1)
 	@echo "✅ All required tools are available"
 
+# Install abigen pinned to the go.mod go-ethereum version.
+# Pinning (not @latest) keeps binding output reproducible so CI drift checks
+# don't flake when go-ethereum publishes a new release.
+install-abigen:
+	@echo "📦 Installing abigen@$(GETH_VERSION) ..."
+	@test -n "$(GETH_VERSION)" || (echo "❌ could not resolve go-ethereum version from go.mod" && exit 1)
+	@go install github.com/ethereum/go-ethereum/cmd/abigen@$(GETH_VERSION)
+	@echo "✅ Installed abigen@$(GETH_VERSION)"
+
+# Drift check: regenerate bindings from source and fail if they differ from
+# what is committed. We force a clean rebuild (-B) so Make's mtime logic cannot
+# skip regeneration — in CI a freshly-checked-out committed binding can be newer
+# than the rebuilt .abi/.bin, which would otherwise let stale/tampered output
+# pass the gate. `git add -N` stages the *intent to add* any brand-new (untracked)
+# binding so `git diff --exit-code` also fails on a never-committed contract.
+# This target is developer-facing (see `make help`), so it must be tree-neutral:
+# capture the diff result, ALWAYS reset the index for $(BINDINGS_DIR), then fail.
+# This leaves `git status` exactly as it was found (no staged add-intent junk).
+check-bindings:
+	@$(MAKE) -B generate-bindings
+	@git add -N -- $(BINDINGS_DIR)
+	@git diff --exit-code -- $(BINDINGS_DIR) > /dev/null 2>&1; rc=$$?; \
+		git reset -q -- $(BINDINGS_DIR) >/dev/null 2>&1 || true; \
+		if [ $$rc -ne 0 ]; then \
+			echo ""; \
+			echo "❌ Bindings are out of sync with contracts."; \
+			echo "   Contracts changed (or a new contract was added) but bindings"; \
+			echo "   were not regenerated/committed."; \
+			echo "   Run 'make generate-bindings' and commit the result."; \
+			echo ""; \
+			git --no-pager diff -- $(BINDINGS_DIR); \
+			exit 1; \
+		fi
+	@echo "✅ Bindings are in sync with contracts"
+
 # Install tools (optional convenience target)
-install-tools: setup-node
-	@echo "📦 Installing required tools ..."
-	@echo "Installing abigen ..."
-	@go install github.com/ethereum/go-ethereum/cmd/abigen@latest
+install-tools: setup-node install-abigen
 	@echo "✅ Tools installation complete"
 
 # Build the seiload CLI binary

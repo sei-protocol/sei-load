@@ -1,0 +1,58 @@
+name: Bindings Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  bindings-check:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        go-version: [1.25.1]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Install solc 0.8.19
+      env:
+        # Keep in sync with SOLC_VERSION / SOLC_SHA256 in the Makefile.
+        # sha256 verified against https://binaries.soliditylang.org/linux-amd64/list.json
+        SOLC_VERSION: 0.8.19
+        SOLC_SHA256: 7a5c1d3dc9a8eba62bb2ec37192c9178ae5fe8a54a56e5573fd3c9c17cd9eb48
+      run: |
+        curl --fail --proto '=https' --tlsv1.2 -L "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" -o /tmp/solc
+        echo "${SOLC_SHA256}  /tmp/solc" | sha256sum -c -
+        chmod +x /tmp/solc
+        /tmp/solc --version
+
+    - name: Install pinned abigen
+      run: make install-abigen
+
+    - name: Check bindings are in sync
+      run: make check-bindings
