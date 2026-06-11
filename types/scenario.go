@@ -12,34 +12,30 @@ import (
 
 // LoadTx is a wrapper that has pre-encoded json rpc payload and eth transaction.
 //
-// Lifecycle timestamp concurrency contract:
-// A *LoadTx is passed by pointer through buffered channels (txChan, sentTxs) and
-// read by multiple worker goroutines. The lifecycle timestamps below are written
-// at most once, each by a single owner, and are immutable thereafter. Workers must
-// not mutate these timestamps after a tx is enqueued. This single-writer-before-
-// hand-off discipline is what keeps LoadTx race-free without locks.
-//   - IntendedSendTs: written exactly once by the dispatcher before the tx is
-//     enqueued into the send pipeline; immutable after enqueue.
-//   - AttemptedSendTs: reserved for PLT-458; will be written once by the sender at
-//     the actual send attempt.
-//   - InclusionTs: reserved for PLT-459; will be written exactly once by the
-//     inclusion tracker (its sole owner), never by workers.
+// Lifecycle timestamp concurrency contract: a *LoadTx is passed by pointer
+// through buffered channels (txChan, sentTxs). Each lifecycle timestamp is
+// written at most once, by whichever goroutine owns the tx at that stage, and
+// is immutable thereafter; ownership transfers with the pointer across the
+// channels, so the writes need no locking. A zero timestamp means "not
+// recorded" (e.g. prewarm txs, or a stage not yet reached) — consumers must
+// treat it as untracked, never as the zero epoch.
 type LoadTx struct {
 	EthTx          *ethtypes.Transaction
 	JSONRPCPayload []byte
 	Payload        []byte
 	Scenario       *TxScenario
 
-	// IntendedSendTs is when the tx was scheduled to be sent. In today's
-	// closed-loop dispatcher it is stamped at enqueue into the send pipeline.
-	// PLT-458 will move this to the true scheduled instant t₀ + i/λ.
-	IntendedSendTs time.Time
-	// AttemptedSendTs is when the send was actually attempted. Reserved for
-	// PLT-458 (open-loop scheduler); not populated in this PR.
-	AttemptedSendTs time.Time
-	// InclusionTs is when the tx was observed included on-chain. Reserved for
-	// PLT-459 (inclusion tracker); not populated in this PR.
-	InclusionTs time.Time
+	// IntendedSendTime is when the tx was scheduled to be sent, written by the
+	// dispatcher before the tx is enqueued. It currently holds the enqueue time,
+	// which is back-pressured under load; until an open-loop scheduler sets it to
+	// the intended schedule instant, it must not be used to derive latency.
+	IntendedSendTime time.Time
+	// AttemptedSendTime is when the send was actually attempted, written by the
+	// worker goroutine that owns the tx between dequeue and the sentTxs hand-off.
+	AttemptedSendTime time.Time
+	// InclusionTime is when the tx was observed included on-chain, written only
+	// by the inclusion tracker.
+	InclusionTime time.Time
 }
 
 // JSONRPCRequest represents json rpc request.

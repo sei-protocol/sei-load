@@ -96,12 +96,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			return nil
 		}
 
-		// Stamp the scheduled instant before hand-off into the send pipeline.
-		// The dispatcher is the sole owner of tx here (just returned by the
-		// generator, not yet enqueued), so this single write is race-free and
-		// happens exactly once before any channel hand-off. PLT-458 will move
-		// this to the true scheduled instant t₀ + i/λ.
-		tx.IntendedSendTs = time.Now()
+		// Stamp before hand-off: the dispatcher is sole owner here (tx just
+		// returned by the generator, not yet enqueued), so this write is race-free.
+		tx.IntendedSendTime = time.Now()
 
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {
@@ -125,9 +122,8 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 		if !ok {
 			return fmt.Errorf("dispatcher: generator returned nil transaction (batch %d/%d)", i+1, count)
 		}
-		// Stamp the scheduled instant before hand-off (see Run). PLT-458 will
-		// move this to the true scheduled instant t₀ + i/λ.
-		tx.IntendedSendTs = time.Now()
+		// Stamp before hand-off (see Run).
+		tx.IntendedSendTime = time.Now()
 
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {
