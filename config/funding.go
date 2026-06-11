@@ -19,9 +19,7 @@ var DefaultFundAmountWei = func() *BigInt {
 const DefaultFundBatchSize = 200
 
 // FundingConfig configures root-key funding of the generated account pool so
-// seiload can run against a real chain (where accounts are not auto-funded by
-// mock_balances or genesis). When nil, accounts are left unfunded — the
-// existing mock/genesis behavior is unchanged.
+// seiload can run against a real chain. When nil, accounts are left unfunded.
 //
 // The root account must be funded at its EVM address (the bech32 cast of the
 // key's 0x address) or already associated; its first EVM tx auto-associates so
@@ -36,7 +34,7 @@ type FundingConfig struct {
 	RootKeyEnv string `json:"rootKeyEnv,omitempty"`
 	// FundAmountWei is the per-account funding in wei. Defaults to 1 SEI.
 	FundAmountWei *BigInt `json:"fundAmountWei,omitempty"`
-	// BatchSize is the number of recipients per disperseEther call.
+	// BatchSize is the recipients per disperseEther call; defaults to DefaultFundBatchSize.
 	BatchSize int `json:"batchSize,omitempty"`
 }
 
@@ -60,7 +58,6 @@ func (f *FundingConfig) Batch() int {
 // numbers lose precision above 2^53 and wei amounts exceed that.
 type BigInt big.Int
 
-// ToBigInt returns the underlying *big.Int.
 func (b *BigInt) ToBigInt() *big.Int { return (*big.Int)(b) }
 
 // UnmarshalJSON accepts a decimal string (e.g. "1000000000000000000").

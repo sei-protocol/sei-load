@@ -8,8 +8,7 @@
 // balance at execution, or a fresh genesis that pre-funds them — but against a
 // real, long-running chain (e.g. arctic-1) the accounts start at zero and every
 // transfer reverts for lack of gas. This package gives the pool a balance
-// before the run starts. When cfg.Funding is nil the package is inert and
-// seiload's mock/genesis behavior is unchanged.
+// before the run starts. When cfg.Funding is nil the package is inert.
 //
 // # Flow
 //

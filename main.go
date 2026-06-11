@@ -278,9 +278,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		// Set statistics collector for sender and its workers
 		snd.SetStatsCollector(collector, logger)
 
-		// Fund the generated account pool from the root key (real-chain runs).
-		// Must precede prewarm/dispatch — both spend gas the accounts don't have
-		// until funded. No-op when cfg.Funding is nil (mock/genesis path).
+		// Fund the pool before prewarm/dispatch — both spend gas the accounts
+		// don't have until funded.
 		if cfg.Funding != nil && !settings.DryRun {
 			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
 				return fmt.Errorf("failed to fund accounts: %w", err)

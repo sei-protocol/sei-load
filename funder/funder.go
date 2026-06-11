@@ -77,7 +77,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	}
 	auth.Context = ctx
 	auth.GasTipCap = big.NewInt(1_000_000_000)   // 1 gwei (chain min fee)
-	auth.GasFeeCap = big.NewInt(100_000_000_000) // 100 gwei cap
+	auth.GasFeeCap = big.NewInt(100_000_000_000) // 100 gwei
 
 	disperse, err := deployDisperse(ctx, client, auth)
 	if err != nil {
