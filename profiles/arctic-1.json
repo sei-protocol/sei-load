@@ -7,7 +7,7 @@
     "newAccountRate": 0.0
   },
   "funding": {
-    "rootKeyEnv": "SEILOAD_ROOT_KEY",
+    "rootKeyFile": "/etc/seiload-key/root-key.hex",
     "fundAmountWei": "1000000000000000000",
     "batchSize": 200
   },

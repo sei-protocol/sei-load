@@ -67,9 +67,16 @@ func TestValidateFunding(t *testing.T) {
 			},
 		},
 		{
+			name: "funding with a file key and rate 0 is fine",
+			cfg: LoadConfig{
+				Funding:  &FundingConfig{RootKeyFile: "/etc/seiload-key/root-key.hex"},
+				Accounts: &AccountConfig{Accounts: 10, NewAccountRate: 0},
+			},
+		},
+		{
 			name: "funding with newAccountRate>0 on top-level pool errors",
 			cfg: LoadConfig{
-				Funding:  &FundingConfig{RootKey: "0xabc"},
+				Funding:  &FundingConfig{RootKeyEnv: "K"},
 				Accounts: &AccountConfig{Accounts: 10, NewAccountRate: 0.1},
 			},
 			wantErr: true,
@@ -77,7 +84,7 @@ func TestValidateFunding(t *testing.T) {
 		{
 			name: "funding with newAccountRate>0 on a scenario pool errors",
 			cfg: LoadConfig{
-				Funding:   &FundingConfig{RootKey: "0xabc"},
+				Funding:   &FundingConfig{RootKeyEnv: "K"},
 				Scenarios: []Scenario{{Name: "EVMTransfer", Accounts: &AccountConfig{Accounts: 5, NewAccountRate: 0.2}}},
 			},
 			wantErr: true,

@@ -22,30 +22,30 @@ const DefaultFundBatchSize = 200
 // seiload can run against a real chain (where accounts are not auto-funded by
 // mock_balances or genesis). When nil, accounts are left unfunded — the
 // existing mock/genesis behavior is unchanged.
+//
+// The root account must be funded at its EVM address (the bech32 cast of the
+// key's 0x address) or already associated; its first EVM tx auto-associates so
+// the balance becomes EVM-spendable.
 type FundingConfig struct {
-	// RootKeyEnv names the env var holding the funded root account's hex ECDSA
-	// private key. Preferred over RootKey so the key never lands in a config
-	// file or log line.
+	// RootKeyFile is a path to a file containing the funded root account's hex
+	// ECDSA private key. Preferred over RootKeyEnv: a mounted file is not
+	// exposed in the process environment, /proc/<pid>/environ, or child procs.
+	RootKeyFile string `json:"rootKeyFile,omitempty"`
+	// RootKeyEnv names an env var holding the hex key. Fallback when RootKeyFile
+	// is unset.
 	RootKeyEnv string `json:"rootKeyEnv,omitempty"`
-	// RootKey is an inline hex private key, used only when RootKeyEnv is empty.
-	// Avoid in committed configs.
-	RootKey string `json:"rootKey,omitempty"`
 	// FundAmountWei is the per-account funding in wei. Defaults to 1 SEI.
 	FundAmountWei *BigInt `json:"fundAmountWei,omitempty"`
 	// BatchSize is the number of recipients per disperseEther call.
 	BatchSize int `json:"batchSize,omitempty"`
-	// DisperseAddress, when set, reuses a pre-deployed Disperse contract instead
-	// of deploying a fresh one (saves a deploy tx and avoids needing the root to
-	// deploy on every restart).
-	DisperseAddress string `json:"disperseAddress,omitempty"`
 }
 
 // FundAmount returns the configured per-account amount or the default.
 func (f *FundingConfig) FundAmount() *big.Int {
 	if f == nil || f.FundAmountWei == nil {
-		return (*big.Int)(DefaultFundAmountWei)
+		return DefaultFundAmountWei.ToBigInt()
 	}
-	return (*big.Int)(f.FundAmountWei)
+	return f.FundAmountWei.ToBigInt()
 }
 
 // Batch returns the configured batch size or the default.
@@ -60,15 +60,18 @@ func (f *FundingConfig) Batch() int {
 // numbers lose precision above 2^53 and wei amounts exceed that.
 type BigInt big.Int
 
+// ToBigInt returns the underlying *big.Int.
+func (b *BigInt) ToBigInt() *big.Int { return (*big.Int)(b) }
+
 // UnmarshalJSON accepts a decimal string (e.g. "1000000000000000000").
 func (b *BigInt) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("fundAmountWei must be a decimal string: %w", err)
+		return fmt.Errorf("BigInt must be a decimal string: %w", err)
 	}
 	v, ok := new(big.Int).SetString(s, 10)
 	if !ok {
-		return fmt.Errorf("invalid integer %q", s)
+		return fmt.Errorf("BigInt: invalid decimal string %q", s)
 	}
 	*b = BigInt(*v)
 	return nil
@@ -79,20 +82,20 @@ func (b *BigInt) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*big.Int)(b).String())
 }
 
-// Validate checks funding invariants against the rest of the config. It must be
-// called after the config is loaded.
+// ValidateFunding checks funding invariants against the rest of the config. It
+// must be called after the config is loaded.
 func (c *LoadConfig) ValidateFunding() error {
 	if c.Funding == nil {
 		return nil
 	}
-	if c.Funding.RootKeyEnv == "" && c.Funding.RootKey == "" {
-		return fmt.Errorf("funding: one of rootKeyEnv or rootKey is required")
+	if c.Funding.RootKeyFile == "" && c.Funding.RootKeyEnv == "" {
+		return fmt.Errorf("funding: one of rootKeyFile or rootKeyEnv is required")
 	}
 	// Newly-minted accounts (newAccountRate > 0) are never funded — their first
-	// tx would fail for lack of gas. Funding requires a fixed, fully-funded pool.
+	// tx would fail for lack of gas. Funding requires a fixed pool.
 	bad := func(a *AccountConfig, where string) error {
 		if a != nil && a.NewAccountRate > 0 {
-			return fmt.Errorf("funding requires newAccountRate=0 (%s has %.3f); "+
+			return fmt.Errorf("funding: requires newAccountRate=0 (%s has %.3f); "+
 				"on-demand accounts cannot be funded", where, a.NewAccountRate)
 		}
 		return nil

@@ -15,8 +15,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
@@ -26,11 +28,16 @@ import (
 const balanceCheckConcurrency = 16
 
 // FundAccounts funds every account across the given pools to at least the
-// configured per-account amount, drawing from cfg.Funding's root key. It is
-// idempotent: accounts already at/above the target are skipped, so a pod
-// restart re-funds only what was spent. The first EVM tx the root sends
-// auto-associates its cosmos balance to the EVM side (Sei ante handler), so no
-// explicit association step is required.
+// configured per-account amount, drawing from cfg.Funding's root key. The
+// root's first EVM tx (the Disperse deploy) auto-associates its cosmos balance
+// to the EVM side (Sei ante handler), so no explicit association step is
+// required — the root must be funded at its EVM (cast) address or be already
+// associated.
+//
+// Funding targets the current pool. seiload generates a fresh random pool each
+// start, so a restart funds a new set of accounts (the prior set's balances are
+// stranded — acceptable on a funny-money devnet, bounded by the root balance).
+// The already-funded skip below guards against double-funding within a run.
 func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.AccountPool) error {
 	fc := cfg.Funding
 	if fc == nil {
@@ -82,11 +89,15 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	auth.GasTipCap = big.NewInt(1_000_000_000)   // 1 gwei (chain min fee)
 	auth.GasFeeCap = big.NewInt(100_000_000_000) // 100 gwei cap
 
-	disperse, err := getDisperse(ctx, client, auth, fc)
+	disperse, err := deployDisperse(ctx, client, auth)
 	if err != nil {
 		return err
 	}
 
+	// Sequential by design: auth.Nonce stays nil so bind fetches PendingNonceAt
+	// per tx, and WaitMined gates each batch — the prior nonce is mined and
+	// visible before the next send. Do not parallelize batches or set
+	// auth.Nonce without reworking this.
 	batch := fc.Batch()
 	for start := 0; start < len(underfunded); start += batch {
 		end := start + batch
@@ -97,7 +108,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 		values := make([]*big.Int, len(chunk))
 		total := new(big.Int)
 		for i := range chunk {
-			values[i] = new(big.Int).Set(amount)
+			values[i] = amount // read-only by the contract call; safe to share
 			total.Add(total, amount)
 		}
 		auth.Value = total
@@ -105,8 +116,8 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 		if err != nil {
 			return fmt.Errorf("funder: disperseEther [%d:%d]: %w", start, end, err)
 		}
-		if _, err := bind.WaitMined(ctx, client, tx); err != nil {
-			return fmt.Errorf("funder: wait disperse [%d:%d]: %w", start, end, err)
+		if err := waitSuccess(ctx, client, tx, "disperseEther"); err != nil {
+			return err
 		}
 		log.Printf("💰 funder: funded %d/%d (tx %s)", end, len(underfunded), tx.Hash().Hex())
 	}
@@ -116,6 +127,16 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 }
 
 func resolveRootKey(fc *config.FundingConfig) (string, error) {
+	if fc.RootKeyFile != "" {
+		b, err := os.ReadFile(fc.RootKeyFile)
+		if err != nil {
+			return "", fmt.Errorf("funder: read rootKeyFile: %w", err)
+		}
+		if len(strings.TrimSpace(string(b))) == 0 {
+			return "", fmt.Errorf("funder: rootKeyFile %s is empty", fc.RootKeyFile)
+		}
+		return string(b), nil
+	}
 	if fc.RootKeyEnv != "" {
 		v := os.Getenv(fc.RootKeyEnv)
 		if v == "" {
@@ -123,10 +144,7 @@ func resolveRootKey(fc *config.FundingConfig) (string, error) {
 		}
 		return v, nil
 	}
-	if fc.RootKey != "" {
-		return fc.RootKey, nil
-	}
-	return "", fmt.Errorf("funder: no root key (set funding.rootKeyEnv or funding.rootKey)")
+	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
 func uniqueAddresses(pools []types.AccountPool) []common.Address {
@@ -145,70 +163,68 @@ func uniqueAddresses(pools []types.AccountPool) []common.Address {
 }
 
 // filterUnderfunded returns the subset of addresses whose balance is below
-// amount, querying balances concurrently.
+// amount, querying balances concurrently. The errgroup bounds concurrency and
+// cancels all in-flight queries on the first error or on ctx cancellation, with
+// no goroutine leak.
 func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []common.Address, amount *big.Int) ([]common.Address, error) {
-	type res struct {
-		addr common.Address
-		low  bool
-		err  error
-	}
-	in := make(chan common.Address)
-	out := make(chan res)
-	var wg sync.WaitGroup
-	for i := 0; i < balanceCheckConcurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for a := range in {
-				bal, err := client.BalanceAt(ctx, a, nil)
-				if err != nil {
-					out <- res{addr: a, err: err}
-					continue
-				}
-				out <- res{addr: a, low: bal.Cmp(amount) < 0}
+	var (
+		mu          sync.Mutex
+		underfunded []common.Address
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(balanceCheckConcurrency)
+	for _, a := range addrs {
+		a := a
+		g.Go(func() error {
+			bal, err := client.BalanceAt(gctx, a, nil)
+			if err != nil {
+				return fmt.Errorf("funder: balance %s: %w", a.Hex(), err)
 			}
-		}()
+			if bal.Cmp(amount) < 0 {
+				mu.Lock()
+				underfunded = append(underfunded, a)
+				mu.Unlock()
+			}
+			return nil
+		})
 	}
-	go func() {
-		for _, a := range addrs {
-			in <- a
-		}
-		close(in)
-	}()
-	go func() { wg.Wait(); close(out) }()
-
-	var underfunded []common.Address
-	for r := range out {
-		if r.err != nil {
-			return nil, fmt.Errorf("funder: balance check %s: %w", r.addr.Hex(), r.err)
-		}
-		if r.low {
-			underfunded = append(underfunded, r.addr)
-		}
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	return underfunded, nil
 }
 
-// getDisperse reuses a pre-deployed Disperse contract when an address is
-// configured, otherwise deploys one (the root's first EVM tx, which also
-// auto-associates the root).
-func getDisperse(ctx context.Context, client *ethclient.Client, auth *bind.TransactOpts, fc *config.FundingConfig) (*bindings.Disperse, error) {
-	if fc.DisperseAddress != "" {
-		addr := common.HexToAddress(fc.DisperseAddress)
-		d, err := bindings.NewDisperse(addr, client)
-		if err != nil {
-			return nil, fmt.Errorf("funder: bind Disperse at %s: %w", addr.Hex(), err)
-		}
-		log.Printf("💰 funder: using pre-deployed Disperse at %s", addr.Hex())
-		return d, nil
-	}
+// deployDisperse deploys a fresh Disperse contract. This is the root's first
+// EVM tx, which also auto-associates the root. Deploying fresh (rather than
+// trusting a configured address) avoids sending the root's value to an
+// unverified contract.
+func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.TransactOpts) (*bindings.Disperse, error) {
 	addr, tx, d, err := bindings.DeployDisperse(auth, client, big.NewInt(0), big.NewInt(0))
 	if err != nil {
 		return nil, fmt.Errorf("funder: deploy Disperse: %w", err)
 	}
-	if _, err := bind.WaitMined(ctx, client, tx); err != nil {
-		return nil, fmt.Errorf("funder: wait Disperse deploy: %w", err)
+	if err := waitSuccess(ctx, client, tx, "deploy Disperse"); err != nil {
+		return nil, err
+	}
+	code, err := client.CodeAt(ctx, addr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("funder: CodeAt %s: %w", addr.Hex(), err)
+	}
+	if len(code) == 0 {
+		return nil, fmt.Errorf("funder: deployed Disperse at %s has no code", addr.Hex())
 	}
 	log.Printf("💰 funder: deployed Disperse at %s", addr.Hex())
 	return d, nil
+}
+
+// waitSuccess blocks until tx is mined and asserts it did not revert.
+func waitSuccess(ctx context.Context, client *ethclient.Client, tx *ethtypes.Transaction, what string) error {
+	receipt, err := bind.WaitMined(ctx, client, tx)
+	if err != nil {
+		return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
+	}
+	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
+		return fmt.Errorf("funder: %s reverted (tx %s)", what, tx.Hash().Hex())
+	}
+	return nil
 }
