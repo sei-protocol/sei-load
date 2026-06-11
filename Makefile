@@ -20,6 +20,14 @@ ABIGEN := abigen
 NVM_DIR := $(HOME)/.nvm
 NODE_VERSION := 20
 
+# Pinned solc release + integrity hash (supply-chain). Single source of truth
+# for both `setup-node` and the CI download step. Verified against the official
+# Solidity release index https://binaries.soliditylang.org/linux-amd64/list.json
+# (0.8.19 -> sha256 0x7a5c1d3d...cd9eb48), which matches the GitHub
+# solc-static-linux artifact. Bump version + hash together.
+SOLC_VERSION := 0.8.19
+SOLC_SHA256 := 7a5c1d3dc9a8eba62bb2ec37192c9178ae5fe8a54a56e5573fd3c9c17cd9eb48
+
 # go-ethereum version sourced from go.mod (pins abigen for reproducible bindings).
 # Falls back to grepping go.mod if `go list` is unavailable.
 GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
@@ -39,18 +47,18 @@ SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CON
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build        - Build the seiload CLI (alias for build-cli)"
-	@echo "  test         - Run tests with coverage"
-	@echo "  lint         - Run linting and static analysis"
-	@echo "  setup-node   - Install nvm, Node.js 20, and solc"
-	@echo "  generate         - Generate Go bindings and scenario templates for all contracts"
+	@echo "  build             - Build the seiload CLI (alias for build-cli)"
+	@echo "  test              - Run tests with coverage"
+	@echo "  lint              - Run linting and static analysis"
+	@echo "  setup-node        - Install nvm, Node.js 20, and solc"
+	@echo "  generate          - Generate Go bindings and scenario templates for all contracts"
 	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
-	@echo "  check-bindings   - Fail if committed bindings are out of sync with contracts"
-	@echo "  install-abigen   - Install abigen pinned to the go.mod go-ethereum version"
-	@echo "  clean        - Remove generated files"
-	@echo "  help         - Show this help message"
-	@echo "  build-cli    - Build the seiload CLI"
-	@echo "  install      - Install the seiload CLI"
+	@echo "  check-bindings    - Fail if committed bindings are out of sync with contracts"
+	@echo "  install-abigen    - Install abigen pinned to the go.mod go-ethereum version"
+	@echo "  clean             - Remove generated files"
+	@echo "  help              - Show this help message"
+	@echo "  build-cli         - Build the seiload CLI"
+	@echo "  install           - Install the seiload CLI"
 
 # Setup Node.js environment with nvm
 setup-node:
@@ -70,8 +78,10 @@ setup-node:
 	nvm install $(NODE_VERSION) && \
 	nvm use $(NODE_VERSION)
 	@echo "📦 Installing native solc binary..."
-	@curl -L https://github.com/ethereum/solidity/releases/download/v0.8.19/solc-static-linux -o /tmp/solc && \
-	chmod +x /tmp/solc
+	@curl -L https://github.com/ethereum/solidity/releases/download/v$(SOLC_VERSION)/solc-static-linux -o /tmp/solc
+	@echo "🔒 Verifying solc sha256..."
+	@echo "$(SOLC_SHA256)  /tmp/solc" | sha256sum -c -
+	@chmod +x /tmp/solc
 	@echo "✅ Node.js environment setup complete"
 	@echo "ℹ️  Note: You may need to restart your shell or run 'source ~/.bashrc' to use nvm in new sessions"
 
@@ -137,15 +147,23 @@ install-abigen:
 	@go install github.com/ethereum/go-ethereum/cmd/abigen@$(GETH_VERSION)
 	@echo "✅ Installed abigen@$(GETH_VERSION)"
 
-# Drift check: regenerate bindings and fail if they differ from what is committed.
-check-bindings: generate-bindings
+# Drift check: regenerate bindings from source and fail if they differ from
+# what is committed. We force a clean rebuild (-B) so Make's mtime logic cannot
+# skip regeneration — in CI a freshly-checked-out committed binding can be newer
+# than the rebuilt .abi/.bin, which would otherwise let stale/tampered output
+# pass the gate. `git add -N` stages the *intent to add* any brand-new (untracked)
+# binding so `git diff --exit-code` also fails on a never-committed contract.
+check-bindings:
+	@$(MAKE) -B generate-bindings
+	@git add -N -- $(BINDINGS_DIR)
 	@git diff --exit-code -- $(BINDINGS_DIR) > /dev/null 2>&1 || ( \
 		echo ""; \
 		echo "❌ Bindings are out of sync with contracts."; \
-		echo "   Contracts changed but bindings were not regenerated."; \
+		echo "   Contracts changed (or a new contract was added) but bindings"; \
+		echo "   were not regenerated/committed."; \
 		echo "   Run 'make generate-bindings' and commit the result."; \
 		echo ""; \
-		git --no-pager diff --stat -- $(BINDINGS_DIR); \
+		git --no-pager diff -- $(BINDINGS_DIR); \
 		exit 1 )
 	@echo "✅ Bindings are in sync with contracts"
 
