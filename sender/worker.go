@@ -239,6 +239,9 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 		}
 
 		startTime := time.Now()
+		// This goroutine solely owns tx between dequeue and the sentTxs hand-off,
+		// so stamping the actual send-attempt time here is race-free (see LoadTx).
+		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
 		if w.collector != nil {

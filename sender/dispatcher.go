@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/stats"
@@ -95,6 +96,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			return nil
 		}
 
+		// Stamp before hand-off: the dispatcher is sole owner here (tx just
+		// returned by the generator, not yet enqueued), so this write is race-free.
+		tx.IntendedSendTime = time.Now()
+
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {
 			return err
@@ -117,6 +122,9 @@ func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
 		if !ok {
 			return fmt.Errorf("dispatcher: generator returned nil transaction (batch %d/%d)", i+1, count)
 		}
+		// Stamp before hand-off (see Run).
+		tx.IntendedSendTime = time.Now()
+
 		// Send the transaction
 		if err := d.sender.Send(ctx, tx); err != nil {
 			log.Printf("Dispatcher: Failed to send transaction %d/%d: %v", i+1, count, err)
