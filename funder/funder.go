@@ -47,6 +47,8 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	if err != nil {
 		return err
 	}
+	// TrimSpace is load-bearing: a SOPS-mounted key file commonly carries a
+	// trailing newline.
 	rootKey, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(rootKeyHex), "0x"))
 	if err != nil {
 		return fmt.Errorf("funder: parse root key: %w", err)
@@ -174,7 +176,6 @@ func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []co
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(balanceCheckConcurrency)
 	for _, a := range addrs {
-		a := a
 		g.Go(func() error {
 			bal, err := client.BalanceAt(gctx, a, nil)
 			if err != nil {
