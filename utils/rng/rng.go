@@ -1,11 +1,22 @@
 // Package rng derives independent, reproducible pseudo-random sub-streams from
 // a single run seed.
 //
-// The run summary promises replay: same seed + same config produces the same
-// run. That holds only if every random draw is reproducible AND if the draw a
-// given logical consumer sees does not depend on how many worker goroutines are
-// running. Sub-streams are therefore keyed by a *logical* stream id (a string
-// naming the consumer/purpose), never by a live-goroutine counter.
+// Reproducibility contract — read precisely:
+//
+// Same seed + same config => identical per-stream draw multiset. The workload
+// (the distribution of keys, sizes, gas, and accounts) is statistically
+// reproducible, which is what fair A/B comparison of two runs requires.
+//
+// What is NOT guaranteed: per-tx emission ordering across runs is reproducible
+// only at a single worker. Above one worker, workers interleave their draws
+// into the shared streams non-deterministically, so the ordered tx sequence
+// differs run to run even at the same seed (the multiset still matches). On-chain
+// arrival order is concurrent regardless of worker count, so it is never
+// reproducible. Nothing here makes individual transactions byte-identical.
+//
+// Sub-streams are keyed by a *logical* stream id (a string naming the
+// consumer/purpose), never by a live-goroutine counter, so the per-stream draw
+// multiset a seed yields is invariant to --workers.
 package rng
 
 import (
@@ -23,11 +34,20 @@ import (
 // FNV-1a hash maps the name to a uint64; splitmix64 diffuses it so that
 // near-identical names (e.g. "gas:0" / "gas:1") seed well-separated PCG states.
 //
-// Replay archives are keyed by config_sha256 (PLT-467). Changing this formula —
-// the hash, the diffusion step, or the PCG argument order — silently produces a
-// different draw sequence for the same (seed, streamID) and invalidates every
-// saved replay. Any change is a one-way door requiring a config_sha256 version
-// bump.
+// Three inputs are FROZEN, not just this formula. Each perturbs the draw
+// sequence with no formula change, so each is a one-way door requiring a
+// config_sha256 version bump:
+//
+//  1. The derivation formula above (hash, diffusion, PCG argument order).
+//  2. The set of stream-id strings (defined as constants in streams.go). The
+//     streamID feeds fnv1a64, so renaming "gas:0:base" reseeds that stream.
+//  3. The per-stream draw order. Each stream is a sequence; drawing base before
+//     tip before feecap is part of the contract — reordering draws within a
+//     stream shifts every downstream value.
+//
+// Replay archives are keyed by config_sha256 (PLT-467). Changing any of the
+// three silently produces a different draw sequence for the same (seed, config)
+// and invalidates every saved replay.
 func substream(seed uint64, streamID string) *mrand.PCG {
 	return mrand.NewPCG(seed, splitmix64(fnv1a64(streamID)))
 }
@@ -79,8 +99,10 @@ func NewRandomSource() (*Source, uint64) {
 func (s *Source) Seed() uint64 { return s.seed }
 
 // Stream returns the sub-stream for a logical consumer named streamID. The same
-// (seed, streamID) always yields the same draw sequence, independent of worker
-// count or of any other stream's draws.
+// (seed, streamID) always yields the same draw sequence for a given call order
+// into the stream, independent of any other stream's draws. Concurrent workers
+// drawing from one stream still see a reproducible multiset, but their
+// interleaving — and thus the per-call ordering — is non-deterministic.
 func (s *Source) Stream(streamID string) *Stream {
 	return &Stream{rand: mrand.New(substream(s.seed, streamID))}
 }

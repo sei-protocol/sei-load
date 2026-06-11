@@ -19,9 +19,14 @@ type LoadConfig struct {
 	Settings   *Settings      `json:"settings,omitempty"`
 	// Path to write a JSON report of the load test.
 	ReportPath string `json:"reportPath,omitempty"`
-	// Seed roots the deterministic PRNG sub-streams that drive the run; same
-	// seed + config replays byte-identically. A nil Seed means "unseeded": the
-	// generator resolves a random one and records it for after-the-fact replay.
+	// Seed roots the deterministic PRNG sub-streams that drive the run. Same
+	// seed + config reproduces the per-stream draw multiset, so the workload
+	// (the distribution of keys, sizes, gas, and accounts) is statistically
+	// reproducible for fair A/B comparison. Per-tx emission ordering is
+	// reproducible only at a single worker; above one worker the multiset still
+	// matches but ordering does not, and on-chain arrival order is concurrent
+	// regardless. A nil Seed means "unseeded": the generator resolves a random
+	// one and records it for after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
 }
 

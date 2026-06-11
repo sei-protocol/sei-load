@@ -53,7 +53,7 @@ func (g *configBasedGenerator) createScenarios() error {
 		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
 			Accounts:       accounts,
 			NewAccountRate: g.config.Accounts.NewAccountRate,
-			Stream:         g.rng.Stream("accounts:shared"),
+			Stream:         g.rng.Stream(rng.StreamAccountsShared),
 		})
 		g.accountPools = append(g.accountPools, g.sharedAccounts)
 	}
@@ -74,7 +74,7 @@ func (g *configBasedGenerator) createScenarios() error {
 			accountPool = types.NewAccountPool(&types.AccountConfig{
 				Accounts:       accounts,
 				NewAccountRate: newAccountRate,
-				Stream:         g.rng.Stream(fmt.Sprintf("accounts:scenario:%d", i)),
+				Stream:         g.rng.Stream(rng.AccountsScenarioStream(i)),
 			})
 			g.accountPools = append(g.accountPools, accountPool)
 		} else if g.sharedAccounts != nil {
@@ -119,15 +119,21 @@ func (g *configBasedGenerator) createScenarios() error {
 // bindGasStreams binds each configured gas picker for a scenario to its own
 // deterministic sub-stream. The stream ids are keyed by the scenario's config
 // index so they stay stable across runs of the same config.
+//
+// cfg is a value copy, but its *GasPicker fields are pointers shared with the
+// copy the scenario stores, so SetStream reaches the picker the scenario draws
+// through. A deep copy of config.Scenario would break that silently — see
+// TestRandomGasPickerStreamSeeds, which fails loudly if the binding stops
+// reaching the live picker.
 func (g *configBasedGenerator) bindGasStreams(i int, cfg config.Scenario) {
 	if cfg.GasPicker != nil {
-		cfg.GasPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:base", i)))
+		cfg.GasPicker.SetStream(g.rng.Stream(rng.GasBaseStream(i)))
 	}
 	if cfg.GasTipCapPicker != nil {
-		cfg.GasTipCapPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:tip", i)))
+		cfg.GasTipCapPicker.SetStream(g.rng.Stream(rng.GasTipStream(i)))
 	}
 	if cfg.GasFeeCapPicker != nil {
-		cfg.GasFeeCapPicker.SetStream(g.rng.Stream(fmt.Sprintf("gas:%d:feecap", i)))
+		cfg.GasFeeCapPicker.SetStream(g.rng.Stream(rng.GasFeeCapStream(i)))
 	}
 }
 
@@ -201,7 +207,7 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 	}
 
 	// Create and return the weighted scenarioGenerator
-	return NewWeightedGenerator(g.rng.Stream("weighted:shuffle"), weightedConfigs...), nil
+	return NewWeightedGenerator(g.rng.Stream(rng.StreamWeightedShuffle), weightedConfigs...), nil
 }
 
 // GetAccountPools returns all account pools managed by this generator

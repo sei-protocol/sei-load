@@ -27,6 +27,10 @@ func (g *GasPicker) Name() string { return g.name }
 
 // SetStream binds the picker's random delegate to a deterministic sub-stream. A
 // nil stream leaves the picker on the unseeded global RNG.
+//
+// Only a random delegate has anything to seed: fixed and empty pickers draw no
+// randomness, so the type assertion intentionally no-ops for them rather than
+// erroring.
 func (g *GasPicker) SetStream(s *rng.Stream) {
 	if r, ok := g.delegate.(*RandomGasGenerator); ok {
 		r.stream = s
