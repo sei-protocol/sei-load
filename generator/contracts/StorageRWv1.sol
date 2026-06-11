@@ -9,6 +9,10 @@ pragma solidity ^0.8.0;
 ///         resize with no redeploy.
 /// @dev Versioned (v1) so a future StorageRWv2 can coexist on a persistent chain.
 contract StorageRWv1 {
+    /// @notice On-chain version marker so downstream consumers can pin to v1
+    ///         when a future StorageRWv2 coexists on a persistent chain.
+    uint256 public constant VERSION = 1;
+
     /// @notice Per-slot value store. Keyed by caller-chosen slot index.
     mapping(uint256 => uint256) public store;
 
@@ -32,13 +36,27 @@ contract StorageRWv1 {
     /// @param slot caller-selected slot index over its keyspace
     /// @param _pad ignored calldata pad
     function read(uint256 slot, bytes calldata _pad) external {
-        readAccumulator += store[slot];
+        // unchecked: this is a load contract; readAccumulator is never asserted
+        // on — it exists only to make the SLOAD non-elidable. The accumulator is
+        // monotonic and unrecoverable, so a checked-math overflow (Panic 0x11)
+        // would permanently brick every future read and silently collapse
+        // goodput. Wrapping keeps every tx succeeding at constant gas forever.
+        unchecked {
+            readAccumulator += store[slot];
+        }
     }
 
     /// @notice Read-modify-write store[slot] (store[slot] += 1).
     /// @param slot caller-selected slot index over its keyspace
     /// @param _pad ignored calldata pad
     function rmw(uint256 slot, bytes calldata _pad) external {
-        store[slot] = store[slot] + 1;
+        // unchecked: overflow is unreachable in practice (a single slot would
+        // need 2^256 increments), but this is a load contract whose result is
+        // never asserted on — the arithmetic exists only to make the SSTORE
+        // non-elidable. Wrapping matches read()'s never-revert profile and keeps
+        // a clean, constant storage-I/O gas cost for the life of the chain.
+        unchecked {
+            store[slot] = store[slot] + 1;
+        }
     }
 }

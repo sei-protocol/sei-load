@@ -31,8 +31,8 @@ var (
 
 // StorageRWv1MetaData contains all meta data concerning the StorageRWv1 contract.
 var StorageRWv1MetaData = &bind.MetaData{
-	ABI: "[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"read\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"readAccumulator\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"rmw\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"store\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"write\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
-	Bin: "0x608060405234801561001057600080fd5b5061029e806100206000396000f3fe608060405234801561001057600080fd5b50600436106100575760003560e01c806321988bf31461005c57806322746b0714610077578063396e9b3a1461008c5780636057361d146100ae578063829e7369146100ce575b600080fd5b61006560015481565b60405190815260200160405180910390f35b61008a610085366004610189565b6100e1565b005b61008a61009a3660046101d5565b505060009182526020829052604090912055565b6100656100bc366004610228565b60006020819052908152604090205481565b61008a6100dc366004610189565b610112565b6000838152602081905260409020546100fb906001610241565b600093845260208490526040909320929092555050565b60008084815260200190815260200160002054600160008282546101369190610241565b9091555050505050565b60008083601f84011261015257600080fd5b50813567ffffffffffffffff81111561016a57600080fd5b60208301915083602082850101111561018257600080fd5b9250929050565b60008060006040848603121561019e57600080fd5b83359250602084013567ffffffffffffffff8111156101bc57600080fd5b6101c886828701610140565b9497909650939450505050565b600080600080606085870312156101eb57600080fd5b8435935060208501359250604085013567ffffffffffffffff81111561021057600080fd5b61021c87828801610140565b95989497509550505050565b60006020828403121561023a57600080fd5b5035919050565b8082018082111561026257634e487b7160e01b600052601160045260246000fd5b9291505056fea264697066735822122002f853aa0e06c5fc1b6a016f738780c29cb5db800f2a526428c7cfbad08e16a464736f6c63430008130033",
+	ABI: "[{\"inputs\":[],\"name\":\"VERSION\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"read\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"readAccumulator\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"rmw\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"store\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"slot\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"_pad\",\"type\":\"bytes\"}],\"name\":\"write\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	Bin: "0x608060405234801561001057600080fd5b50610256806100206000396000f3fe608060405234801561001057600080fd5b50600436106100625760003560e01c806321988bf31461006757806322746b0714610082578063396e9b3a146100ab5780636057361d146100cd578063829e7369146100ed578063ffa1ad7414610117575b600080fd5b61007060015481565b60405190815260200160405180910390f35b6100a9610090366004610168565b5050600090815260208190526040902080546001019055565b005b6100a96100b93660046101b4565b505060009182526020829052604090912055565b6100706100db366004610207565b60006020819052908152604090205481565b6100a96100fb366004610168565b5050600090815260208190526040902054600180549091019055565b610070600181565b60008083601f84011261013157600080fd5b50813567ffffffffffffffff81111561014957600080fd5b60208301915083602082850101111561016157600080fd5b9250929050565b60008060006040848603121561017d57600080fd5b83359250602084013567ffffffffffffffff81111561019b57600080fd5b6101a78682870161011f565b9497909650939450505050565b600080600080606085870312156101ca57600080fd5b8435935060208501359250604085013567ffffffffffffffff8111156101ef57600080fd5b6101fb8782880161011f565b95989497509550505050565b60006020828403121561021957600080fd5b503591905056fea2646970667358221220d26ea7a4ca87e2bdfc3495f24e75b2694a00ebcca5fdeb15e812eec62089ee1564736f6c63430008130033",
 }
 
 // StorageRWv1ABI is the input ABI used to generate the binding from.
@@ -200,6 +200,37 @@ func (_StorageRWv1 *StorageRWv1TransactorRaw) Transfer(opts *bind.TransactOpts) 
 // Transact invokes the (paid) contract method with params as input values.
 func (_StorageRWv1 *StorageRWv1TransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
 	return _StorageRWv1.Contract.contract.Transact(opts, method, params...)
+}
+
+// VERSION is a free data retrieval call binding the contract method 0xffa1ad74.
+//
+// Solidity: function VERSION() view returns(uint256)
+func (_StorageRWv1 *StorageRWv1Caller) VERSION(opts *bind.CallOpts) (*big.Int, error) {
+	var out []interface{}
+	err := _StorageRWv1.contract.Call(opts, &out, "VERSION")
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// VERSION is a free data retrieval call binding the contract method 0xffa1ad74.
+//
+// Solidity: function VERSION() view returns(uint256)
+func (_StorageRWv1 *StorageRWv1Session) VERSION() (*big.Int, error) {
+	return _StorageRWv1.Contract.VERSION(&_StorageRWv1.CallOpts)
+}
+
+// VERSION is a free data retrieval call binding the contract method 0xffa1ad74.
+//
+// Solidity: function VERSION() view returns(uint256)
+func (_StorageRWv1 *StorageRWv1CallerSession) VERSION() (*big.Int, error) {
+	return _StorageRWv1.Contract.VERSION(&_StorageRWv1.CallOpts)
 }
 
 // ReadAccumulator is a free data retrieval call binding the contract method 0x21988bf3.
