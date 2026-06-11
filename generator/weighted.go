@@ -2,10 +2,11 @@ package generator
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // WeightedCfg is a configuration for a weighted scenarioGenerator.
@@ -101,8 +102,10 @@ func (w *weightedGenerator) GetAccountPools() []types.AccountPool {
 	return allPools
 }
 
-// NewWeightedGenerator creates a new scenarioGenerator that will randomly select from the provided generators.
-func NewWeightedGenerator(cfgs ...*WeightedCfg) Generator {
+// NewWeightedGenerator creates a new scenarioGenerator that will randomly select
+// from the provided generators. A nil stream leaves the startup shuffle on the
+// unseeded global RNG.
+func NewWeightedGenerator(stream *rng.Stream, cfgs ...*WeightedCfg) Generator {
 	// no need for clever weighting logic if we just have 1 scenarioGenerator anyway.
 	if len(cfgs) == 1 {
 		return cfgs[0].Generator
@@ -114,7 +117,11 @@ func NewWeightedGenerator(cfgs ...*WeightedCfg) Generator {
 		}
 	}
 
-	rand.Shuffle(len(weighted), func(i, j int) {
+	shuffle := rand.Shuffle
+	if stream != nil {
+		shuffle = stream.Shuffle
+	}
+	shuffle(len(weighted), func(i, j int) {
 		weighted[i], weighted[j] = weighted[j], weighted[i]
 	})
 

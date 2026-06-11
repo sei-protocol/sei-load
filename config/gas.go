@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 var (
@@ -22,6 +24,18 @@ type GasPicker struct {
 }
 
 func (g *GasPicker) Name() string { return g.name }
+
+// SetStream binds the picker's random delegate to a deterministic sub-stream. A
+// nil stream leaves the picker on the unseeded global RNG.
+//
+// Only a random delegate has anything to seed: fixed and empty pickers draw no
+// randomness, so the type assertion intentionally no-ops for them rather than
+// erroring.
+func (g *GasPicker) SetStream(s *rng.Stream) {
+	if r, ok := g.delegate.(*RandomGasGenerator); ok {
+		r.stream = s
+	}
+}
 
 func (g *GasPicker) GenerateGas() (uint64, error) {
 	if g.delegate == nil {
@@ -71,11 +85,17 @@ func (f *FixedGasGenerator) GenerateGas() (uint64, error) {
 type RandomGasGenerator struct {
 	Min uint64 `json:"Min"`
 	Max uint64 `json:"Max"`
+
+	stream *rng.Stream
 }
 
 func (r *RandomGasGenerator) GenerateGas() (uint64, error) {
 	if r.Min >= r.Max {
 		return 0, fmt.Errorf("invalid random gas range: min %d must be less than max %d", r.Min, r.Max)
 	}
-	return r.Min + rand.Uint64N(r.Max-r.Min+1), nil
+	span := r.Max - r.Min + 1
+	if r.stream != nil {
+		return r.Min + r.stream.Uint64N(span), nil
+	}
+	return r.Min + rand.Uint64N(span), nil
 }

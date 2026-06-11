@@ -11,6 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 func TestNewAccount(t *testing.T) {
@@ -173,6 +175,7 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	config := &AccountConfig{
 		Accounts:       accounts,
 		NewAccountRate: 0.5, // 50% new accounts
+		Stream:         rng.NewSource(1).Stream("accounts:test"),
 	}
 
 	pool := NewAccountPool(config)
@@ -195,12 +198,11 @@ func TestAccountPoolMixedRate(t *testing.T) {
 		}
 	}
 
-	// With 50% rate, expect roughly equal distribution (allow 20% variance)
-	expectedNew := iterations / 2
-	tolerance := expectedNew / 5 // 20% tolerance
-
-	assert.InDelta(t, expectedNew, newCount, float64(tolerance),
-		"Expected ~%d new accounts, got %d (tolerance: ±%d)", expectedNew, newCount, tolerance)
+	// Seeded: the split is exact and reproducible, not probabilistic. Re-running
+	// the same seeded pool must reproduce these counts. If the frozen derivation
+	// changes, these expected values change with it.
+	const expectedNew = 51
+	assert.Equal(t, expectedNew, newCount, "seeded new-account count is not reproducible")
 	assert.Equal(t, iterations, originalCount+newCount, "Total accounts don't match iterations")
 }
 
