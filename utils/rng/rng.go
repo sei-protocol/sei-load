@@ -34,7 +34,7 @@ import (
 // FNV-1a hash maps the name to a uint64; splitmix64 diffuses it so that
 // near-identical names (e.g. "gas:0" / "gas:1") seed well-separated PCG states.
 //
-// Three inputs are FROZEN, not just this formula. Each perturbs the draw
+// Four inputs are FROZEN, not just this formula. Each perturbs the draw
 // sequence with no formula change, so each is a one-way door requiring a
 // config_sha256 version bump:
 //
@@ -44,6 +44,11 @@ import (
 //  3. The per-stream draw order. Each stream is a sequence; drawing base before
 //     tip before feecap is part of the contract — reordering draws within a
 //     stream shifts every downstream value.
+//  4. The per-tx account draw cadence: sender then receiver NextAccount() per tx
+//     (generator/scenario.go), each consuming the account stream. This is a
+//     draw-order on the account stream just like #3 is for the gas streams —
+//     reordering or adding an account draw per tx shifts every downstream
+//     account value.
 //
 // Replay archives are keyed by config_sha256 (PLT-467). Changing any of the
 // three silently produces a different draw sequence for the same (seed, config)

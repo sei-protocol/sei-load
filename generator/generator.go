@@ -122,7 +122,9 @@ func (g *configBasedGenerator) createScenarios() error {
 //
 // cfg is a value copy, but its *GasPicker fields are pointers shared with the
 // copy the scenario stores, so SetStream reaches the picker the scenario draws
-// through. A deep copy of config.Scenario would break that silently — see
+// through. A shallow copy is safe precisely because GasPicker.delegate is a
+// *RandomGasGenerator shared by both copies; only a copy that ALSO clones the
+// gas delegate would break the aliasing silently — see
 // TestRandomGasPickerStreamSeeds, which fails loudly if the binding stops
 // reaching the live picker.
 func (g *configBasedGenerator) bindGasStreams(i int, cfg config.Scenario) {

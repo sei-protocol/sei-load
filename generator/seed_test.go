@@ -101,48 +101,91 @@ func TestDifferentSeedsDiverge(t *testing.T) {
 	require.NotEqual(t, gasSeq(t, 1, 200), gasSeq(t, 2, 200))
 }
 
-// TestWorkerCountMultisetInvariant asserts the multiset guarantee, not ordered
-// replay: the *set* of gas draws a seed yields does not depend on how many
-// worker goroutines consume the generator. We drain the same seeded generator
-// serially and via N concurrent goroutines and assert ElementsMatch — equal
-// multisets. Streams are keyed by logical config id, not a live-goroutine
-// counter, so the multiset is invariant to --workers. Ordering across workers is
-// deliberately NOT asserted; it is non-deterministic above one worker.
+// columns transposes a slice of per-tx gas draws into three per-stream column
+// slices. The contract guarantees per-*stream* multisets, not per-tx tuples:
+// concurrent txs interleave their base/tip/feecap draws across three
+// independently-locked streams, so tuples reassemble differently while each
+// stream's column multiset is unchanged. We assert columns, never tuples.
+func columns(draws []gasDraw) (gas []uint64, tip, feeCap []int64) {
+	gas = make([]uint64, len(draws))
+	tip = make([]int64, len(draws))
+	feeCap = make([]int64, len(draws))
+	for i, d := range draws {
+		gas[i] = d.gas
+		tip[i] = d.tip
+		feeCap[i] = d.feeCap
+	}
+	return gas, tip, feeCap
+}
+
+// TestWorkerCountMultisetInvariant asserts the per-stream multiset guarantee,
+// not ordered replay: each gas stream's column multiset that a seed yields does
+// not depend on how many worker goroutines concurrently consume the generator.
+// Streams are keyed by logical config id, not a live-goroutine counter, so the
+// per-stream multiset is invariant to --workers.
+//
+// Two things make this test exercise the real contract rather than a stronger
+// false one:
+//
+//   - gen.Generate() runs OUTSIDE the worker lock, so workers genuinely draw
+//     concurrently and the three streams interleave. The lock guards only the
+//     work-claim bookkeeping. (Run under -race; -count=10 guards against flake.)
+//   - We assert each column's multiset independently via ElementsMatch, NOT the
+//     per-tx tuple. Tuples are not worker-invariant; columns are.
+//
+// Ordering within a column is deliberately NOT asserted; it is non-deterministic
+// above one worker.
 func TestWorkerCountMultisetInvariant(t *testing.T) {
 	const seed, total = 99, 600
 
 	serial := gasSeq(t, seed, total)
+	wantGas, wantTip, wantFeeCap := columns(serial)
 
 	for _, workers := range []int{2, 4, 8} {
 		gen, err := generator.NewConfigBasedGenerator(seededConfig(t, seed))
 		require.NoError(t, err)
 
-		got := make([]gasDraw, total)
-		var wg sync.WaitGroup
+		// Each worker collects into its own slice; we merge after the join so the
+		// only shared mutable state under lock is the work-claim counter, and
+		// Generate() itself runs unlocked and concurrently.
 		var mu sync.Mutex
-		next := 0
+		remaining := total
+		perWorker := make([][]gasDraw, workers)
+
+		var wg sync.WaitGroup
 		for w := 0; w < workers; w++ {
 			wg.Add(1)
-			go func() {
+			go func(w int) {
 				defer wg.Done()
 				for {
 					mu.Lock()
-					if next >= total {
+					if remaining <= 0 {
 						mu.Unlock()
 						return
 					}
-					idx := next
-					next++
-					tx, ok := gen.Generate()
+					remaining--
 					mu.Unlock()
+
+					tx, ok := gen.Generate()
 					require.True(t, ok)
-					got[idx] = draw(tx)
+					perWorker[w] = append(perWorker[w], draw(tx))
 				}
-			}()
+			}(w)
 		}
 		wg.Wait()
 
-		require.ElementsMatch(t, serial, got,
-			"workers=%d produced a different multiset of gas draws than serial", workers)
+		got := make([]gasDraw, 0, total)
+		for _, part := range perWorker {
+			got = append(got, part...)
+		}
+		require.Len(t, got, total)
+
+		gotGas, gotTip, gotFeeCap := columns(got)
+		require.ElementsMatch(t, wantGas, gotGas,
+			"workers=%d: gas-stream column multiset diverged from serial", workers)
+		require.ElementsMatch(t, wantTip, gotTip,
+			"workers=%d: tip-stream column multiset diverged from serial", workers)
+		require.ElementsMatch(t, wantFeeCap, gotFeeCap,
+			"workers=%d: feecap-stream column multiset diverged from serial", workers)
 	}
 }
