@@ -1,0 +1,49 @@
+name: Bindings Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  bindings-check:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        go-version: [1.25.1]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Install solc 0.8.19
+      run: |
+        curl -L https://github.com/ethereum/solidity/releases/download/v0.8.19/solc-static-linux -o /tmp/solc
+        chmod +x /tmp/solc
+        /tmp/solc --version
+
+    - name: Install pinned abigen
+      run: make install-abigen
+
+    - name: Check bindings are in sync
+      run: make check-bindings

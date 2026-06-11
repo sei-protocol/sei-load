@@ -20,6 +20,10 @@ ABIGEN := abigen
 NVM_DIR := $(HOME)/.nvm
 NODE_VERSION := 20
 
+# go-ethereum version sourced from go.mod (pins abigen for reproducible bindings).
+# Falls back to grepping go.mod if `go list` is unavailable.
+GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
+
 # Find all .sol files in contracts directory
 SOL_FILES := $(wildcard $(CONTRACTS_DIR)/*.sol)
 CONTRACT_NAMES := $(basename $(notdir $(SOL_FILES)))
@@ -30,7 +34,7 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate clean help build-cli install setup-node build test lint
+.PHONY: generate generate-bindings check-bindings install-abigen clean help build-cli install setup-node build test lint
 
 # Default target
 help:
@@ -39,7 +43,10 @@ help:
 	@echo "  test         - Run tests with coverage"
 	@echo "  lint         - Run linting and static analysis"
 	@echo "  setup-node   - Install nvm, Node.js 20, and solc"
-	@echo "  generate     - Generate Go bindings and scenario templates for all contracts"
+	@echo "  generate         - Generate Go bindings and scenario templates for all contracts"
+	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
+	@echo "  check-bindings   - Fail if committed bindings are out of sync with contracts"
+	@echo "  install-abigen   - Install abigen pinned to the go.mod go-ethereum version"
 	@echo "  clean        - Remove generated files"
 	@echo "  help         - Show this help message"
 	@echo "  build-cli    - Build the seiload CLI"
@@ -73,6 +80,12 @@ generate: $(BINDING_FILES) $(SCENARIO_TEMPLATE_FILES)
 	@echo "🏭 Updating scenario factory..."
 	@./scripts/update_factory.sh $(CONTRACT_NAMES)
 	@echo "✅ Generated bindings and scenario templates for contracts: $(CONTRACT_NAMES)"
+
+# Bindings-only target: rebuilds the .sol -> .abi/.bin -> binding chain WITHOUT
+# touching human-edited scenario templates or the scenario factory. This is the
+# "write a contract, regenerate its binding" path that CI validates.
+generate-bindings: $(BINDING_FILES)
+	@echo "✅ Generated bindings for contracts: $(CONTRACT_NAMES)"
 
 # Create build directory
 $(BUILD_DIR):
@@ -115,11 +128,29 @@ check-tools:
 	@which $(ABIGEN) > /dev/null || (echo "❌ abigen not found. Run 'make install-tools' to install" && exit 1)
 	@echo "✅ All required tools are available"
 
+# Install abigen pinned to the go.mod go-ethereum version.
+# Pinning (not @latest) keeps binding output reproducible so CI drift checks
+# don't flake when go-ethereum publishes a new release.
+install-abigen:
+	@echo "📦 Installing abigen@$(GETH_VERSION) ..."
+	@test -n "$(GETH_VERSION)" || (echo "❌ could not resolve go-ethereum version from go.mod" && exit 1)
+	@go install github.com/ethereum/go-ethereum/cmd/abigen@$(GETH_VERSION)
+	@echo "✅ Installed abigen@$(GETH_VERSION)"
+
+# Drift check: regenerate bindings and fail if they differ from what is committed.
+check-bindings: generate-bindings
+	@git diff --exit-code -- $(BINDINGS_DIR) > /dev/null 2>&1 || ( \
+		echo ""; \
+		echo "❌ Bindings are out of sync with contracts."; \
+		echo "   Contracts changed but bindings were not regenerated."; \
+		echo "   Run 'make generate-bindings' and commit the result."; \
+		echo ""; \
+		git --no-pager diff --stat -- $(BINDINGS_DIR); \
+		exit 1 )
+	@echo "✅ Bindings are in sync with contracts"
+
 # Install tools (optional convenience target)
-install-tools: setup-node
-	@echo "📦 Installing required tools ..."
-	@echo "Installing abigen ..."
-	@go install github.com/ethereum/go-ethereum/cmd/abigen@latest
+install-tools: setup-node install-abigen
 	@echo "✅ Tools installation complete"
 
 # Build the seiload CLI binary
