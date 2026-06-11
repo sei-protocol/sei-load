@@ -1,7 +1,3 @@
-// Package funder funds a generated account pool from a single root key so
-// seiload can run against a real chain (one where accounts are not auto-funded
-// by mock_balances or genesis). It fans out native value to every account via
-// the Disperse contract before the load run starts.
 package funder
 
 import (
@@ -27,17 +23,10 @@ import (
 
 const balanceCheckConcurrency = 16
 
-// FundAccounts funds every account across the given pools to at least the
-// configured per-account amount, drawing from cfg.Funding's root key. The
-// root's first EVM tx (the Disperse deploy) auto-associates its cosmos balance
-// to the EVM side (Sei ante handler), so no explicit association step is
-// required — the root must be funded at its EVM (cast) address or be already
-// associated.
-//
-// Funding targets the current pool. seiload generates a fresh random pool each
-// start, so a restart funds a new set of accounts (the prior set's balances are
-// stranded — acceptable on a funny-money devnet, bounded by the root balance).
-// The already-funded skip below guards against double-funding within a run.
+// FundAccounts funds every account across the pools to at least the configured
+// per-account amount from cfg.Funding's root key, or is a no-op when
+// cfg.Funding is nil. See the package doc for the funding flow, the EVM
+// auto-association precondition, and the restart/idempotency semantics.
 func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.AccountPool) error {
 	fc := cfg.Funding
 	if fc == nil {
@@ -47,8 +36,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	if err != nil {
 		return err
 	}
-	// TrimSpace is load-bearing: a SOPS-mounted key file commonly carries a
-	// trailing newline.
+	// TrimSpace: a SOPS-mounted key file commonly carries a trailing newline.
 	rootKey, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(rootKeyHex), "0x"))
 	if err != nil {
 		return fmt.Errorf("funder: parse root key: %w", err)
@@ -96,10 +84,8 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 		return err
 	}
 
-	// Sequential by design: auth.Nonce stays nil so bind fetches PendingNonceAt
-	// per tx, and WaitMined gates each batch — the prior nonce is mined and
-	// visible before the next send. Do not parallelize batches or set
-	// auth.Nonce without reworking this.
+	// Sequential by design (see package doc): nil auth.Nonce + WaitMined per
+	// batch keeps nonces ordered. Do not parallelize or set auth.Nonce.
 	batch := fc.Batch()
 	for start := 0; start < len(underfunded); start += batch {
 		end := start + batch
@@ -164,10 +150,9 @@ func uniqueAddresses(pools []types.AccountPool) []common.Address {
 	return out
 }
 
-// filterUnderfunded returns the subset of addresses whose balance is below
-// amount, querying balances concurrently. The errgroup bounds concurrency and
-// cancels all in-flight queries on the first error or on ctx cancellation, with
-// no goroutine leak.
+// filterUnderfunded returns the addresses whose balance is below amount. The
+// errgroup bounds concurrency and cancels in-flight queries on the first error
+// or ctx cancellation.
 func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []common.Address, amount *big.Int) ([]common.Address, error) {
 	var (
 		mu          sync.Mutex
@@ -195,10 +180,9 @@ func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []co
 	return underfunded, nil
 }
 
-// deployDisperse deploys a fresh Disperse contract. This is the root's first
-// EVM tx, which also auto-associates the root. Deploying fresh (rather than
-// trusting a configured address) avoids sending the root's value to an
-// unverified contract.
+// deployDisperse deploys a fresh Disperse contract (the root's first EVM tx,
+// which also auto-associates it) and verifies it has code. See the package doc
+// for why this is not a configurable address.
 func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.TransactOpts) (*bindings.Disperse, error) {
 	addr, tx, d, err := bindings.DeployDisperse(auth, client, big.NewInt(0), big.NewInt(0))
 	if err != nil {
