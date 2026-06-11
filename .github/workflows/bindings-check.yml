@@ -46,7 +46,7 @@ jobs:
         SOLC_VERSION: 0.8.19
         SOLC_SHA256: 7a5c1d3dc9a8eba62bb2ec37192c9178ae5fe8a54a56e5573fd3c9c17cd9eb48
       run: |
-        curl -L "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" -o /tmp/solc
+        curl --fail --proto '=https' --tlsv1.2 -L "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" -o /tmp/solc
         echo "${SOLC_SHA256}  /tmp/solc" | sha256sum -c -
         chmod +x /tmp/solc
         /tmp/solc --version

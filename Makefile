@@ -78,7 +78,7 @@ setup-node:
 	nvm install $(NODE_VERSION) && \
 	nvm use $(NODE_VERSION)
 	@echo "📦 Installing native solc binary..."
-	@curl -L https://github.com/ethereum/solidity/releases/download/v$(SOLC_VERSION)/solc-static-linux -o /tmp/solc
+	@curl --fail --proto '=https' --tlsv1.2 -L https://github.com/ethereum/solidity/releases/download/v$(SOLC_VERSION)/solc-static-linux -o /tmp/solc
 	@echo "🔒 Verifying solc sha256..."
 	@echo "$(SOLC_SHA256)  /tmp/solc" | sha256sum -c -
 	@chmod +x /tmp/solc
@@ -153,18 +153,24 @@ install-abigen:
 # than the rebuilt .abi/.bin, which would otherwise let stale/tampered output
 # pass the gate. `git add -N` stages the *intent to add* any brand-new (untracked)
 # binding so `git diff --exit-code` also fails on a never-committed contract.
+# This target is developer-facing (see `make help`), so it must be tree-neutral:
+# capture the diff result, ALWAYS reset the index for $(BINDINGS_DIR), then fail.
+# This leaves `git status` exactly as it was found (no staged add-intent junk).
 check-bindings:
 	@$(MAKE) -B generate-bindings
 	@git add -N -- $(BINDINGS_DIR)
-	@git diff --exit-code -- $(BINDINGS_DIR) > /dev/null 2>&1 || ( \
-		echo ""; \
-		echo "❌ Bindings are out of sync with contracts."; \
-		echo "   Contracts changed (or a new contract was added) but bindings"; \
-		echo "   were not regenerated/committed."; \
-		echo "   Run 'make generate-bindings' and commit the result."; \
-		echo ""; \
-		git --no-pager diff -- $(BINDINGS_DIR); \
-		exit 1 )
+	@git diff --exit-code -- $(BINDINGS_DIR) > /dev/null 2>&1; rc=$$?; \
+		git reset -q -- $(BINDINGS_DIR) >/dev/null 2>&1 || true; \
+		if [ $$rc -ne 0 ]; then \
+			echo ""; \
+			echo "❌ Bindings are out of sync with contracts."; \
+			echo "   Contracts changed (or a new contract was added) but bindings"; \
+			echo "   were not regenerated/committed."; \
+			echo "   Run 'make generate-bindings' and commit the result."; \
+			echo ""; \
+			git --no-pager diff -- $(BINDINGS_DIR); \
+			exit 1; \
+		fi
 	@echo "✅ Bindings are in sync with contracts"
 
 # Install tools (optional convenience target)
