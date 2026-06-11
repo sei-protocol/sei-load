@@ -28,6 +28,16 @@ NODE_VERSION := 20
 SOLC_VERSION := 0.8.19
 SOLC_SHA256 := 7a5c1d3dc9a8eba62bb2ec37192c9178ae5fe8a54a56e5573fd3c9c17cd9eb48
 
+# EVM target for solc. `paris` is solc 0.8.19's highest supported target (its
+# implicit default), so we pin it explicitly to make that default a written
+# invariant: a future solc bump can't silently emit newer opcodes (e.g.
+# PUSH0/MCOPY/TSTORE) and shift the bytecode/gas surface under us. paris is a
+# strict subset of Sei's Cancun/Pectra-era forks (paris ⊂ Sei), so paris-targeted
+# bytecode is unconditionally safe to deploy; runtime gas is set by the chain's
+# active fork regardless of compile target, so the target never distorts
+# measurements.
+SOLC_EVM_VERSION := paris
+
 # go-ethereum version sourced from go.mod (pins abigen for reproducible bindings).
 # Falls back to grepping go.mod if `go list` is unavailable.
 GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
@@ -109,10 +119,14 @@ $(BINDINGS_DIR):
 $(SCENARIOS_DIR):
 	@mkdir -p $(SCENARIOS_DIR)
 
-# Compile a single contract to ABI and bytecode
+# Compile a single contract to ABI and bytecode.
+# --evm-version pins the target (see SOLC_EVM_VERSION above).
+# --metadata-hash none strips the trailing CBOR metadata hash so bytecode is
+# reproducible across repo paths / build hosts (the hash embeds source paths)
+# and is slightly smaller; it does not affect the ABI or function selectors.
 $(BUILD_DIR)/%.abi $(BUILD_DIR)/%.bin: $(CONTRACTS_DIR)/%.sol | $(BUILD_DIR)
 	@echo "🔨 Compiling contract: $*"
-	@$(SOLC) --abi --bin --optimize --overwrite -o $(BUILD_DIR) $<
+	@$(SOLC) --abi --bin --optimize --evm-version $(SOLC_EVM_VERSION) --metadata-hash none --overwrite -o $(BUILD_DIR) $<
 	@echo "✅ Compiled: $*"
 
 # Generate Go binding from ABI and bytecode
