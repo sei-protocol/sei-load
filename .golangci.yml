@@ -1,20 +1,13 @@
 # golangci-lint configuration (schema v2).
 #
-# Purpose: DETERMINISM, not stricter-than-today. golangci-lint's built-in
-# default linter set shifts between releases; pinning it here (alongside a
-# pinned binary version in the Makefile + CI) guarantees the same checks run
-# locally and in CI. This list is exactly golangci-lint v2.12.2's
-# enabled-by-default set, encoded explicitly so a future binary bump can't
-# silently add/remove linters under us.
-#
-# Keep in sync with GOLANGCI_VERSION in the Makefile.
+# DETERMINISM, not stricter-than-today: this is exactly golangci-lint v2.12.2's
+# enabled-by-default linter set, encoded explicitly so a binary bump can't
+# silently shift it. Keep in sync with GOLANGCI_VERSION in the Makefile.
+# See README "Before you push" for the full pinning/parity rationale.
 version: "2"
 
 linters:
-  # `default: none` + an explicit list pins the enabled set. The five linters
-  # below are v2.12.2's defaults; staticcheck (which in v2 also runs the ST*
-  # stylecheck diagnostics) is the one that caught the SA9005/SA4015 and ST1023
-  # violations that slipped past local `go vet`.
+  # `default: none` + the explicit list below pins the enabled set.
   default: none
   enable:
     - errcheck
