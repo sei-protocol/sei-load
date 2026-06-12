@@ -23,6 +23,7 @@ var scenarioFactories = map[string]ScenarioFactory{
 	ERC20Noop:     NewERC20NoopScenario,
 	ERC20:         NewERC20Scenario,
 	ERC721:        NewERC721Scenario,
+	StorageRW:     NewStorageRWScenario,
 
 	// DO NOT EDIT ABOVE THIS LINE - AUTO-GENERATED CONTENT
 }
