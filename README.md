@@ -182,7 +182,9 @@ A green `make verify` means the gating CI jobs (`build-and-test`, `bindings-chec
 will pass. Install the pinned toolchain once first so your local results match CI:
 
 ```bash
-make install-tools   # solc, abigen, and golangci-lint (pinned to v2.12.2)
+make install-tools   # full toolchain: Node (via nvm), solc, abigen, golangci-lint (pinned to v2.12.2)
+# or, for the linter only:
+make install-lint    # golangci-lint pinned to v2.12.2
 ```
 
 `golangci-lint` is pinned to a specific version (Makefile `GOLANGCI_VERSION`,

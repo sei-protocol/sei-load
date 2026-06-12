@@ -12,8 +12,9 @@ version: "2"
 
 linters:
   # `default: none` + an explicit list pins the enabled set. The five linters
-  # below are v2.12.2's defaults; staticcheck is the one that caught the
-  # SA9005/SA4015/ST1023 violations that slipped past local `go vet`.
+  # below are v2.12.2's defaults; staticcheck (which in v2 also runs the ST*
+  # stylecheck diagnostics) is the one that caught the SA9005/SA4015 and ST1023
+  # violations that slipped past local `go vet`.
   default: none
   enable:
     - errcheck
