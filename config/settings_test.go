@@ -115,7 +115,7 @@ func TestArgumentPrecedence(t *testing.T) {
 
 			// Verify expectations
 			require.Equal(t, tt.expectedStats, settings.StatsInterval.ToDuration(), "StatsInterval: expected %v, got %v", tt.expectedStats, settings.StatsInterval.ToDuration())
-			require.Equal(t, tt.expectedWorkers, settings.Workers, "Workers: expected %d, got %d", tt.expectedWorkers, settings.Workers)
+			require.Equal(t, tt.expectedWorkers, settings.TasksPerEndpoint, "TasksPerEndpoint: expected %d, got %d", tt.expectedWorkers, settings.TasksPerEndpoint)
 			require.Equal(t, tt.expectedTPS, settings.TPS, "TPS: expected %f, got %f", tt.expectedTPS, settings.TPS)
 		})
 	}
@@ -125,7 +125,7 @@ func TestDefaultSettings(t *testing.T) {
 	defaults := DefaultSettings()
 
 	expected := Settings{
-		Workers:               1,
+		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
 		BufferSize:            1000,

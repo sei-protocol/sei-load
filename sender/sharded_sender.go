@@ -26,13 +26,16 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 	workers := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
 		workers[i] = NewWorker(&WorkerConfig{
-			ID:         i,
-			SeiChainID: cfg.SeiChainID,
-			Endpoint:   endpoint,
-			BufferSize: cfg.Settings.BufferSize,
-			Tasks:      cfg.Settings.TasksPerEndpoint,
-			Collector:  collector,
-			Limiter:    limiter,
+			ID:            i,
+			SeiChainID:    cfg.SeiChainID,
+			Endpoint:      endpoint,
+			BufferSize:    cfg.Settings.BufferSize,
+			Tasks:         cfg.Settings.TasksPerEndpoint,
+			DryRun:        cfg.Settings.DryRun,
+			TrackReceipts: cfg.Settings.TrackReceipts,
+			Debug:         cfg.Settings.Debug,
+			Collector:     collector,
+			Limiter:       limiter,
 		})
 	}
 

@@ -72,7 +72,7 @@ func TestProfilesAlignment(t *testing.T) {
 
 			// Test 4: Validate that all expected settings fields are present
 			settings := loadConfig.Settings
-			if settings.Workers == 0 && settings.TPS == 0 && settings.BufferSize == 0 {
+			if settings.TasksPerEndpoint == 0 && settings.TPS == 0 && settings.BufferSize == 0 {
 				t.Errorf("Profile %s appears to have zero values for critical settings fields", file.Name())
 			}
 

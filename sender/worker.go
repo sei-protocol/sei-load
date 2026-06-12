@@ -130,13 +130,12 @@ func NewWorker(cfg *WorkerConfig) *Worker {
 
 // Start begins the worker's processing loop
 func (w *Worker) Run(ctx context.Context) error {
+	client, err := newRPCClient(ctx, w.cfg.Endpoint)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", w.cfg.Endpoint, err)
+	}
+	defer client.Close()
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		client, err := newRPCClient(ctx, w.cfg.Endpoint)
-		if err != nil {
-			return fmt.Errorf("dial %s: %w", w.cfg.Endpoint, err)
-		}
-		defer client.Close()
-
 		// Start multiple goroutines that share the same channel and RPC client.
 		for range w.cfg.Tasks {
 			s.Spawn(func() error { return w.runTxSender(ctx, client) })
