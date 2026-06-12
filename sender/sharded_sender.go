@@ -3,7 +3,6 @@ package sender
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"golang.org/x/time/rate"
 
@@ -15,27 +14,26 @@ import (
 
 // ShardedSender implements TxSender with multiple workers, one per endpoint
 type ShardedSender struct {
-	workers    []*Worker
-	mu         sync.RWMutex
-	collector  *stats.Collector
-	logger     *stats.Logger
+	workers []*Worker
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(cfg *config.LoadConfig, bufferSize int, tasksPerWorker int, limiter *rate.Limiter) (*ShardedSender, error) {
+func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
 
 	workers := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
-		workers[i] = NewWorker(&WorkerConfig {
-			ID: i,
+		workers[i] = NewWorker(&WorkerConfig{
+			ID:         i,
 			SeiChainID: cfg.SeiChainID,
-			Endpoint: endpoint,
-			BufferSize: bufferSize,
-			Tasks: tasksPerWorker,
-		}, limiter)
+			Endpoint:   endpoint,
+			BufferSize: cfg.Settings.BufferSize,
+			Tasks:      cfg.Settings.TasksPerEndpoint,
+			Collector:  collector,
+			Limiter:    limiter,
+		})
 	}
 
 	return &ShardedSender{workers: workers}, nil
@@ -81,17 +79,3 @@ type WorkerStats struct {
 
 // GetNumShards returns the number of shards (workers)
 func (s *ShardedSender) NumShards() int { return len(s.workers) }
-
-// SetStatsCollector sets the statistics collector for all workers
-func (s *ShardedSender) SetStatsCollector(collector *stats.Collector, logger *stats.Logger) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.collector = collector
-	s.logger = logger
-
-	// Pass to all workers
-	for _, worker := range s.workers {
-		worker.SetStatsCollector(collector, logger)
-	}
-}

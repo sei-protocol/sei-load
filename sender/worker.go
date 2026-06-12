@@ -29,24 +29,23 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type WorkerConfig struct {
-	ID int
-	SeiChainID string
-	Endpoint string
-	BufferSize int
-	Tasks int
-	DryRun bool
-	Debug bool
+	ID            int
+	SeiChainID    string
+	Endpoint      string
+	BufferSize    int
+	Tasks         int
+	DryRun        bool
+	Debug         bool
 	TrackReceipts bool
+	Collector     *stats.Collector
+	Limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
-	cfg *WorkerConfig
-	txChan        chan *types.LoadTx
-	sentTxs       chan *types.LoadTx
-	collector     *stats.Collector
-	logger        *stats.Logger
-	limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	cfg     *WorkerConfig
+	txChan  chan *types.LoadTx
+	sentTxs chan *types.LoadTx
 }
 
 // HttpClientOption configures the Transport used by newHttpClient.
@@ -119,21 +118,14 @@ func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption
 }
 
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(cfg *WorkerConfig, limiter *rate.Limiter) *Worker {
+func NewWorker(cfg *WorkerConfig) *Worker {
 	w := &Worker{
-		cfg: cfg,
-		txChan:        make(chan *types.LoadTx, cfg.BufferSize),
-		sentTxs:       make(chan *types.LoadTx, cfg.BufferSize),
-		limiter:       limiter,
+		cfg:     cfg,
+		txChan:  make(chan *types.LoadTx, cfg.BufferSize),
+		sentTxs: make(chan *types.LoadTx, cfg.BufferSize),
 	}
 	meterWorkerQueueLength(w)
 	return w
-}
-
-// SetStatsCollector sets the statistics collector for this worker
-func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Logger) {
-	w.collector = collector
-	w.logger = logger
 }
 
 // Start begins the worker's processing loop
@@ -229,7 +221,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
-		if err:=w.limiter.Wait(ctx); err!=nil {
+		if err := w.cfg.Limiter.Wait(ctx); err != nil {
 			return err
 		}
 
@@ -244,9 +236,7 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
-		if w.collector != nil {
-			w.collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
-		}
+		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err != nil {
 			log.Printf("%v", err)
 		}
@@ -298,10 +288,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 	))
 
 	// Write to sentTxs channel without blocking
-	select {
-	case w.sentTxs <- tx:
-	default:
-	}
+	utils.SendOrDrop(w.sentTxs, tx)
 	return nil
 }
 
