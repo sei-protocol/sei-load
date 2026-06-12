@@ -15,13 +15,11 @@ import (
 
 const StorageRW = "storagerw"
 
-// storageRWSlot is the fixed storage slot every transaction targets in this
-// scaffold. The per-tx slot/value/pad distribution arrives in PLT-465.
-var storageRWSlot = big.NewInt(0)
-
-// storageRWPad is the fixed calldata pad for this scaffold (empty). The
-// distribution-driven pad sizing arrives in PLT-465.
-var storageRWPad = []byte{}
+// Fixed slot and empty pad for the scaffold; PLT-465 makes these per-tx.
+var (
+	storageRWSlot = big.NewInt(0)
+	storageRWPad  = []byte{}
+)
 
 // StorageRWScenario implements the TxGenerator interface for StorageRWv1 contract operations
 type StorageRWScenario struct {
@@ -80,15 +78,11 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates a
-// StorageRWv1 transaction. This scaffold issues a fixed read-modify-write against
-// a single hardcoded slot with an empty pad to prove the deploy/send path; the
-// per-tx slot/value/pad distribution arrives in PLT-465.
+// fixed StorageRWv1 rmw transaction. See package doc for the scaffold and gas
+// rationale.
 func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
-	// rmw is SLOAD+SSTORE on one slot (~26k warm, ~44k cold-first-touch); 50k
-	// covers cold-first-touch with headroom for the (currently empty) pad, and
-	// packs ~4x denser than the 200k CreateTransactionOpts default on a
-	// gas-limit-admission chain. PLT-465 revisits this once the calldata pad is
-	// distribution-driven (pad changes calldata gas).
+	// 50k fits rmw (SLOAD+SSTORE) with headroom; see package doc for sizing.
+	// PLT-465 revisits with the distribution-driven pad.
 	auth.GasLimit = 50000
 	return s.contract.Rmw(auth, storageRWSlot, storageRWPad)
 }
