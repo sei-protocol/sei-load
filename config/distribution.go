@@ -43,8 +43,8 @@ func (d *Distribution) SetStream(s *rng.Stream) {
 	}
 }
 
-// SampleIndex delegates to the selected sampler; a zero-value Distribution
-// returns 0.
+// SampleIndex delegates to the selected sampler; a zero-value (no Name)
+// Distribution returns 0.
 func (d *Distribution) SampleIndex(n uint64) (uint64, error) {
 	if d.delegate == nil {
 		return 0, nil

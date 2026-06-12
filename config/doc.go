@@ -81,8 +81,8 @@
 //
 // # Seeded-stream reproducibility (FROZEN inputs)
 //
-// Draws go through a bound *rng.Stream (see SetStream): a per-scenario sub-
-// stream derived from the run seed. This is what gives the workload its
+// Draws go through a bound *rng.Stream (see SetStream): a per-scenario
+// substream derived from the run seed. This is what gives the workload its
 // reproducibility contract — same seed + same config yields the same per-stream
 // draw multiset (see package utils/rng for the precise contract and its limits
 // above one worker).
