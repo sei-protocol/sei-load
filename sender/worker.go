@@ -42,6 +42,11 @@ type Worker struct {
 	workers       int
 	trackReceipts bool
 	limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	// rateLimited gates worker-side rate limiting. True for the legacy
+	// closed-loop model, where the worker is the rate authority. False in the
+	// open-loop model, where the scheduler owns the arrival clock and gating
+	// here too would double-throttle the rate.
+	rateLimited bool
 }
 
 // HttpClientOption configures the Transport used by newHttpClient.
@@ -101,6 +106,7 @@ func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, worke
 		workers:       workers,
 		trackReceipts: false,
 		limiter:       limiter,
+		rateLimited:   true,
 	}
 	meterWorkerQueueLength(w)
 	return w
@@ -142,6 +148,12 @@ func (w *Worker) SetDryRun(dryRun bool) {
 // SetTrackReceipts sets the track-receipts mode for the worker
 func (w *Worker) SetTrackReceipts(trackReceipts bool) {
 	w.trackReceipts = trackReceipts
+}
+
+// SetRateLimited enables or disables worker-side rate limiting. Disable it when
+// an upstream open-loop scheduler is the rate authority.
+func (w *Worker) SetRateLimited(rateLimited bool) {
+	w.rateLimited = rateLimited
 }
 
 func (w *Worker) watchTransactions(ctx context.Context) error {
@@ -226,10 +238,12 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 // processTransactions is the main worker loop that processes transactions
 func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
 	for ctx.Err() == nil {
-		// Apply rate limiting before getting the next transaction
-		if w.limiter != nil {
-			if !w.limiter.Allow() {
-				continue
+		// Closed-loop rate limiting: block until the limiter releases a permit
+		// rather than busy-spinning on Allow(). Skipped when an open-loop
+		// scheduler is the rate authority (it would otherwise double-throttle).
+		if w.rateLimited && w.limiter != nil {
+			if err := w.limiter.Wait(ctx); err != nil {
+				return err
 			}
 		}
 

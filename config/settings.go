@@ -28,7 +28,22 @@ type Settings struct {
 	TargetGas             uint64   `json:"targetGas,omitempty"`
 	NumBlocksToWrite      int      `json:"numBlocksToWrite,omitempty"`
 	PostSummaryFlushDelay Duration `json:"postSummaryFlushDelay,omitempty"`
+	// ArrivalModel selects the transaction arrival model: "open_loop" schedules
+	// tx i at t₀ + i/λ independent of sender availability (the
+	// coordinated-omission fix), "closed_loop" (default) keeps the legacy
+	// generate-then-send lockstep as the regression baseline.
+	ArrivalModel string `json:"arrivalModel,omitempty"`
+	// MaxInFlight bounds concurrent in-flight sends in the open-loop model;
+	// txs that would exceed it at their scheduled instant are dropped and
+	// counted rather than throttling the arrival clock. Ignored in closed-loop.
+	MaxInFlight int `json:"maxInFlight,omitempty"`
 }
+
+// Arrival model identifiers for the ArrivalModel setting.
+const (
+	ArrivalModelClosedLoop = "closed_loop"
+	ArrivalModelOpenLoop   = "open_loop"
+)
 
 // DefaultSettings returns the default configuration values
 func DefaultSettings() Settings {
@@ -49,6 +64,8 @@ func DefaultSettings() Settings {
 		TargetGas:             10_000_000,
 		NumBlocksToWrite:      100,
 		PostSummaryFlushDelay: Duration(25 * time.Second),
+		ArrivalModel:          ArrivalModelClosedLoop,
+		MaxInFlight:           10_000,
 	}
 }
 
@@ -72,6 +89,8 @@ func InitializeViper(cmd *cobra.Command) error {
 		"targetGas":             "target-gas",
 		"numBlocksToWrite":      "num-blocks-to-write",
 		"postSummaryFlushDelay": "post-summary-flush-delay",
+		"arrivalModel":          "arrival-model",
+		"maxInFlight":           "max-in-flight",
 	}
 
 	for viperKey, flagName := range flagBindings {
@@ -98,6 +117,8 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("targetGas", defaults.TargetGas)
 	viper.SetDefault("numBlocksToWrite", defaults.NumBlocksToWrite)
 	viper.SetDefault("postSummaryFlushDelay", defaults.PostSummaryFlushDelay.ToDuration())
+	viper.SetDefault("arrivalModel", defaults.ArrivalModel)
+	viper.SetDefault("maxInFlight", defaults.MaxInFlight)
 	return nil
 }
 
@@ -140,5 +161,7 @@ func ResolveSettings() Settings {
 		TargetGas:             viper.GetUint64("targetGas"),
 		NumBlocksToWrite:      viper.GetInt("numBlocksToWrite"),
 		PostSummaryFlushDelay: Duration(viper.GetDuration("postSummaryFlushDelay")),
+		ArrivalModel:          viper.GetString("arrivalModel"),
+		MaxInFlight:           viper.GetInt("maxInFlight"),
 	}
 }

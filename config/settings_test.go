@@ -97,6 +97,8 @@ func TestArgumentPrecedence(t *testing.T) {
 			cmd.Flags().Uint64("target-gas", 0, "Target gas")
 			cmd.Flags().Int("num-blocks-to-write", 0, "Number of blocks to write")
 			cmd.Flags().Duration("post-summary-flush-delay", 0, "Post-summary flush delay")
+			cmd.Flags().String("arrival-model", "", "Arrival model")
+			cmd.Flags().Int("max-in-flight", 0, "Max in-flight")
 
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
@@ -141,6 +143,8 @@ func TestDefaultSettings(t *testing.T) {
 		TargetGas:             10_000_000,
 		NumBlocksToWrite:      100,
 		PostSummaryFlushDelay: Duration(25 * time.Second),
+		ArrivalModel:          ArrivalModelClosedLoop,
+		MaxInFlight:           10_000,
 	}
 
 	if defaults != expected {

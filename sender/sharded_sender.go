@@ -120,6 +120,17 @@ func (s *ShardedSender) SetDebug(debug bool) {
 	}
 }
 
+// SetRateLimited enables or disables worker-side rate limiting across all
+// workers. Disable it when an open-loop scheduler is the rate authority.
+func (s *ShardedSender) SetRateLimited(rateLimited bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, worker := range s.workers {
+		worker.SetRateLimited(rateLimited)
+	}
+}
+
 // SetTrackReceipts sets the track-receipts flag for the sender and its workers
 func (s *ShardedSender) SetTrackReceipts(trackReceipts bool) {
 	s.mu.Lock()
