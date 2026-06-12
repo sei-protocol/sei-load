@@ -112,6 +112,8 @@ func (u *UniformDistribution) SampleIndex(n uint64) (uint64, error) {
 // (O(n)) and cached, so each draw is O(1). n arrives at sample time rather than
 // at unmarshal time, so the cache is filled lazily on first use and recomputed
 // only if a later call presents a different n.
+//
+// not copy-safe: holds a sync.Mutex; use only via *ZipfianDistribution.
 type ZipfianDistribution struct {
 	Theta float64 `json:"theta"`
 
@@ -124,12 +126,12 @@ type ZipfianDistribution struct {
 // zipfState holds the precomputed constants for one keyspace size n. All fields
 // are derived from (n, theta) once and read O(1) per draw.
 type zipfState struct {
-	n         uint64
-	theta     float64
-	zetaN     float64 // zeta(n, theta)
-	alpha     float64 // 1 / (1 - theta)
-	eta       float64
-	thetaPow2 float64 // 0.5^theta, the boundary mass for index 1
+	n            uint64
+	theta        float64
+	zetaN        float64 // zeta(n, theta)
+	alpha        float64 // 1 / (1 - theta)
+	eta          float64
+	halfPowTheta float64 // 0.5^theta, the boundary mass for index 1
 }
 
 // newZipfState precomputes zeta(n, theta) in O(n) and the O(1) draw constants.
@@ -139,13 +141,24 @@ type zipfState struct {
 func newZipfState(n uint64, theta float64) *zipfState {
 	zetaN := zeta(n, theta)
 	zeta2 := zeta(2, theta)
+
+	// At n <= 2, zeta2 == zetaN so denom == 0 and eta would be NaN. eta is
+	// provably never read for n <= 2 (those keyspaces are fully handled by the
+	// uz < 1 and uz < 1+halfPowTheta branches in SampleIndex), but a NaN in
+	// cached state is a refactor hazard, so pin it to 0.
+	denom := 1.0 - zeta2/zetaN
+	var eta float64
+	if denom != 0 {
+		eta = (1.0 - math.Pow(2.0/float64(n), 1.0-theta)) / denom
+	}
+
 	return &zipfState{
-		n:         n,
-		theta:     theta,
-		zetaN:     zetaN,
-		alpha:     1.0 / (1.0 - theta),
-		eta:       (1.0 - math.Pow(2.0/float64(n), 1.0-theta)) / (1.0 - zeta2/zetaN),
-		thetaPow2: math.Pow(0.5, theta),
+		n:            n,
+		theta:        theta,
+		zetaN:        zetaN,
+		alpha:        1.0 / (1.0 - theta),
+		eta:          eta,
+		halfPowTheta: math.Pow(0.5, theta),
 	}
 }
 
@@ -170,6 +183,12 @@ func (z *ZipfianDistribution) validate() error {
 	return nil
 }
 
+// SampleIndex draws a Zipf-skewed index in [0, n).
+//
+// n must be stable across calls for a given sampler: the precomputed-zeta cache
+// is keyed on n, so a changing n triggers an O(n) zeta recompute on every draw
+// and serializes draws behind the cache mutex. Callers bind one sampler per
+// fixed-size keyspace.
 func (z *ZipfianDistribution) SampleIndex(n uint64) (uint64, error) {
 	if n == 0 {
 		return 0, fmt.Errorf("zipfian sample: empty keyspace (n == 0)")
@@ -182,12 +201,17 @@ func (z *ZipfianDistribution) SampleIndex(n uint64) (uint64, error) {
 	st := z.state
 	z.mu.Unlock()
 
-	u := z.float64()
+	var u float64
+	if z.stream != nil {
+		u = z.stream.Float64()
+	} else {
+		u = rand.Float64()
+	}
 	uz := u * st.zetaN
 	if uz < 1.0 {
 		return 0, nil
 	}
-	if uz < 1.0+st.thetaPow2 {
+	if uz < 1.0+st.halfPowTheta {
 		return 1, nil
 	}
 	idx := uint64(float64(n) * math.Pow(st.eta*u-st.eta+1.0, st.alpha))
@@ -195,13 +219,4 @@ func (z *ZipfianDistribution) SampleIndex(n uint64) (uint64, error) {
 		idx = n - 1
 	}
 	return idx, nil
-}
-
-// float64 draws a uniform [0,1) from the bound stream, falling back to the
-// global RNG when unbound.
-func (z *ZipfianDistribution) float64() float64 {
-	if z.stream != nil {
-		return z.stream.Float64()
-	}
-	return rand.Float64()
 }
