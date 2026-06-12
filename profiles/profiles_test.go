@@ -72,7 +72,7 @@ func TestProfilesAlignment(t *testing.T) {
 
 			// Test 4: Validate that all expected settings fields are present
 			settings := loadConfig.Settings
-			if settings.Workers == 0 && settings.TPS == 0 && settings.BufferSize == 0 {
+			if settings.TasksPerEndpoint == 0 && settings.TPS == 0 && settings.BufferSize == 0 {
 				t.Errorf("Profile %s appears to have zero values for critical settings fields", file.Name())
 			}
 
@@ -80,7 +80,7 @@ func TestProfilesAlignment(t *testing.T) {
 			// Use a decoder with DisallowUnknownFields to catch any extra fields
 			decoder := json.NewDecoder(strings.NewReader(string(data)))
 			decoder.DisallowUnknownFields()
-			
+
 			var strictConfig config.LoadConfig
 			if err := decoder.Decode(&strictConfig); err != nil {
 				t.Errorf("Profile %s contains unexpected/unaligned fields: %v", file.Name(), err)

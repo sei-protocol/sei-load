@@ -45,13 +45,10 @@ func Send[T any](ctx context.Context, ch chan<- T, v T) error {
 }
 
 // SendOrDrop send a value to channel if not full or drop the item if the channel is full.
-func SendOrDrop[T any](ch chan<- T, v T) error {
+func SendOrDrop[T any](ch chan<- T, v T) {
 	select {
 	case ch <- v:
-		return nil
-	default:
-		// drop the item
-		return nil
+	default: // drop the item
 	}
 }
 

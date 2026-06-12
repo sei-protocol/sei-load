@@ -12,19 +12,19 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	Workers          int      `json:"workers,omitempty"`
-	TPS              float64  `json:"tps,omitempty"`
-	StatsInterval    Duration `json:"statsInterval,omitempty"`
-	BufferSize       int      `json:"bufferSize,omitempty"`
-	DryRun           bool     `json:"dryRun,omitempty"`
-	Debug            bool     `json:"debug,omitempty"`
-	TrackReceipts    bool     `json:"trackReceipts,omitempty"`
-	TrackBlocks      bool     `json:"trackBlocks,omitempty"`
-	TrackUserLatency bool     `json:"trackUserLatency,omitempty"`
-	Prewarm          bool     `json:"prewarm,omitempty"`
-	RampUp           bool     `json:"rampUp,omitempty"`
-	ReportPath       string   `json:"reportPath,omitempty"`
-	TxsDir           string   `json:"txsDir,omitempty"`
+	TasksPerEndpoint      int      `json:"workers,omitempty"`
+	TPS                   float64  `json:"tps,omitempty"`
+	StatsInterval         Duration `json:"statsInterval,omitempty"`
+	BufferSize            int      `json:"bufferSize,omitempty"`
+	DryRun                bool     `json:"dryRun,omitempty"`
+	Debug                 bool     `json:"debug,omitempty"`
+	TrackReceipts         bool     `json:"trackReceipts,omitempty"`
+	TrackBlocks           bool     `json:"trackBlocks,omitempty"`
+	TrackUserLatency      bool     `json:"trackUserLatency,omitempty"`
+	Prewarm               bool     `json:"prewarm,omitempty"`
+	RampUp                bool     `json:"rampUp,omitempty"`
+	ReportPath            string   `json:"reportPath,omitempty"`
+	TxsDir                string   `json:"txsDir,omitempty"`
 	TargetGas             uint64   `json:"targetGas,omitempty"`
 	NumBlocksToWrite      int      `json:"numBlocksToWrite,omitempty"`
 	PostSummaryFlushDelay Duration `json:"postSummaryFlushDelay,omitempty"`
@@ -71,19 +71,19 @@ func (s Settings) Validate() error {
 // DefaultSettings returns the default configuration values
 func DefaultSettings() Settings {
 	return Settings{
-		Workers:          1,
-		TPS:              0.0,
-		StatsInterval:    Duration(10 * time.Second),
-		BufferSize:       1000,
-		DryRun:           false,
-		Debug:            false,
-		TrackReceipts:    false,
-		TrackBlocks:      false,
-		TrackUserLatency: false,
-		Prewarm:          false,
-		RampUp:           false,
-		ReportPath:       "",
-		TxsDir:           "",
+		TasksPerEndpoint:      1,
+		TPS:                   0.0,
+		StatsInterval:         Duration(10 * time.Second),
+		BufferSize:            1000,
+		DryRun:                false,
+		Debug:                 false,
+		TrackReceipts:         false,
+		TrackBlocks:           false,
+		TrackUserLatency:      false,
+		Prewarm:               false,
+		RampUp:                false,
+		ReportPath:            "",
+		TxsDir:                "",
 		TargetGas:             10_000_000,
 		NumBlocksToWrite:      100,
 		PostSummaryFlushDelay: Duration(25 * time.Second),
@@ -96,19 +96,19 @@ func DefaultSettings() Settings {
 func InitializeViper(cmd *cobra.Command) error {
 	// Bind flags to viper with error checking
 	flagBindings := map[string]string{
-		"statsInterval":    "stats-interval",
-		"bufferSize":       "buffer-size",
-		"tps":              "tps",
-		"dryRun":           "dry-run",
-		"debug":            "debug",
-		"trackReceipts":    "track-receipts",
-		"trackBlocks":      "track-blocks",
-		"prewarm":          "prewarm",
-		"trackUserLatency": "track-user-latency",
-		"workers":          "workers",
-		"rampUp":           "ramp-up",
-		"reportPath":       "report-path",
-		"txsDir":           "txs-dir",
+		"statsInterval":         "stats-interval",
+		"bufferSize":            "buffer-size",
+		"tps":                   "tps",
+		"dryRun":                "dry-run",
+		"debug":                 "debug",
+		"trackReceipts":         "track-receipts",
+		"trackBlocks":           "track-blocks",
+		"prewarm":               "prewarm",
+		"trackUserLatency":      "track-user-latency",
+		"workers":               "workers",
+		"rampUp":                "ramp-up",
+		"reportPath":            "report-path",
+		"txsDir":                "txs-dir",
 		"targetGas":             "target-gas",
 		"numBlocksToWrite":      "num-blocks-to-write",
 		"postSummaryFlushDelay": "post-summary-flush-delay",
@@ -133,7 +133,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("trackBlocks", defaults.TrackBlocks)
 	viper.SetDefault("prewarm", defaults.Prewarm)
 	viper.SetDefault("trackUserLatency", defaults.TrackUserLatency)
-	viper.SetDefault("workers", defaults.Workers)
+	viper.SetDefault("workers", defaults.TasksPerEndpoint)
 	viper.SetDefault("rampUp", defaults.RampUp)
 	viper.SetDefault("reportPath", defaults.ReportPath)
 	viper.SetDefault("txsDir", defaults.TxsDir)
@@ -166,21 +166,21 @@ func LoadSettings(settings *Settings) error {
 }
 
 // ResolveSettings gets the final resolved settings from Viper
-func ResolveSettings() Settings {
-	return Settings{
-		Workers:          viper.GetInt("workers"),
-		TPS:              viper.GetFloat64("tps"),
-		StatsInterval:    Duration(viper.GetDuration("statsInterval")),
-		BufferSize:       viper.GetInt("bufferSize"),
-		DryRun:           viper.GetBool("dryRun"),
-		Debug:            viper.GetBool("debug"),
-		TrackReceipts:    viper.GetBool("trackReceipts"),
-		TrackBlocks:      viper.GetBool("trackBlocks"),
-		TrackUserLatency: viper.GetBool("trackUserLatency"),
-		Prewarm:          viper.GetBool("prewarm"),
-		RampUp:           viper.GetBool("rampUp"),
-		ReportPath:       viper.GetString("reportPath"),
-		TxsDir:           viper.GetString("txsDir"),
+func ResolveSettings() *Settings {
+	return &Settings{
+		TasksPerEndpoint:      viper.GetInt("workers"),
+		TPS:                   viper.GetFloat64("tps"),
+		StatsInterval:         Duration(viper.GetDuration("statsInterval")),
+		BufferSize:            viper.GetInt("bufferSize"),
+		DryRun:                viper.GetBool("dryRun"),
+		Debug:                 viper.GetBool("debug"),
+		TrackReceipts:         viper.GetBool("trackReceipts"),
+		TrackBlocks:           viper.GetBool("trackBlocks"),
+		TrackUserLatency:      viper.GetBool("trackUserLatency"),
+		Prewarm:               viper.GetBool("prewarm"),
+		RampUp:                viper.GetBool("rampUp"),
+		ReportPath:            viper.GetString("reportPath"),
+		TxsDir:                viper.GetString("txsDir"),
 		TargetGas:             viper.GetUint64("targetGas"),
 		NumBlocksToWrite:      viper.GetInt("numBlocksToWrite"),
 		PostSummaryFlushDelay: Duration(viper.GetDuration("postSummaryFlushDelay")),
