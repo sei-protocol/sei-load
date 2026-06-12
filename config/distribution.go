@@ -21,10 +21,9 @@ type indexSampler interface {
 	SampleIndex(n uint64) (uint64, error)
 }
 
-// Distribution is a tagged wrapper over a keyspace index distribution, selected
-// by a "Name" discriminator on the JSON wire format. The discriminator strings
-// ("uniform", "zipfian") and the "theta" parameter name are a frozen
-// saved-workload contract; do not rename them.
+// Distribution is a tagged keyspace index sampler selected by a "Name"
+// discriminator on the JSON wire. The discriminator strings and "theta"
+// parameter are a FROZEN saved-workload contract; see package doc.
 type Distribution struct {
 	name     string
 	delegate indexSampler
@@ -32,12 +31,9 @@ type Distribution struct {
 
 func (d *Distribution) Name() string { return d.name }
 
-// SetStream binds the distribution's sampler to a deterministic sub-stream. A
-// nil stream leaves the sampler on the unseeded global RNG.
-//
-// Only a random sampler has anything to seed: a zero-value (no Name)
-// Distribution draws no randomness, so the type assertions intentionally no-op
-// for it rather than erroring — mirroring GasPicker.SetStream.
+// SetStream binds the sampler to a deterministic sub-stream (nil = unseeded
+// global RNG); a zero-value Distribution draws nothing, so it no-ops. See
+// package doc for the reproducibility contract.
 func (d *Distribution) SetStream(s *rng.Stream) {
 	switch delegate := d.delegate.(type) {
 	case *UniformDistribution:
@@ -47,8 +43,8 @@ func (d *Distribution) SetStream(s *rng.Stream) {
 	}
 }
 
-// SampleIndex delegates to the selected distribution. A zero-value (no Name)
-// Distribution samples nothing and returns 0.
+// SampleIndex delegates to the selected sampler; a zero-value Distribution
+// returns 0.
 func (d *Distribution) SampleIndex(n uint64) (uint64, error) {
 	if d.delegate == nil {
 		return 0, nil
@@ -68,8 +64,7 @@ func (d *Distribution) UnmarshalJSON(data []byte) error {
 	case "":
 		return nil
 	case "uniform":
-		// UniformDistribution has no JSON parameters (its only field, the seeded
-		// stream, is bound later via SetStream), so there is nothing to decode.
+		// No JSON parameters; the stream is bound later via SetStream.
 		d.delegate = &UniformDistribution{}
 		return nil
 	case "zipfian":
@@ -102,14 +97,9 @@ func (u *UniformDistribution) SampleIndex(n uint64) (uint64, error) {
 	return rand.Uint64N(n), nil
 }
 
-// ZipfianDistribution draws indices with a Zipf-distributed skew controlled by
-// theta. theta == 0 is uniform; larger theta concentrates draws on low indices.
-//
-// It is the YCSB precomputed-zeta generator: the generalized harmonic number
-// zeta(n, theta) = sum_{i=1..n} 1/i^theta is computed once per keyspace size n
-// (O(n)) and cached, so each draw is O(1). n arrives at sample time rather than
-// at unmarshal time, so the cache is filled lazily on first use and recomputed
-// only if a later call presents a different n.
+// ZipfianDistribution is the YCSB precomputed-zeta generator: zeta(n, theta) is
+// computed once per keyspace size n and cached, so each draw is O(1). theta == 0
+// is uniform; larger theta hotspots the low indices. See package doc for the math.
 //
 // not copy-safe: holds a sync.Mutex; use only via *ZipfianDistribution.
 type ZipfianDistribution struct {
@@ -121,8 +111,7 @@ type ZipfianDistribution struct {
 	state *zipfState // memoized for state.n; recomputed when n changes.
 }
 
-// zipfState holds the precomputed constants for one keyspace size n. All fields
-// are derived from (n, theta) once and read O(1) per draw.
+// zipfState holds the O(1) draw constants for one keyspace size n. See package doc.
 type zipfState struct {
 	n            uint64
 	theta        float64
@@ -132,18 +121,13 @@ type zipfState struct {
 	halfPowTheta float64 // 0.5^theta, the boundary mass for index 1
 }
 
-// newZipfState precomputes zeta(n, theta) in O(n) and the O(1) draw constants.
-// Summing 1/i^theta from the largest i (smallest term) down to 1 keeps the
-// running sum from being swamped by its leading terms, which matters for the
-// n = 1e6 keyspaces this generator targets.
+// newZipfState precomputes zeta(n, theta) in O(n) and the O(1) draw constants;
+// see package doc for the derivation.
 func newZipfState(n uint64, theta float64) *zipfState {
 	zetaN := zeta(n, theta)
 	zeta2 := zeta(2, theta)
 
-	// At n <= 2, zeta2 == zetaN so denom == 0 and eta would be NaN. eta is
-	// provably never read for n <= 2 (those keyspaces are fully handled by the
-	// uz < 1 and uz < 1+halfPowTheta branches in SampleIndex), but a NaN in
-	// cached state is a refactor hazard, so pin it to 0.
+	// eta is unread for n <= 2; pin its NaN denominator to 0. See package doc.
 	denom := 1.0 - zeta2/zetaN
 	var eta float64
 	if denom != 0 {
@@ -161,7 +145,7 @@ func newZipfState(n uint64, theta float64) *zipfState {
 }
 
 // zeta returns the generalized harmonic number sum_{i=1..n} 1/i^theta, summed
-// from the smallest term upward for numerical stability.
+// smallest-term-first for numerical stability; see package doc.
 func zeta(n uint64, theta float64) float64 {
 	var sum float64
 	for i := n; i >= 1; i-- {
@@ -170,8 +154,7 @@ func zeta(n uint64, theta float64) float64 {
 	return sum
 }
 
-// zipfianThetaMax bounds theta to the range over which the YCSB precomputed-zeta
-// generator (PLT-460) is numerically well-behaved.
+// zipfianThetaMax bounds theta to the numerically well-behaved range; see package doc.
 const zipfianThetaMax = 1.0
 
 func (z *ZipfianDistribution) validate() error {
@@ -181,12 +164,9 @@ func (z *ZipfianDistribution) validate() error {
 	return nil
 }
 
-// SampleIndex draws a Zipf-skewed index in [0, n).
-//
-// n must be stable across calls for a given sampler: the precomputed-zeta cache
-// is keyed on n, so a changing n triggers an O(n) zeta recompute on every draw
-// and serializes draws behind the cache mutex. Callers bind one sampler per
-// fixed-size keyspace.
+// SampleIndex draws a Zipf-skewed index in [0, n). n must be stable per sampler:
+// the zeta cache is keyed on n, so a changing n recomputes O(n) every draw. See
+// package doc.
 func (z *ZipfianDistribution) SampleIndex(n uint64) (uint64, error) {
 	if n == 0 {
 		return 0, fmt.Errorf("zipfian sample: empty keyspace (n == 0)")
