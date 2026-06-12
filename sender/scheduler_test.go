@@ -320,7 +320,7 @@ func TestOpenLoopSchedule_HonorsRampedLambda(t *testing.T) {
 
 	// The min gap observed in the back half must reflect the faster λ: with a
 	// 2ms target the later gaps are far under the initial 20ms gap.
-	var minGap time.Duration = time.Hour
+	minGap := time.Hour
 	for i := 1; i < len(issued); i++ {
 		g := issued[i].IntendedSendTime.Sub(issued[i-1].IntendedSendTime)
 		if g < minGap {
