@@ -62,6 +62,7 @@ func (g *configBasedGenerator) createScenarios() error {
 		// Create scenario instance using factory
 		scenario := scenarios.CreateScenario(scenarioCfg)
 		g.bindGasStreams(i, scenarioCfg)
+		g.bindDistributionStreams(i, scenarioCfg)
 
 		// Determine account pool to use
 		var accountPool types.AccountPool
@@ -136,6 +137,20 @@ func (g *configBasedGenerator) bindGasStreams(i int, cfg config.Scenario) {
 	}
 	if cfg.GasFeeCapPicker != nil {
 		cfg.GasFeeCapPicker.SetStream(g.rng.Stream(rng.GasFeeCapStream(i)))
+	}
+}
+
+// bindDistributionStreams binds each configured keyspace distribution for a
+// scenario to its own deterministic sub-stream, keyed by the scenario's config
+// index. The pointer-aliasing reasoning in bindGasStreams applies verbatim: cfg
+// is a value copy but its *Distribution fields are pointers shared with the
+// scenario's copy, so SetStream reaches the live sampler.
+func (g *configBasedGenerator) bindDistributionStreams(i int, cfg config.Scenario) {
+	if cfg.KeyDistribution != nil {
+		cfg.KeyDistribution.SetStream(g.rng.Stream(rng.KeyDistributionStream(i)))
+	}
+	if cfg.SizeDistribution != nil {
+		cfg.SizeDistribution.SetStream(g.rng.Stream(rng.SizeDistributionStream(i)))
 	}
 }
 
