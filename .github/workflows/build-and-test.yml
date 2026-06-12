@@ -42,7 +42,11 @@ jobs:
     - name: Install golangci-lint
       uses: golangci/golangci-lint-action@v7
       with:
-        version: latest
+        # Pinned (not `latest`) for determinism. MUST match GOLANGCI_VERSION in
+        # the Makefile and the `version:` in .golangci.yml's schema. `latest`
+        # drifts between releases and shifts the default linter set, which is a
+        # "passes locally, fails CI" trap. Bump all three together.
+        version: v2.12.2
     
     - name: Run linting
       run: make lint

@@ -42,6 +42,14 @@ SOLC_EVM_VERSION := paris
 # Falls back to grepping go.mod if `go list` is unavailable.
 GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
 
+# Pinned golangci-lint version. MUST match the `version:` pinned in
+# .github/workflows/build-and-test.yml (golangci-lint-action). golangci-lint's
+# default linter set + check behavior drifts between releases, so an unpinned
+# `latest` is a "passes locally, fails CI" trap. `make install-lint` installs
+# exactly this version; `make lint` warns if the binary on PATH differs.
+# Bump here + in the workflow + re-validate `.golangci.yml` together.
+GOLANGCI_VERSION := 2.12.2
+
 # Find all .sol files in contracts directory
 SOL_FILES := $(wildcard $(CONTRACTS_DIR)/*.sol)
 CONTRACT_NAMES := $(basename $(notdir $(SOL_FILES)))
@@ -52,23 +60,29 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate generate-bindings check-bindings install-abigen clean help build-cli install setup-node build test lint
+.PHONY: generate generate-bindings check-bindings install-abigen install-lint clean help build-cli install setup-node build test lint verify
 
 # Default target
 help:
 	@echo "Available targets:"
+	@echo "  verify            - Run exactly what CI gates on: lint + test + check-bindings"
 	@echo "  build             - Build the seiload CLI (alias for build-cli)"
-	@echo "  test              - Run tests with coverage"
-	@echo "  lint              - Run linting and static analysis"
+	@echo "  test              - Run tests with coverage (race detector enabled)"
+	@echo "  lint              - Run linting and static analysis (golangci-lint $(GOLANGCI_VERSION))"
 	@echo "  setup-node        - Install nvm, Node.js 20, and solc"
 	@echo "  generate          - Generate Go bindings and scenario templates for all contracts"
 	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
 	@echo "  check-bindings    - Fail if committed bindings are out of sync with contracts"
+	@echo "  install-tools     - Install the full pinned toolchain (solc, abigen, golangci-lint)"
 	@echo "  install-abigen    - Install abigen pinned to the go.mod go-ethereum version"
+	@echo "  install-lint      - Install golangci-lint pinned to $(GOLANGCI_VERSION)"
 	@echo "  clean             - Remove generated files"
 	@echo "  help              - Show this help message"
 	@echo "  build-cli         - Build the seiload CLI"
 	@echo "  install           - Install the seiload CLI"
+	@echo ""
+	@echo "Before pushing: run 'make verify' (local CI parity). Run 'make install-tools'"
+	@echo "first to get the pinned toolchain (golangci-lint $(GOLANGCI_VERSION) etc.)."
 
 # Setup Node.js environment with nvm
 setup-node:
@@ -187,8 +201,17 @@ check-bindings:
 		fi
 	@echo "✅ Bindings are in sync with contracts"
 
+# Install golangci-lint pinned to GOLANGCI_VERSION (see note above the variable).
+# `go install` at the exact tag keeps the linter binary — and therefore the
+# default linter set / check behavior — reproducible across dev machines and CI.
+# CI installs the same version via golangci-lint-action (pinned, not `latest`).
+install-lint:
+	@echo "📦 Installing golangci-lint@v$(GOLANGCI_VERSION) ..."
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_VERSION)
+	@echo "✅ Installed golangci-lint@v$(GOLANGCI_VERSION)"
+
 # Install tools (optional convenience target)
-install-tools: setup-node install-abigen
+install-tools: setup-node install-abigen install-lint
 	@echo "✅ Tools installation complete"
 
 # Build the seiload CLI binary
@@ -215,8 +238,24 @@ test:
 	@go tool cover -func=coverage.out
 	@echo "✅ Tests passed"
 
-# Run linting and static analysis
+# Run linting and static analysis.
+# Expects golangci-lint pinned to GOLANGCI_VERSION (run `make install-lint`).
+# We warn — not fail — on a version mismatch: the linter set is pinned in
+# .golangci.yml, but a different binary can still shift check results, which is
+# exactly the "passes locally, fails CI" trap this target guards against.
 lint:
 	@echo "🔍 Running linting and static analysis..."
+	@have=$$(golangci-lint version --short 2>/dev/null || golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		if [ -n "$$have" ] && [ "$$have" != "$(GOLANGCI_VERSION)" ]; then \
+			echo "⚠️  golangci-lint $$have on PATH != pinned $(GOLANGCI_VERSION). Run 'make install-lint' for CI parity."; \
+		fi
 	@golangci-lint run
 	@echo "✅ Linting and static analysis passed"
+
+# Local CI parity: run exactly what CI gates on, in the same order.
+#   - lint            -> .github/workflows/build-and-test.yml (make lint)
+#   - test            -> .github/workflows/build-and-test.yml (make test)
+#   - check-bindings  -> .github/workflows/bindings-check.yml (make check-bindings)
+# Run this before pushing: a green `make verify` means the gating CI jobs pass.
+verify: lint test check-bindings
+	@echo "✅ verify passed (lint + test + check-bindings) — local CI parity"
