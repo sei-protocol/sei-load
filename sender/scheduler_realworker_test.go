@@ -206,7 +206,7 @@ func (g *signedTxGenerator) Generate() (*types.LoadTx, bool) {
 	return types.CreateTxFromEthTx(signed, scenario), true
 }
 
-func (g *signedTxGenerator) GenerateN(int) []*types.LoadTx { panic("unused") }
+func (g *signedTxGenerator) GenerateN(int) []*types.LoadTx        { panic("unused") }
 func (g *signedTxGenerator) GetAccountPools() []types.AccountPool { return nil }
 
 func (g *signedTxGenerator) issuedCount() int {
@@ -255,15 +255,25 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	limiter := rate.NewLimiter(rate.Limit(2000), 1)
 	sched := newOpenLoopScheduler(gen, worker, limiter, 256, onSent)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	// Run the real worker (background) and the scheduler (main) in the same
-	// scope. The worker must keep draining txChan after the scheduler exhausts
-	// the generator, so we DON'T let the scheduler's return tear the scope down:
-	// we keep the main task alive until every admitted tx has completed, then
-	// cancel. Otherwise an admitted tx still buffered in txChan at cancel time
-	// would never fire OnComplete and conservation would (correctly) fail.
+	// Run the worker and scheduler in a scope whose teardown WE control via
+	// runCancel — not the scheduler's return.
+	//
+	// service.Run cancels the scope's context as soon as every MAIN task returns.
+	// If the scheduler were a main task, the instant it exhausts the generator and
+	// returns, service.Run would cancel the worker's context — aborting any send
+	// still in flight. A send whose 200 OK the server already counted (handled++)
+	// but whose client.SendTransaction had not yet returned would then fail with
+	// context-canceled: OnComplete fires with err != nil, so completed++ but NOT
+	// succeeded++. That is exactly the observed flake (handled=200, succeeded=199):
+	// not a sampling artifact but a teardown that races the last in-flight send.
+	//
+	// So the scheduler and worker are BACKGROUND tasks, and the lone MAIN task is a
+	// gate that blocks until the test calls runCancel(). The scope therefore stays
+	// alive — the worker keeps draining txChan and firing OnComplete — until the
+	// test has observed quiescence and torn down deliberately.
 	runCtx, runCancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -271,32 +281,62 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 		defer wg.Done()
 		_ = service.Run(runCtx, func(ctx context.Context, scope service.Scope) error {
 			scope.SpawnBg(func() error { return worker.Run(ctx) })
-			return sched.Run(ctx, scope)
+			scope.SpawnBg(func() error { return sched.Run(ctx, scope) })
+			// Main task: hold the scope open until the test signals teardown.
+			<-ctx.Done()
+			return nil
 		})
 	}()
 
 	issued := func() uint64 { return uint64(gen.issuedCount()) }
 
-	// Every issued tx must be completed (by the real worker's OnComplete) or
-	// dropped — exactly once each, no leaks, no double-count. Driven by the real
-	// worker's OnComplete, so a missing invoke leaves completions short forever.
+	// Assert ONLY at quiescence. All invariants are sampled together in one
+	// predicate so we never read them mid-flight, and we anchor on the FIXED
+	// total txCount so `issued` is not a moving target:
+	//
+	//   exhausted:    issued == txCount             (the generator is drained, so
+	//                 no new work can perturb the counters — the precondition that
+	//                 makes the fixpoint below stable)
+	//   conservation: completed + dropped == txCount (every issued tx reached a
+	//                 terminal state via the real worker's OnComplete or a drop)
+	//   equality:     succeeded == handled           (every server-handled send
+	//                 produced exactly one successful worker-driven completion)
+	//
+	// conservation and equality are transiently off WHILE a send is in flight: the
+	// server bumps `handled` when it RECEIVES eth_sendRawTransaction, but the worker
+	// bumps `succeeded` only AFTER SendTransaction returns and OnComplete fires — the
+	// instants differ by the server→worker-return window. Sampling any of them alone,
+	// or at different instants, can catch that window. Requiring all three together,
+	// only once they hold, observes the system after that window has drained. The
+	// counters are monotonic; once the generator is exhausted no new work is issued,
+	// so once ALL THREE hold they stay held — that stable fixpoint is the quiescent
+	// point. (The deeper hazard the gate above fixes is teardown racing that same
+	// window; here we additionally refuse to read until the window is empty.)
+	//
+	// Driven by the real worker's OnComplete — a missing invoke leaves completed
+	// (and succeeded) short forever, so convergence never happens and the test
+	// fails on the Eventually deadline. CI is slow, so the window is generous;
+	// correctness depends on convergence, not on the deadline firing.
+	const total = uint64(txCount)
 	require.Eventually(t, func() bool {
-		i := issued()
-		return i > 0 && completed.Load()+sched.Dropped() == i
-	}, 3*time.Second, 2*time.Millisecond,
-		"issued=%d completed=%d dropped=%d", issued(), completed.Load(), sched.Dropped())
+		exhausted := issued() == total
+		conserved := completed.Load()+sched.Dropped() == total
+		balanced := succeeded.Load() == srv.handled.Load()
+		return exhausted && conserved && balanced
+	}, 10*time.Second, 2*time.Millisecond,
+		"never reached quiescence (want issued=conserved=%d, succeeded=handled)", total)
 
+	// System is quiescent: the generator is drained, no send is in flight, every
+	// issued tx is terminal, and every handled send has its OnComplete recorded.
+	// Only now tear down — the counters cannot move under us, so the assertions
+	// below re-read a frozen state, not a sampled one.
 	runCancel()
 	wg.Wait()
 
-	require.Positive(t, issued())
-
-	// The completions came from the REAL send path, not a phantom OnComplete:
-	// every send the server successfully handled produced exactly one successful
-	// worker-driven completion. (A send that errored client-side — e.g. ctx
-	// canceled at teardown — still completes but is not server-handled, so we
-	// match handled against the success count, not the total.)
+	require.Equal(t, total, issued(), "the generator must be fully drained")
 	require.Positive(t, srv.handled.Load(), "the real RPC server must have handled sends")
+	require.Equal(t, total, completed.Load()+sched.Dropped(),
+		"every issued tx must reach a terminal state (completed or dropped)")
 	require.Equal(t, succeeded.Load(), srv.handled.Load(),
 		"each successful completion must correspond to one eth_sendRawTransaction")
 }
