@@ -3,7 +3,6 @@ package config_test
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -194,7 +193,8 @@ func TestZipfianNoNaNAcrossThetaRange(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				v, err := d.SampleIndex(n)
 				require.NoError(t, err)
-				require.False(t, math.IsNaN(float64(v)))
+				// v is a uint64 index; the in-range check is the real guard that
+				// the internal zeta/eta math never produced a bad (NaN-derived) draw.
 				require.Less(t, v, n, "theta=%v n=%d produced out-of-range index", theta, n)
 			}
 		}

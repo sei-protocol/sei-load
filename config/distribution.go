@@ -68,11 +68,9 @@ func (d *Distribution) UnmarshalJSON(data []byte) error {
 	case "":
 		return nil
 	case "uniform":
-		var uniform UniformDistribution
-		if err := json.Unmarshal(data, &uniform); err != nil {
-			return err
-		}
-		d.delegate = &uniform
+		// UniformDistribution has no JSON parameters (its only field, the seeded
+		// stream, is bound later via SetStream), so there is nothing to decode.
+		d.delegate = &UniformDistribution{}
 		return nil
 	case "zipfian":
 		var zipfian ZipfianDistribution
