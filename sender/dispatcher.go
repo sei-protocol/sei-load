@@ -153,9 +153,8 @@ func (d *Dispatcher) runClosedLoop(ctx context.Context) error {
 			return nil
 		}
 
-		// Stamp before hand-off: the dispatcher is sole owner here (tx just
-		// returned by the generator, not yet enqueued), so this write is race-free.
-		// This is the back-pressured enqueue time, not a true schedule instant.
+		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
+		// the back-pressured enqueue time, not a true schedule instant.
 		tx.IntendedSendTime = time.Now()
 
 		// Send the transaction
