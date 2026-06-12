@@ -17,13 +17,13 @@ type RunSummary struct {
 	// Dropped is the count of open-loop txs shed on in-flight saturation. A
 	// dropped tx never reaches the inclusion tracker and carries no
 	// InclusionTime, so it must stay out of inclusion-rate denominators: the
-	// denominator is sent (txs that reached a sender), never issued (sent +
-	// failed + dropped).
+	// denominator is succeeded txs (those that reached a sender), never the full
+	// scheduled count.
 	Dropped uint64
-	// Failed is the count of open-loop txs that were admitted and enqueued but
-	// whose send completed with an error. Like Dropped, a failed tx reached no
-	// inclusion tracker; it is reported so the conservation invariant
-	// issued == Dropped + Failed + sent is auditable from the run summary.
+	// Failed is the count of admitted open-loop txs whose send completed with an
+	// error. Like Dropped, a failed tx reached no inclusion tracker; it is
+	// reported so the conservation invariant (see sender package doc:
+	// scheduled = dropped + succeeded + failed) is auditable from the run summary.
 	Failed uint64
 }
 

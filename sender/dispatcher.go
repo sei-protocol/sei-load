@@ -41,13 +41,10 @@ type Dispatcher struct {
 	limiter      *rate.Limiter
 	maxInFlight  int
 
-	// Statistics. The open-loop conservation invariant is
-	//   issued (scheduled ticks) == dropped (not admitted) + admitted, and
-	//   admitted == totalSent (succeeded) + failed.
-	// A tx that is admitted and enqueues but errors in the worker's send is
-	// counted as failed, not lost: it is neither sent nor dropped.
+	// Statistics for the open-loop conservation invariant; see the package doc
+	// (Conservation): scheduled = dropped + admitted, admitted = succeeded + failed.
 	totalSent uint64 // admitted sends that completed with a nil error (succeeded)
-	failed    uint64 // admitted sends that completed with a non-nil error
+	failed    uint64 // admitted sends that completed with a non-nil error (failed)
 	dropped   uint64
 	mu        sync.RWMutex
 	collector *stats.Collector
@@ -255,10 +252,9 @@ type DispatcherStats struct {
 	// TotalSent is the number of admitted sends that completed with a nil error
 	// (succeeded).
 	TotalSent uint64
-	// Failed is the number of open-loop sends that were admitted (took a permit)
-	// and enqueued but completed with a non-nil error. Counted, not lost: with
-	// Dropped and TotalSent it closes the conservation invariant
-	// issued == Dropped + TotalSent + Failed. Always 0 in closed-loop mode.
+	// Failed is the number of admitted open-loop sends that completed with a
+	// non-nil error: counted, not lost (see package doc, Conservation:
+	// admitted = succeeded + failed). Always 0 in closed-loop mode.
 	Failed uint64
 	// Dropped is the number of open-loop txs shed because in-flight was
 	// saturated at their scheduled instant. Always 0 in closed-loop mode.

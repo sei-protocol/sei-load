@@ -28,16 +28,11 @@ type openLoopScheduler struct {
 	onSent      func(tx *types.LoadTx, err error)
 	maxInFlight int
 
-	// dropped counts ticks shed because in-flight was saturated at their
-	// scheduled instant (no permit, no Generate, no draw). admitted counts ticks
-	// that took a permit AND drew a real tx from the generator (the work actually
-	// handed to a sender). Their sum is the number of scheduled arrivals that
-	// represented work — the conservation anchor:
-	//   admitted + dropped == scheduled arrivals, and
-	//   admitted == succeeded + failed (the send outcome, accounted by onSent).
-	// A tick whose Generate returns no work (generator exhausted) is neither:
-	// the permit it briefly held is released and no arrival is counted. Read
-	// after Run returns, or concurrently via Dropped/Admitted.
+	// dropped and admitted partition scheduled ticks; see the package doc
+	// (Conservation) for the invariant scheduled = dropped + admitted. A tick
+	// whose Generate returns no work (generator exhausted under a held permit) is
+	// neither: the permit is released and no arrival is counted. Written by the
+	// Run goroutine; read after Run returns or concurrently via Dropped/Admitted.
 	dropped  atomic.Uint64
 	admitted atomic.Uint64
 }
@@ -68,9 +63,10 @@ func newOpenLoopScheduler(
 // Dropped returns the number of ticks shed so far because in-flight was saturated.
 func (s *openLoopScheduler) Dropped() uint64 { return s.dropped.Load() }
 
-// Admitted returns the number of ticks that took a permit and drew a real tx
-// (the work handed to a sender). Admitted + Dropped is the scheduled-arrival
-// count; Admitted equals succeeded + failed once all sends complete.
+// Admitted returns the admitted-tick count (ticks that took a permit and drew a
+// real tx). It exposes the conservation invariant for tests/audit, mirroring
+// Dropped; no production path consumes it (only Dropped folds into the run
+// summary).
 func (s *openLoopScheduler) Admitted() uint64 { return s.admitted.Load() }
 
 // Run drives the arrival clock until ctx is canceled or the generator is
