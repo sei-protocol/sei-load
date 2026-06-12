@@ -288,18 +288,17 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 		})
 	}()
 
-	issued := func() uint64 { return uint64(gen.issuedCount()) }
-
 	// Assert ONLY at quiescence. All invariants are sampled together in one
-	// predicate so we never read them mid-flight, and we anchor on the FIXED
-	// total txCount so `issued` is not a moving target:
+	// predicate so we never read them mid-flight. Post-reorder, the generator is
+	// drawn only on admitted ticks, so the conservation anchor is the scheduler's
+	// OWN counters, not the generator draw count:
 	//
-	//   exhausted:    issued == txCount             (the generator is drained, so
-	//                 no new work can perturb the counters — the precondition that
-	//                 makes the fixpoint below stable)
-	//   conservation: completed + dropped == txCount (every issued tx reached a
-	//                 terminal state via the real worker's OnComplete or a drop)
-	//   equality:     succeeded == handled           (every server-handled send
+	//   admitted:     Admitted() == txCount        (every draw was admitted — the
+	//                 generator is drained and dropped ticks consumed no draw;
+	//                 the precondition that makes the fixpoint below stable)
+	//   conservation: completed == Admitted()       (every admitted tx reached a
+	//                 terminal state via the real worker's OnComplete)
+	//   equality:     succeeded == handled          (every server-handled send
 	//                 produced exactly one successful worker-driven completion)
 	//
 	// conservation and equality are transiently off WHILE a send is in flight: the
@@ -308,7 +307,7 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	// instants differ by the server→worker-return window. Sampling any of them alone,
 	// or at different instants, can catch that window. Requiring all three together,
 	// only once they hold, observes the system after that window has drained. The
-	// counters are monotonic; once the generator is exhausted no new work is issued,
+	// counters are monotonic; once the generator is exhausted no new work is admitted,
 	// so once ALL THREE hold they stay held — that stable fixpoint is the quiescent
 	// point. (The deeper hazard the gate above fixes is teardown racing that same
 	// window; here we additionally refuse to read until the window is empty.)
@@ -319,24 +318,25 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	// correctness depends on convergence, not on the deadline firing.
 	const total = uint64(txCount)
 	require.Eventually(t, func() bool {
-		exhausted := issued() == total
-		conserved := completed.Load()+sched.Dropped() == total
+		admittedAll := sched.Admitted() == total
+		conserved := completed.Load() == sched.Admitted()
 		balanced := succeeded.Load() == srv.handled.Load()
-		return exhausted && conserved && balanced
+		return admittedAll && conserved && balanced
 	}, 10*time.Second, 2*time.Millisecond,
-		"never reached quiescence (want issued=conserved=%d, succeeded=handled)", total)
+		"never reached quiescence (want admitted=completed=%d, succeeded=handled)", total)
 
 	// System is quiescent: the generator is drained, no send is in flight, every
-	// issued tx is terminal, and every handled send has its OnComplete recorded.
+	// admitted tx is terminal, and every handled send has its OnComplete recorded.
 	// Only now tear down — the counters cannot move under us, so the assertions
 	// below re-read a frozen state, not a sampled one.
 	runCancel()
 	wg.Wait()
 
-	require.Equal(t, total, issued(), "the generator must be fully drained")
+	require.Equal(t, total, sched.Admitted(), "every generator draw must be an admitted tx")
+	require.Equal(t, total, uint64(gen.issuedCount()), "the generator must be fully drained")
 	require.Positive(t, srv.handled.Load(), "the real RPC server must have handled sends")
-	require.Equal(t, total, completed.Load()+sched.Dropped(),
-		"every issued tx must reach a terminal state (completed or dropped)")
+	require.Equal(t, sched.Admitted(), completed.Load(),
+		"every admitted tx must reach a terminal state via the worker's OnComplete")
 	require.Equal(t, succeeded.Load(), srv.handled.Load(),
 		"each successful completion must correspond to one eth_sendRawTransaction")
 }
@@ -439,13 +439,19 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	cancel()
 	wg.Wait()
 
-	// No leak past the one tx that may be mid-flight at cancel: accounted txs
-	// (completed + dropped) must never exceed issued, and must trail it by at
-	// most that single in-flight tx.
-	accounted := completed.Load() + sched.Dropped()
-	issued := uint64(gen.issuedCount())
-	require.LessOrEqual(t, accounted, issued, "no tx may be counted more than once")
-	require.GreaterOrEqual(t, accounted+1, issued,
-		"at most one admitted tx may be unaccounted at cancel (issued=%d completed=%d dropped=%d)",
-		issued, completed.Load(), sched.Dropped())
+	// No leak past the one tx that may be mid-flight at cancel. Post-reorder, the
+	// generator is drawn only on admitted ticks, so every draw is an admitted tx:
+	// generator-draw count must equal Admitted() exactly (dropped ticks consumed
+	// no draw — the determinism property, on the real worker path).
+	admitted := sched.Admitted()
+	require.Equal(t, admitted, uint64(gen.issuedCount()),
+		"every generator draw must be an admitted tx; dropped ticks consume no draw")
+
+	// Each admitted tx completes exactly once via the worker's OnComplete, so
+	// completed must equal Admitted() — minus at most the single tx left mid-flight
+	// when cancel raced its in-flight send.
+	require.LessOrEqual(t, completed.Load(), admitted, "no admitted tx may complete more than once")
+	require.GreaterOrEqual(t, completed.Load()+1, admitted,
+		"at most one admitted tx may be unaccounted at cancel (admitted=%d completed=%d dropped=%d)",
+		admitted, completed.Load(), sched.Dropped())
 }

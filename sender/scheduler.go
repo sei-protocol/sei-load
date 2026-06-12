@@ -28,9 +28,18 @@ type openLoopScheduler struct {
 	onSent      func(tx *types.LoadTx, err error)
 	maxInFlight int
 
-	// dropped counts txs shed because in-flight was saturated at their
-	// scheduled instant. Read after Run returns, or concurrently via Dropped.
-	dropped atomic.Uint64
+	// dropped counts ticks shed because in-flight was saturated at their
+	// scheduled instant (no permit, no Generate, no draw). admitted counts ticks
+	// that took a permit AND drew a real tx from the generator (the work actually
+	// handed to a sender). Their sum is the number of scheduled arrivals that
+	// represented work — the conservation anchor:
+	//   admitted + dropped == scheduled arrivals, and
+	//   admitted == succeeded + failed (the send outcome, accounted by onSent).
+	// A tick whose Generate returns no work (generator exhausted) is neither:
+	// the permit it briefly held is released and no arrival is counted. Read
+	// after Run returns, or concurrently via Dropped/Admitted.
+	dropped  atomic.Uint64
+	admitted atomic.Uint64
 }
 
 // minScheduleRate floors λ in the inter-arrival gap so a zero/negative limit
@@ -56,8 +65,13 @@ func newOpenLoopScheduler(
 	}
 }
 
-// Dropped returns the number of txs shed so far because in-flight was saturated.
+// Dropped returns the number of ticks shed so far because in-flight was saturated.
 func (s *openLoopScheduler) Dropped() uint64 { return s.dropped.Load() }
+
+// Admitted returns the number of ticks that took a permit and drew a real tx
+// (the work handed to a sender). Admitted + Dropped is the scheduled-arrival
+// count; Admitted equals succeeded + failed once all sends complete.
+func (s *openLoopScheduler) Admitted() uint64 { return s.admitted.Load() }
 
 // Run drives the arrival clock until ctx is canceled or the generator is
 // exhausted, spawning each accepted tx as a send task bounded by the in-flight
@@ -80,27 +94,39 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 			return err
 		}
 
+		// Advance the arrival clock for this scheduled tick before admission, so
+		// the schedule walks at λ whether or not the tx is admitted.
+		intendedSendTime := nextSend
+		seqIndex := i
+		nextSend = nextSend.Add(gap)
+		i++
+
+		// Admit BEFORE generating: a non-blocking TryAcquire that never throttles
+		// the arrival clock (see package doc: coordinated omission). On a drop the
+		// tick is counted but the generator is NOT advanced — a dropped slot
+		// consumes zero seeded-stream draws and no signing CPU, so admitted txs are
+		// a deterministic prefix of the seeded sequence regardless of how many
+		// ticks were shed (the per-stream reproducibility contract, PLT-456).
+		release, ok := s.inflight.TryAcquire()
+		if !ok {
+			s.dropped.Add(1)
+			continue
+		}
+
+		// Permit held: now draw the next tx from the (seeded) generator.
 		tx, ok := s.generator.Generate()
 		if !ok {
+			// No work left: release the permit we will not use and stop.
+			release()
 			log.Print("Scheduler: generator returned no more transactions")
 			return nil
 		}
 
 		// Stamp the scheduled instant and arrival index while sole owner (see
 		// LoadTx concurrency contract).
-		tx.IntendedSendTime = nextSend
-		tx.SequenceIndex = i
-
-		nextSend = nextSend.Add(gap)
-		i++
-
-		// Non-blocking admit: never throttle the arrival clock (see package
-		// doc: coordinated omission). Saturated senders mean drop-and-count.
-		release, ok := s.inflight.TryAcquire()
-		if !ok {
-			s.dropped.Add(1)
-			continue
-		}
+		tx.IntendedSendTime = intendedSendTime
+		tx.SequenceIndex = seqIndex
+		s.admitted.Add(1)
 
 		// complete fires once on send completion: releases the permit and reports
 		// the result. The worker invokes it via tx.OnComplete after the real send

@@ -41,8 +41,13 @@ type Dispatcher struct {
 	limiter      *rate.Limiter
 	maxInFlight  int
 
-	// Statistics
-	totalSent uint64
+	// Statistics. The open-loop conservation invariant is
+	//   issued (scheduled ticks) == dropped (not admitted) + admitted, and
+	//   admitted == totalSent (succeeded) + failed.
+	// A tx that is admitted and enqueues but errors in the worker's send is
+	// counted as failed, not lost: it is neither sent nor dropped.
+	totalSent uint64 // admitted sends that completed with a nil error (succeeded)
+	failed    uint64 // admitted sends that completed with a non-nil error
 	dropped   uint64
 	mu        sync.RWMutex
 	collector *stats.Collector
@@ -188,11 +193,17 @@ func (d *Dispatcher) runOpenLoop(ctx context.Context) error {
 	return err
 }
 
-// onSent records a completed open-loop send. A successful send advances
-// totalSent; the scheduler counts drops separately.
+// onSent records a completed open-loop send (an admitted tx whose send attempt
+// finished). A nil error advances totalSent (succeeded); a non-nil error
+// advances failed. An admitted tx is therefore always counted exactly once as
+// succeeded or failed — never silently lost — preserving
+// admitted == succeeded + failed under RPC failures.
 func (d *Dispatcher) onSent(tx *types.LoadTx, err error) {
 	if err != nil {
 		log.Printf("Scheduler: send failed (seq %d): %v", tx.SequenceIndex, err)
+		d.mu.Lock()
+		d.failed++
+		d.mu.Unlock()
 		return
 	}
 	d.mu.Lock()
@@ -234,13 +245,21 @@ func (d *Dispatcher) GetStats() DispatcherStats {
 
 	return DispatcherStats{
 		TotalSent: d.totalSent,
+		Failed:    d.failed,
 		Dropped:   d.dropped,
 	}
 }
 
 // DispatcherStats contains statistics for the dispatcher
 type DispatcherStats struct {
+	// TotalSent is the number of admitted sends that completed with a nil error
+	// (succeeded).
 	TotalSent uint64
+	// Failed is the number of open-loop sends that were admitted (took a permit)
+	// and enqueued but completed with a non-nil error. Counted, not lost: with
+	// Dropped and TotalSent it closes the conservation invariant
+	// issued == Dropped + TotalSent + Failed. Always 0 in closed-loop mode.
+	Failed uint64
 	// Dropped is the number of open-loop txs shed because in-flight was
 	// saturated at their scheduled instant. Always 0 in closed-loop mode.
 	Dropped uint64

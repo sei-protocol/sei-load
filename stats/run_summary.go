@@ -18,8 +18,13 @@ type RunSummary struct {
 	// dropped tx never reaches the inclusion tracker and carries no
 	// InclusionTime, so it must stay out of inclusion-rate denominators: the
 	// denominator is sent (txs that reached a sender), never issued (sent +
-	// dropped).
+	// failed + dropped).
 	Dropped uint64
+	// Failed is the count of open-loop txs that were admitted and enqueued but
+	// whose send completed with an error. Like Dropped, a failed tx reached no
+	// inclusion tracker; it is reported so the conservation invariant
+	// issued == Dropped + Failed + sent is auditable from the run summary.
+	Failed uint64
 }
 
 // EmitRunSummary records the run-summary gauges. Call once at shutdown.
@@ -34,5 +39,7 @@ func (c *Collector) EmitRunSummary(ctx context.Context, summary RunSummary) {
 	runTPSFinal.Record(ctx, finalTPS)
 	runTxsAcceptedTotal.Record(ctx, int64(totalTxs))
 	runTxsDroppedTotal.Record(ctx, int64(summary.Dropped),
+		metric.WithAttributes(attribute.String("arrival_model", summary.ArrivalModel)))
+	runTxsFailedTotal.Record(ctx, int64(summary.Failed),
 		metric.WithAttributes(attribute.String("arrival_model", summary.ArrivalModel)))
 }

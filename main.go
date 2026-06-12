@@ -374,9 +374,14 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
 	if dispatcher != nil {
 		summary.ArrivalModel = string(dispatcher.ArrivalModel())
-		summary.Dropped = dispatcher.GetStats().Dropped
+		dstats := dispatcher.GetStats()
+		summary.Dropped = dstats.Dropped
+		summary.Failed = dstats.Failed
 		if summary.Dropped > 0 {
 			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
+		}
+		if summary.Failed > 0 {
+			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
 		}
 	}
 	collector.EmitRunSummary(ctx, summary)

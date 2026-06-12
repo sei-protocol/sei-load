@@ -34,9 +34,9 @@
 //
 // Bounded in-flight and drop-and-count. The arrival clock is never throttled by
 // backpressure; throttling it would reintroduce coordinated omission. Instead a
-// counting semaphore bounds true in-flight sends to maxInFlight. At each tx's
+// counting semaphore bounds true in-flight sends to maxInFlight. At each
 // scheduled instant the scheduler tries to acquire a permit without blocking: if
-// the senders are saturated the tx is dropped and counted, and the clock moves
+// the senders are saturated the tick is dropped and counted, and the clock moves
 // on. The permit is not released at enqueue. The scheduler installs a release
 // callback on tx.OnComplete, and the worker invokes it only after the
 // synchronous send returns — note the two phases of the worker path: the enqueue
@@ -45,6 +45,25 @@
 // full unacked-in-flight window (enqueue plus RPC round-trip), and maxInFlight
 // bounds real in-flight work while the drop count measures genuine load shed,
 // not buffer geometry.
+//
+// Admit before generate (determinism). The permit is acquired BEFORE the
+// generator is drawn, not after. A dropped tick therefore calls neither
+// Generate (no seeded-stream draw, no per-tx state advance) nor the signer (no
+// wasted CPU on shed load). This makes the admitted transactions a deterministic
+// PREFIX of the seeded generator sequence: the same seed yields the same
+// admitted multiset regardless of how many ticks the SUT speed forced to drop —
+// the per-stream reproducibility contract holds under saturation, where it
+// otherwise would not. SequenceIndex is the arrival-tick index i (so
+// IntendedSendTime = t₀ + i/λ holds); under drops it is monotonic but
+// non-contiguous across admitted txs, because dropped ticks still advance i and
+// the clock while consuming no draw.
+//
+// Conservation. Every scheduled tick reaches exactly one terminal state:
+// dropped (not admitted) or admitted. Every admitted tx in turn completes as
+// succeeded (nil send error) or failed (non-nil send error) — a failed send is
+// counted, never lost. So scheduled == dropped + admitted and
+// admitted == succeeded + failed. The dispatcher folds these into the run
+// summary (dropped and failed gauges) for goodput accounting.
 //
 // LoadTx lifecycle and scheduling. The scheduling-relevant fields of [types.LoadTx]
 // follow its single-writer concurrency contract: each is written once by the

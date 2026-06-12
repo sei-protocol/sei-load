@@ -2,6 +2,8 @@ package sender
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -49,6 +51,48 @@ func (g *fakeGenerator) issuedTxs() []*types.LoadTx {
 	copy(out, g.issued)
 	return out
 }
+
+// seededGenerator stands in for a PLT-456 seeded generator: each Generate()
+// draw is the next element of a deterministic stream, recorded here in draw
+// order via a strictly increasing draw index stamped on the LoadTx. The point
+// the determinism guard pins: a draw is consumed only when Generate() is
+// called, so if the scheduler advances the stream on a dropped tick the draw
+// indices admitted under saturation would be non-contiguous (gaps where a
+// dropped tick stole a draw). Admitted draws forming the prefix 0..N-1 with no
+// gaps proves dropped slots consume zero seeded draws.
+type seededGenerator struct {
+	mu        sync.Mutex
+	remaining int
+	drawIndex map[*types.LoadTx]uint64 // tx → its draw position in the stream
+	nextDraw  uint64
+}
+
+func newSeededGenerator(n int) *seededGenerator {
+	return &seededGenerator{remaining: n, drawIndex: map[*types.LoadTx]uint64{}}
+}
+
+func (g *seededGenerator) Generate() (*types.LoadTx, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.remaining == 0 {
+		return nil, false
+	}
+	g.remaining--
+	tx := &types.LoadTx{Scenario: &types.TxScenario{Name: "seeded"}}
+	g.drawIndex[tx] = g.nextDraw
+	g.nextDraw++
+	return tx, true
+}
+
+// draw returns the stream position at which tx was produced by Generate().
+func (g *seededGenerator) draw(tx *types.LoadTx) uint64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.drawIndex[tx]
+}
+
+func (g *seededGenerator) GenerateN(int) []*types.LoadTx        { panic("unused") }
+func (g *seededGenerator) GetAccountPools() []types.AccountPool { return nil }
 
 // asyncFakeSender models the production ShardedSender's send semantics: Send
 // returns when the tx lands in a buffered channel (enqueue-and-return), NOT when
@@ -180,28 +224,41 @@ func TestOpenLoopSchedule_NotThrottledBySlowSender(t *testing.T) {
 	start := time.Now()
 	runScheduler(ctx, sched)
 
-	issued := gen.issuedTxs()
+	admittedTxs := gen.issuedTxs()
 	gap := time.Second / time.Duration(lambda)
 
 	// The clock must have kept advancing at λ despite the slow sender: the
-	// schedule should have walked far past what the senders could absorb.
-	require.GreaterOrEqual(t, len(issued), 100,
-		"arrival clock must not be throttled by the slow sender")
+	// number of SCHEDULED ARRIVALS (admitted + dropped) — not generator draws —
+	// must have walked far past what the senders could absorb. Generate() now
+	// runs only on admitted ticks (post-reorder), so generated count is small;
+	// the never-throttled-clock property lives in the scheduled-arrival count.
+	scheduled := sched.Admitted() + sched.Dropped()
+	require.GreaterOrEqual(t, scheduled, uint64(100),
+		"arrival clock must not be throttled by the slow sender (scheduled=%d)", scheduled)
 
-	// Schedule accuracy still holds for the issued txs.
-	t0 := issued[0].IntendedSendTime
-	require.WithinDuration(t, start, t0, gap)
+	// Schedule accuracy still holds for each admitted tx, keyed on its
+	// SequenceIndex (the arrival-tick index i): IntendedSendTime ≈ t₀ + i/λ.
+	// Admitted txs have NON-CONTIGUOUS SequenceIndex under drops, so the schedule
+	// must be checked against tx.SequenceIndex, never the slice position.
+	require.Positive(t, len(admittedTxs), "some txs must have been admitted")
+	// Recover the scheduler's internal t₀ from the first admitted tx and its
+	// arrival index: t₀ = IntendedSendTime − SequenceIndex·gap. Bound it to the
+	// test's observed start window, then assert every admitted tx sits on the
+	// t₀ + i/λ grid at its own SequenceIndex.
+	first := admittedTxs[0]
+	t0 := first.IntendedSendTime.Add(-time.Duration(first.SequenceIndex) * gap)
+	require.WithinDuration(t, start, t0, gap, "recovered t₀ must be the campaign start")
 	const tol = 3 * time.Millisecond
-	for i, tx := range issued {
-		want := t0.Add(time.Duration(i) * gap)
+	for _, tx := range admittedTxs {
+		want := t0.Add(time.Duration(tx.SequenceIndex) * gap)
 		require.WithinDuration(t, want, tx.IntendedSendTime, tol,
-			"tx %d schedule must hold under a slow sender", i)
+			"admitted tx (seq %d) schedule must hold under a slow sender", tx.SequenceIndex)
 	}
 
-	// Overrun is dropped-and-counted, not blocked on. With ~150 issued in 300ms
-	// and senders able to complete only ~a dozen, the vast majority must drop.
+	// Overrun is dropped-and-counted, not blocked on. With ~150 scheduled arrivals
+	// in 300ms and senders able to complete only ~a dozen, the vast majority drop.
 	require.Positive(t, sched.Dropped(), "overrun must be counted as dropped")
-	require.Greater(t, sched.Dropped(), uint64(len(issued)/2),
+	require.Greater(t, sched.Dropped(), sched.Admitted(),
 		"a slow SUT must shed most of the load through the in-flight bound")
 }
 
@@ -261,34 +318,174 @@ func TestOpenLoopSchedule_PermitHeldUntilCompletion(t *testing.T) {
 	snd.completeAll()
 }
 
-// TestOpenLoopSchedule_Conservation checks the accounting invariant: with a fast
-// async sender that fully drains within the window, every issued tx is either
-// completed (sent) or dropped exactly once — no permit leaks, no double-count.
+// flakyAsyncSender drains like asyncFakeSender but completes every failEvery-th
+// send (1-indexed) with an error, so a tx can be ADMITTED, enqueued, and then
+// fail in the send — the path the failed-send accounting must capture. A failed
+// send must be counted as failed (not lost and not dropped), so the conservation
+// invariant becomes issued == dropped + succeeded + failed.
+type flakyAsyncSender struct {
+	ch        chan *types.LoadTx
+	failEvery uint64
+	seen      atomic.Uint64
+}
+
+func newFlakyAsyncSender(ctx context.Context, buffer, workers int, failEvery uint64) *flakyAsyncSender {
+	s := &flakyAsyncSender{ch: make(chan *types.LoadTx, buffer), failEvery: failEvery}
+	if workers < 1 {
+		workers = 1
+	}
+	for range workers {
+		go s.drain(ctx)
+	}
+	return s
+}
+
+func (s *flakyAsyncSender) drain(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tx := <-s.ch:
+			n := s.seen.Add(1)
+			var err error
+			if s.failEvery > 0 && n%s.failEvery == 0 {
+				err = errors.New("injected send failure")
+			}
+			if tx.OnComplete != nil {
+				tx.OnComplete(err)
+			}
+		}
+	}
+}
+
+func (s *flakyAsyncSender) Send(ctx context.Context, tx *types.LoadTx) error {
+	select {
+	case s.ch <- tx:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestOpenLoopSchedule_Conservation checks the accounting invariant under
+// injected send failures: every issued tx reaches exactly one terminal state —
+// dropped (not admitted), succeeded (admitted, nil err), or failed (admitted,
+// non-nil err). A failed send must be counted as failed, never silently lost,
+// so issued == dropped + succeeded + failed holds. No permit leaks, no double
+// count. The dispatcher's onSent is the accountant under test (via a stand-in
+// here that mirrors its succeeded/failed split).
 func TestOpenLoopSchedule_Conservation(t *testing.T) {
 	gen := newFakeGenerator(300)
 	// Generous capacity so most txs complete; a few may drop on brief bursts.
 	limiter := rate.NewLimiter(rate.Limit(1000), 1)
 
-	var completed atomic.Uint64
+	var succeeded, failed atomic.Uint64
 	onSent := func(_ *types.LoadTx, err error) {
-		require.NoError(t, err)
-		completed.Add(1)
+		if err != nil {
+			failed.Add(1)
+			return
+		}
+		succeeded.Add(1)
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
-	snd := newAsyncFakeSender(ctx, 256, 16, 0)
+	// Fail every 5th send so failed > 0 and the invariant must absorb it.
+	snd := newFlakyAsyncSender(ctx, 256, 16, 5)
 	sched := newOpenLoopScheduler(gen, snd, limiter, 256, onSent)
 	runScheduler(ctx, sched)
 
 	issued := uint64(len(gen.issuedTxs()))
 	require.Positive(t, issued)
-	// Allow the in-flight sends spawned just before deadline to settle.
+	// Allow the in-flight sends spawned just before deadline to settle, then
+	// assert the full conservation invariant including the failed bucket.
 	require.Eventually(t, func() bool {
-		return completed.Load()+sched.Dropped() == issued
+		return succeeded.Load()+failed.Load()+sched.Dropped() == issued
 	}, time.Second, 5*time.Millisecond,
-		"every issued tx must be completed or dropped exactly once (issued=%d sent=%d dropped=%d)",
-		issued, completed.Load(), sched.Dropped())
+		"every issued tx must be succeeded, failed, or dropped exactly once "+
+			"(issued=%d succeeded=%d failed=%d dropped=%d)",
+		issued, succeeded.Load(), failed.Load(), sched.Dropped())
+	require.Positive(t, failed.Load(),
+		"injected failures must be counted as failed, not lost or dropped")
+}
+
+// TestOpenLoopSchedule_DroppedSlotsConsumeNoDraws is the determinism guard for
+// the PLT-456 × PLT-458 interaction: under saturation the scheduler must admit a
+// deterministic PREFIX of the seeded stream — a dropped tick consumes zero
+// generator draws (and zero signing CPU), so the same seed yields the same
+// admitted multiset no matter how many ticks the SUT speed forced to drop.
+//
+// The falsification: if Generate() were called before TryAcquire (the original
+// bug), every dropped tick would still advance the seeded stream, so the admitted
+// txs' draw indices would have gaps — admitted draw k+1 would jump past the draws
+// the dropped ticks consumed. Here we drive a saturated sender (maxInFlight=1,
+// completion gated) so the great majority of ticks drop, then assert the admitted
+// txs' draw indices are exactly 0,1,2,… contiguous with no gaps.
+func TestOpenLoopSchedule_DroppedSlotsConsumeNoDraws(t *testing.T) {
+	gen := newSeededGenerator(2000)
+	snd := &gatedSender{}
+	limiter := rate.NewLimiter(rate.Limit(5000), 1) // 0.2ms gap → many ticks
+	// maxInFlight=1 with a sender that never auto-completes: the first admitted
+	// tx holds the only permit, so every later tick drops until we release.
+	var admitted []uint64
+	var mu sync.Mutex
+	onSent := func(tx *types.LoadTx, err error) {
+		require.NoError(t, err)
+		mu.Lock()
+		admitted = append(admitted, gen.draw(tx))
+		mu.Unlock()
+	}
+	sched := newOpenLoopScheduler(gen, snd, limiter, 1, onSent)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runScheduler(ctx, sched)
+	}()
+
+	// Periodically release the single held permit so flow inches forward one
+	// admitted tx at a time while the fast clock drops the rest. This guarantees
+	// many drops interleaved with a handful of admits — the regime that would
+	// expose any draw consumed by a dropped tick.
+	relCtx, relCancel := context.WithCancel(ctx)
+	defer relCancel()
+	go func() {
+		for relCtx.Err() == nil {
+			snd.completeAll()
+			select {
+			case <-relCtx.Done():
+			case <-time.After(2 * time.Millisecond):
+			}
+		}
+	}()
+
+	wg.Wait()
+	relCancel()
+	snd.completeAll() // drain any final held permit's OnComplete
+
+	mu.Lock()
+	got := append([]uint64(nil), admitted...)
+	mu.Unlock()
+
+	require.Positive(t, sched.Dropped(), "the saturated sender must force drops")
+	require.Positive(t, len(got), "some txs must have been admitted")
+	require.Greater(t, sched.Dropped(), uint64(len(got)),
+		"saturation must drop far more ticks than it admits")
+
+	// The admitted draws must be the contiguous prefix 0,1,2,…,N-1: each admitted
+	// tx consumed exactly the next stream draw, and no dropped tick consumed any.
+	// Sort first: with the permit released just before onSent fires, two adjacent
+	// completions can be recorded out of order, but the SET must still be gapless.
+	slices.Sort(got)
+	for k, draw := range got {
+		require.Equal(t, uint64(k), draw,
+			"admitted draw set must be the gapless prefix; slot %d is draw %d (a dropped tick must consume no draw)",
+			k, draw)
+	}
 }
 
 // TestOpenLoopSchedule_HonorsRampedLambda verifies the schedule responds to a
