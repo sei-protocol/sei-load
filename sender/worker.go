@@ -1,18 +1,18 @@
 package sender
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,20 +28,24 @@ import (
 
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
+type WorkerConfig struct {
+	ID            int
+	SeiChainID    string
+	Endpoint      string
+	BufferSize    int
+	Tasks         int
+	DryRun        bool
+	Debug         bool
+	TrackReceipts bool
+	Collector     *stats.Collector
+	Limiter       *rate.Limiter // Shared rate limiter for transaction sending
+}
+
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
-	id            int
-	seiChainID    string
-	endpoint      string
-	txChan        chan *types.LoadTx
-	sentTxs       chan *types.LoadTx
-	dryRun        bool
-	debug         bool
-	collector     *stats.Collector
-	logger        *stats.Logger
-	workers       int
-	trackReceipts bool
-	limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	cfg     *WorkerConfig
+	txChan  chan *types.LoadTx
+	sentTxs chan *types.LoadTx
 }
 
 // HttpClientOption configures the Transport used by newHttpClient.
@@ -90,37 +94,53 @@ func newHttpClient(opts ...HttpClientOption) *http.Client {
 	}
 }
 
+// newRPCClient returns a go-ethereum client configured for the endpoint scheme.
+// HTTP(S) endpoints reuse the tuned otelhttp-backed transport; WS(S) endpoints
+// use the default go-ethereum WebSocket transport.
+func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption) (*ethclient.Client, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse endpoint %q: %w", endpoint, err)
+	}
+
+	switch u.Scheme {
+	case "http", "https":
+		rpcClient, err := rpc.DialOptions(ctx, endpoint, rpc.WithHTTPClient(newHttpClient(opts...)))
+		if err != nil {
+			return nil, err
+		}
+		return ethclient.NewClient(rpcClient), nil
+	case "ws", "wss", "":
+		return ethclient.DialContext(ctx, endpoint)
+	default:
+		return nil, fmt.Errorf("unsupported RPC scheme %q for endpoint %s", u.Scheme, endpoint)
+	}
+}
+
 // NewWorker creates a new worker for a specific endpoint
-func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
+func NewWorker(cfg *WorkerConfig) *Worker {
 	w := &Worker{
-		id:            id,
-		seiChainID:    seiChainID,
-		endpoint:      endpoint,
-		txChan:        make(chan *types.LoadTx, bufferSize),
-		sentTxs:       make(chan *types.LoadTx, bufferSize),
-		workers:       workers,
-		trackReceipts: false,
-		limiter:       limiter,
+		cfg:     cfg,
+		txChan:  make(chan *types.LoadTx, cfg.BufferSize),
+		sentTxs: make(chan *types.LoadTx, cfg.BufferSize),
 	}
 	meterWorkerQueueLength(w)
 	return w
 }
 
-// SetStatsCollector sets the statistics collector for this worker
-func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Logger) {
-	w.collector = collector
-	w.logger = logger
-}
-
 // Start begins the worker's processing loop
 func (w *Worker) Run(ctx context.Context) error {
+	client, err := newRPCClient(ctx, w.cfg.Endpoint)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", w.cfg.Endpoint, err)
+	}
+	defer client.Close()
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		// Start multiple worker goroutines that share the same channel
-		client := newHttpClient()
-		for range w.workers {
-			s.Spawn(func() error { return w.processTransactions(ctx, client) })
+		// Start multiple goroutines that share the same channel and RPC client.
+		for range w.cfg.Tasks {
+			s.Spawn(func() error { return w.runTxSender(ctx, client) })
 		}
-		return w.watchTransactions(ctx)
+		return w.watchTransactions(ctx, client)
 	})
 }
 
@@ -129,37 +149,10 @@ func (w *Worker) Send(ctx context.Context, tx *types.LoadTx) error {
 	return utils.Send(ctx, w.txChan, tx)
 }
 
-// SetDebug sets the dry-run mode for the worker
-func (w *Worker) SetDebug(debug bool) {
-	w.debug = debug
-}
-
-// SetDryRun sets the dry-run mode for the worker
-func (w *Worker) SetDryRun(dryRun bool) {
-	w.dryRun = dryRun
-}
-
-// SetTrackReceipts sets the track-receipts mode for the worker
-func (w *Worker) SetTrackReceipts(trackReceipts bool) {
-	w.trackReceipts = trackReceipts
-}
-
-func (w *Worker) watchTransactions(ctx context.Context) error {
-	if w.dryRun || !w.trackReceipts {
+func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
+	if w.cfg.DryRun || !w.cfg.TrackReceipts {
 		return nil
 	}
-	dialCtx, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
-		attribute.String("seiload.endpoint", w.endpoint),
-		attribute.String("seiload.chain_id", w.seiChainID),
-		attribute.Int("seiload.worker_id", w.id),
-	))
-	eth, err := ethclient.DialContext(dialCtx, w.endpoint)
-	if err != nil {
-		dialSpan.RecordError(err)
-		dialSpan.End()
-		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
-	}
-	dialSpan.End()
 	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
@@ -178,9 +171,9 @@ func (w *Worker) watchTransactions(ctx context.Context) error {
 func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", w.endpoint),
-		attribute.Int("seiload.worker_id", w.id),
-		attribute.String("seiload.chain_id", w.seiChainID),
+		attribute.String("seiload.endpoint", w.cfg.Endpoint),
+		attribute.Int("seiload.worker_id", w.cfg.ID),
+		attribute.String("seiload.chain_id", w.cfg.SeiChainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {
@@ -192,8 +185,8 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", w.endpoint),
-				attribute.String("chain_id", w.seiChainID),
+				attribute.String("endpoint", w.cfg.Endpoint),
+				attribute.String("chain_id", w.cfg.SeiChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
@@ -215,7 +208,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		if receipt.Status != 1 {
 			return fmt.Errorf("tx %s failed", tx.EthTx.Hash().Hex())
 		}
-		if w.debug {
+		if w.cfg.Debug {
 			log.Printf("✅ tx %s, %s, gas=%d succeeded\n", tx.Scenario.Name, tx.EthTx.Hash().Hex(), receipt.GasUsed)
 		}
 		return nil
@@ -223,14 +216,12 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 	return ctx.Err()
 }
 
-// processTransactions is the main worker loop that processes transactions
-func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
+// runTxSender is the main worker loop that processes transactions
+func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
-		if w.limiter != nil {
-			if !w.limiter.Allow() {
-				continue
-			}
+		if err := w.cfg.Limiter.Wait(ctx); err != nil {
+			return err
 		}
 
 		tx, err := utils.Recv(ctx, w.txChan)
@@ -244,9 +235,7 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
 		// Record statistics if collector is available
-		if w.collector != nil {
-			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err == nil)
-		}
+		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err != nil {
 			log.Printf("%v", err)
 		}
@@ -255,12 +244,12 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", w.endpoint),
-		attribute.Int("seiload.worker_id", w.id),
-		attribute.String("seiload.chain_id", w.seiChainID),
+		attribute.String("seiload.endpoint", w.cfg.Endpoint),
+		attribute.Int("seiload.worker_id", w.cfg.ID),
+		attribute.String("seiload.chain_id", w.cfg.SeiChainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {
@@ -271,85 +260,40 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", w.endpoint),
-				attribute.String("chain_id", w.seiChainID),
+				attribute.String("endpoint", w.cfg.Endpoint),
+				attribute.String("chain_id", w.cfg.SeiChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
-	if w.dryRun {
+	if w.cfg.DryRun {
 		// In dry-run mode, simulate processing time and mark as successful
 		// Use very minimal delay to avoid channel overflow
 		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
-	// Create HTTP request with JSON-RPC payload
-	req, err := http.NewRequestWithContext(ctx, "POST", w.endpoint, bytes.NewReader(tx.JSONRPCPayload))
-	if err != nil {
-		return fmt.Errorf("Worker %d: Failed to create request: %w", w.id, err)
-	}
-
-	// Set headers for JSON-RPC
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Send the request
-	resp, err := client.Do(req)
-	if err != nil {
+	// Send through go-ethereum so the same code path supports both HTTP(S) and WS(S) RPC.
+	if err := client.SendTransaction(ctx, tx.EthTx); err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", w.endpoint),
+			attribute.String("endpoint", w.cfg.Endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("reason", "transport"),
+			attribute.String("reason", "rpc"),
 		))
-		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
-	}
-	defer func() {
-		// Limit read to prevent memory issues with large responses
-		_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
-		if err != nil && err != io.EOF {
-			log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
-			// Log but don't fail - this is just for connection reuse
-		}
-
-		// Close response body and handle error
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Worker %d: Failed to close response body: %v", w.id, closeErr)
-		}
-	}()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		httpErrors.Add(ctx, 1, metric.WithAttributes(
-			attribute.Int("status_code", resp.StatusCode),
-			attribute.String("endpoint", w.endpoint),
-		))
-		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", w.endpoint),
-			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("reason", "http_status"),
-		))
-		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
+		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.cfg.ID, err)
 	}
 
 	txsAccepted.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("endpoint", w.endpoint),
+		attribute.String("endpoint", w.cfg.Endpoint),
 		attribute.String("scenario", tx.Scenario.Name),
 	))
 
 	// Write to sentTxs channel without blocking
-	select {
-	case w.sentTxs <- tx:
-	default:
-	}
+	utils.SendOrDrop(w.sentTxs, tx)
 	return nil
 }
 
-// GetChannelLength returns the current length of the worker's channel (for monitoring).
+// ChannelLength returns the current length of the worker's channel (for monitoring).
 // This function is safe for concurrent calls.
-func (w *Worker) GetChannelLength() int {
-	return len(w.txChan)
-}
+func (w *Worker) ChannelLength() int { return len(w.txChan) }
 
-// GetEndpoint returns the worker's endpoint
-func (w *Worker) GetEndpoint() string {
-	return w.endpoint
-}
+// Endpoint returns the worker's endpoint
+func (w *Worker) Endpoint() string { return w.cfg.Endpoint }

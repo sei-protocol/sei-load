@@ -45,10 +45,8 @@ to multiple endpoints with account pooling management.
 
 Use --dry-run to test configuration and view transaction details
 without actually sending requests or deploying contracts.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := runLoadTest(context.Background(), cmd, args); err != nil {
-			log.Fatal(err)
-		}
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runLoadTest(cmd.Context(), cmd)
 	},
 }
 
@@ -94,7 +92,7 @@ func main() {
 	}
 }
 
-func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
+func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// Parse the config file into a config.LoadConfig struct
 	cfg, err := loadConfig(configFile)
 	if err != nil {
@@ -107,7 +105,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	}
 
 	// Get resolved settings from the config package
-	settings := config.ResolveSettings()
+	cfg.Settings = config.ResolveSettings()
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")
@@ -115,37 +113,36 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		log.Printf("🔧 Limiting endpoints from %d to %d nodes", len(cfg.Endpoints), nodes)
 		cfg.Endpoints = cfg.Endpoints[:nodes]
 	}
+	// Enable mock deployment in dry-run mode
+	if cfg.Settings.DryRun {
+		cfg.MockDeploy = true
+	}
 
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
 	log.Printf("📁 Config file: %s", configFile)
 	log.Printf("🎯 Endpoints: %d", len(cfg.Endpoints))
-	log.Printf("👥 Workers per endpoint: %d", settings.Workers)
-	log.Printf("🔧 Total workers: %d", len(cfg.Endpoints)*settings.Workers)
+	log.Printf("👥 Tasks per endpoint: %d", cfg.Settings.TasksPerEndpoint)
+	log.Printf("🔧 Total tasks: %d", len(cfg.Endpoints)*cfg.Settings.TasksPerEndpoint)
 	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
-	log.Printf("⏱️  Stats interval: %v", settings.StatsInterval.ToDuration())
-	log.Printf("📦 Buffer size per worker: %d", settings.BufferSize)
-	if settings.TPS > 0 {
-		log.Printf("📈 Transactions per second: %.2f", settings.TPS)
+	log.Printf("⏱️  Stats interval: %v", cfg.Settings.StatsInterval.ToDuration())
+	log.Printf("📦 Buffer size per worker: %d", cfg.Settings.BufferSize)
+	if cfg.Settings.TPS > 0 {
+		log.Printf("📈 Transactions per second: %.2f", cfg.Settings.TPS)
 	}
-	if settings.DryRun {
+	if cfg.Settings.DryRun {
 		log.Printf("📝 Dry run: enabled")
 	}
-	if settings.TrackReceipts {
+	if cfg.Settings.TrackReceipts {
 		log.Printf("📝 Track receipts: enabled")
 	}
-	if settings.TrackBlocks {
+	if cfg.Settings.TrackBlocks {
 		log.Printf("📝 Track blocks: enabled")
 	}
-	if settings.Prewarm {
+	if cfg.Settings.Prewarm {
 		log.Printf("📝 Prewarm: enabled")
 	}
-	if settings.TrackUserLatency {
+	if cfg.Settings.TrackUserLatency {
 		log.Printf("📝 Track user latency: enabled")
-	}
-
-	// Enable mock deployment in dry-run mode
-	if settings.DryRun {
-		cfg.MockDeploy = true
 	}
 
 	listenAddr := cmd.Flag("metricsListenAddr").Value.String()
@@ -203,7 +200,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
-	logger := stats.NewLogger(collector, settings.StatsInterval.ToDuration(), settings.ReportPath, settings.Debug)
+	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	var ramper *sender.Ramper
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
@@ -215,9 +212,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Create shared rate limiter for all workers if TPS is specified
 		var sharedLimiter *rate.Limiter
-		if settings.TPS > 0 {
-			sharedLimiter = rate.NewLimiter(rate.Limit(settings.TPS), 1)
-			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", settings.TPS)
+		if cfg.Settings.TPS > 0 {
+			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), 1)
+			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
 		} else {
 			// No rate limiting
 			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
@@ -225,7 +222,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Create and start block collector if endpoints are available
 		var blockCollector *stats.BlockCollector
-		if len(cfg.Endpoints) > 0 && settings.TrackBlocks {
+		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackBlocks {
 			blockCollector = stats.NewBlockCollector(cfg.SeiChainID)
 			collector.SetBlockCollector(blockCollector)
 			s.SpawnBgNamed("block collector", func() error {
@@ -233,7 +230,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			})
 		}
 
-		if settings.RampUp {
+		if cfg.Settings.RampUp {
 			ramperBlockCollector := stats.NewBlockCollector(cfg.SeiChainID)
 			s.SpawnBgNamed("ramper block collector", func() error {
 				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
@@ -248,39 +245,22 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 
 		// Create and start user latency tracker if endpoints are available
-		if len(cfg.Endpoints) > 0 && settings.TrackUserLatency {
-			userLatencyTracker := stats.NewUserLatencyTracker(settings.StatsInterval.ToDuration())
+		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackUserLatency {
+			userLatencyTracker := stats.NewUserLatencyTracker(cfg.Settings.StatsInterval.ToDuration())
 			s.SpawnBgNamed("user latency tracker", func() error {
 				return userLatencyTracker.Run(ctx, cfg.Endpoints[0])
 			})
 		}
 
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
+		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
 
-		// Enable dry-run mode in sender if specified
-		if settings.DryRun {
-			snd.SetDryRun(true)
-		}
-		if settings.Debug {
-			snd.SetDebug(true)
-		}
-		if settings.TrackReceipts {
-			snd.SetTrackReceipts(true)
-		}
-		if settings.TrackBlocks {
-			snd.SetTrackBlocks(true)
-		}
-
-		// Set statistics collector for sender and its workers
-		snd.SetStatsCollector(collector, logger)
-
 		// Fund the pool before prewarm/dispatch — both spend gas the accounts
 		// don't have until funded.
-		if cfg.Funding != nil && !settings.DryRun {
+		if cfg.Funding != nil && !cfg.Settings.DryRun {
 			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
 				return fmt.Errorf("failed to fund accounts: %w", err)
 			}
@@ -288,7 +268,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 		// Create dispatcher
 		var dispatcher *sender.Dispatcher
-		if settings.TxsDir != "" {
+		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
 			if err != nil {
@@ -298,10 +278,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to get latest height: %w", err)
 			}
-			numBlocksToWrite := settings.NumBlocksToWrite
+			numBlocksToWrite := cfg.Settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			writer := sender.NewTxsWriter(settings.TargetGas, settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
+			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 			dispatcher = sender.NewDispatcher(gen, writer)
 		} else {
 			dispatcher = sender.NewDispatcher(gen, snd)
@@ -311,7 +291,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		dispatcher.SetStatsCollector(collector)
 
 		// Set up prewarming if enabled
-		if settings.Prewarm {
+		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
 			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
 			dispatcher.SetPrewarmGenerator(prewarmGen)
@@ -319,13 +299,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
 		}
 
-		if settings.TxsDir == "" {
+		if cfg.Settings.TxsDir == "" {
 			// Start the sender (starts all workers)
 			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
+			log.Printf("✅ Connected to %d endpoints", snd.NumShards())
 		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
-		if settings.Prewarm {
+		if cfg.Settings.Prewarm {
 			if err := dispatcher.Prewarm(ctx); err != nil {
 				return fmt.Errorf("failed to prewarm accounts: %w", err)
 			}
@@ -343,20 +323,20 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		log.Printf("📈 Logging statistics every %v (Press Ctrl+C to stop)", settings.StatsInterval.ToDuration())
-		if settings.DryRun {
+		log.Printf("📈 Logging statistics every %v (Press Ctrl+C to stop)", cfg.Settings.StatsInterval.ToDuration())
+		if cfg.Settings.DryRun {
 			log.Printf("📝 Dry-run mode: Simulating requests without sending")
 		}
-		if settings.Debug {
+		if cfg.Settings.Debug {
 			log.Printf("🐛 Debug mode: Each transaction will be logged")
 		}
-		if settings.TrackReceipts {
+		if cfg.Settings.TrackReceipts {
 			log.Printf("📝 Track receipts mode: Receipts will be tracked")
 		}
-		if settings.TrackBlocks {
+		if cfg.Settings.TrackBlocks {
 			log.Printf("📝 Track blocks mode: Block data will be collected")
 		}
-		if settings.TrackUserLatency {
+		if cfg.Settings.TrackUserLatency {
 			log.Printf("📝 Track user latency mode: User latency will be tracked")
 		}
 		log.Print(strings.Repeat("=", 60))
@@ -370,11 +350,11 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 	})
 	// Print final statistics
 	logger.LogFinalStats()
-	if settings.RampUp && ramper != nil {
+	if cfg.Settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
 	collector.EmitRunSummary(ctx)
-	if d := settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
+	if d := cfg.Settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
 		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
 		time.Sleep(d)
 	}

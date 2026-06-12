@@ -29,11 +29,6 @@ var (
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
 
-	httpErrors = must(meter.Int64Counter(
-		"http_errors",
-		metric.WithDescription("HTTP error responses from the target endpoint, by status code"),
-		metric.WithUnit("{errors}")))
-
 	txsAccepted = must(meter.Int64Counter(
 		"txs_accepted",
 		metric.WithDescription("Transactions successfully submitted to an endpoint"),
@@ -57,10 +52,10 @@ func init() {
 			meteredChainWorkers.lock.RLock()
 			defer meteredChainWorkers.lock.RUnlock()
 			for _, worker := range meteredChainWorkers.workers {
-				observer.Observe(int64(worker.GetChannelLength()), metric.WithAttributes(
-					attribute.String("endpoint", worker.GetEndpoint()),
-					attribute.Int("worker_id", worker.id),
-					attribute.String("chain_id", worker.seiChainID),
+				observer.Observe(int64(worker.ChannelLength()), metric.WithAttributes(
+					attribute.String("endpoint", worker.Endpoint()),
+					attribute.Int("worker_id", worker.cfg.ID),
+					attribute.String("chain_id", worker.cfg.SeiChainID),
 				))
 			}
 			return nil
@@ -91,8 +86,8 @@ func meterWorkerQueueLength(worker *Worker) {
 	meteredChainWorkers.lock.Lock()
 	defer meteredChainWorkers.lock.Unlock()
 	id := chainWorkerID{
-		workerID: worker.id,
-		chainID:  worker.seiChainID,
+		workerID: worker.cfg.ID,
+		chainID:  worker.cfg.SeiChainID,
 	}
 	if _, exists := meteredChainWorkers.workers[id]; !exists {
 		meteredChainWorkers.workers[id] = worker

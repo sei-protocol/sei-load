@@ -13,8 +13,7 @@ type scenarioGenerator struct {
 	mu          sync.RWMutex
 }
 
-func NewScenarioGenerator(accounts types.AccountPool,
-	txg scenarios.TxGenerator) Generator {
+func NewScenarioGenerator(accounts types.AccountPool, txg scenarios.TxGenerator) Generator {
 	return &scenarioGenerator{
 		scenario:    txg,
 		accountPool: accounts,
@@ -23,7 +22,7 @@ func NewScenarioGenerator(accounts types.AccountPool,
 
 func (g *scenarioGenerator) GenerateN(n int) []*types.LoadTx {
 	result := make([]*types.LoadTx, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		if tx, ok := g.Generate(); ok {
 			result = append(result, tx)
 		} else {

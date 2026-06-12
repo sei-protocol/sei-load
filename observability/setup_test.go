@@ -47,14 +47,14 @@ func TestBuildResource_FullScope(t *testing.T) {
 	require.NoError(t, err)
 
 	want := map[string]string{
-		"service.name":             "seiload",
-		"service.version":          "v1.2.3",
-		"service.instance.id":      "seiload-abc-0",
-		"seiload.run_id":           "run-42",
-		"seiload.chain_id":         "autobake-42-1",
-		"seiload.commit_id":        "deadbeefcafef00d",
+		"service.name":            "seiload",
+		"service.version":         "v1.2.3",
+		"service.instance.id":     "seiload-abc-0",
+		"seiload.run_id":          "run-42",
+		"seiload.chain_id":        "autobake-42-1",
+		"seiload.commit_id":       "deadbeefcafef00d",
 		"seiload.commit_id_short": "deadbeef",
-		"seiload.workload":         "autobake",
+		"seiload.workload":        "autobake",
 	}
 	got := resourceAttrs(res.Attributes())
 	for k, v := range want {
