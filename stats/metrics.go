@@ -41,6 +41,16 @@ var (
 		"run_txs_accepted_total",
 		metric.WithDescription("Total transactions accepted by endpoints over this run (emitted once at run end)"),
 		metric.WithUnit("{transactions}")))
+
+	runTxsDroppedTotal = must(meter.Int64Gauge(
+		"run_txs_dropped_total",
+		metric.WithDescription("Total open-loop transactions dropped because in-flight was saturated at their scheduled instant (emitted once at run end)"),
+		metric.WithUnit("{transactions}")))
+
+	runTxsFailedTotal = must(meter.Int64Gauge(
+		"run_txs_failed_total",
+		metric.WithDescription("Total open-loop transactions admitted and enqueued but whose send completed with an error (emitted once at run end)"),
+		metric.WithUnit("{transactions}")))
 )
 
 func must[V any](v V, err error) V {

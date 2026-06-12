@@ -71,6 +71,8 @@ func init() {
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
 	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
 	rootCmd.Flags().Duration("duration", 0, "Run duration (0 = until SIGTERM/SIGINT)")
+	rootCmd.Flags().String("arrival-model", config.ArrivalModelClosedLoop, "Transaction arrival model: open_loop (schedule t0+i/lambda, drop on overrun) or closed_loop (legacy generate-then-send)")
+	rootCmd.Flags().Int("max-in-flight", 10_000, "Open-loop only: max concurrent in-flight sends before overdue txs are dropped")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -106,6 +108,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 	// Get resolved settings from the config package
 	cfg.Settings = config.ResolveSettings()
+	if err := cfg.Settings.Validate(); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")
@@ -202,6 +207,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	var ramper *sender.Ramper
+	var dispatcher *sender.Dispatcher
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Create the generator from the config struct
@@ -267,7 +273,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 
 		// Create dispatcher
-		var dispatcher *sender.Dispatcher
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
@@ -289,6 +294,19 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 		// Set statistics collector for dispatcher
 		dispatcher.SetStatsCollector(collector)
+
+		// Open-loop arrival: the scheduler owns the rate (via the shared
+		// limiter, which the ramper still drives) and drops on overrun. The
+		// workers' own rate gating is disabled at construction for this model
+		// (see NewShardedSender) so they don't double-throttle. Only applies to
+		// the live-send path; the txs writer path has no arrival clock.
+		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
+		if openLoop && cfg.Settings.TxsDir == "" {
+			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
+			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
+		} else {
+			log.Printf("📤 Arrival model: closed_loop")
+		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
@@ -353,7 +371,20 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	if cfg.Settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
-	collector.EmitRunSummary(ctx)
+	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
+	if dispatcher != nil {
+		summary.ArrivalModel = string(dispatcher.ArrivalModel())
+		dstats := dispatcher.GetStats()
+		summary.Dropped = dstats.Dropped
+		summary.Failed = dstats.Failed
+		if summary.Dropped > 0 {
+			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
+		}
+		if summary.Failed > 0 {
+			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
+		}
+	}
+	collector.EmitRunSummary(ctx, summary)
 	if d := cfg.Settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
 		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
 		time.Sleep(d)

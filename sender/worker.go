@@ -38,7 +38,10 @@ type WorkerConfig struct {
 	Debug         bool
 	TrackReceipts bool
 	Collector     *stats.Collector
-	Limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	Limiter       *rate.Limiter // Shared rate authority; nil disables gating.
+	// RateLimited gates worker-side gating: true in closed-loop (worker is the
+	// rate authority), false in open-loop (scheduler owns the clock; see doc.go).
+	RateLimited bool
 }
 
 // Worker handles sending transactions to a specific endpoint
@@ -219,9 +222,12 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 // runTxSender is the main worker loop that processes transactions
 func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
-		// Apply rate limiting before getting the next transaction
-		if err := w.cfg.Limiter.Wait(ctx); err != nil {
-			return err
+		// Closed-loop gating: block on the limiter before dequeuing. Skipped in
+		// open-loop where the scheduler is the rate authority (see doc.go).
+		if w.cfg.RateLimited && w.cfg.Limiter != nil {
+			if err := w.cfg.Limiter.Wait(ctx); err != nil {
+				return err
+			}
 		}
 
 		tx, err := utils.Recv(ctx, w.txChan)
@@ -230,11 +236,15 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		}
 
 		startTime := time.Now()
-		// This goroutine solely owns tx between dequeue and the sentTxs hand-off,
-		// so stamping the actual send-attempt time here is race-free (see LoadTx).
+		// Sole owner between dequeue and hand-off: stamp is race-free (see LoadTx).
 		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
-		// Record statistics if collector is available
+		// CRITICAL: OnComplete must fire only after the real send returns — that is
+		// what makes the open-loop semaphore bound true unacked sends (doc.go:
+		// permit lifecycle). Nil on closed-loop/batch.
+		if tx.OnComplete != nil {
+			tx.OnComplete(err)
+		}
 		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err != nil {
 			log.Printf("%v", err)
@@ -266,12 +276,9 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 		)
 	}(time.Now())
 	if w.cfg.DryRun {
-		// In dry-run mode, simulate processing time and mark as successful
-		// Use very minimal delay to avoid channel overflow
-		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
+		return utils.Sleep(ctx, 10*time.Microsecond) // minimal delay, no RPC
 	}
 
-	// Send through go-ethereum so the same code path supports both HTTP(S) and WS(S) RPC.
 	if err := client.SendTransaction(ctx, tx.EthTx); err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("endpoint", w.cfg.Endpoint),
@@ -286,8 +293,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 		attribute.String("scenario", tx.Scenario.Name),
 	))
 
-	// Write to sentTxs channel without blocking
-	utils.SendOrDrop(w.sentTxs, tx)
+	utils.SendOrDrop(w.sentTxs, tx) // non-blocking handoff to receipt poller
 	return nil
 }
 
