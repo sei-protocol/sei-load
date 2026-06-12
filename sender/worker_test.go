@@ -1,10 +1,14 @@
 package sender
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,4 +51,34 @@ func TestNewHttpClient_Smoke(t *testing.T) {
 	require.NotNil(t, c.Transport, "Transport must be set")
 	_, isBareTransport := c.Transport.(*http.Transport)
 	require.False(t, isBareTransport, "Transport should be wrapped by otelhttp, not bare *http.Transport")
+}
+
+func TestNewRPCClient_HTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client, err := newRPCClient(context.Background(), srv.URL)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	client.Close()
+}
+
+func TestNewRPCClient_WS(t *testing.T) {
+	srv := rpc.NewServer()
+	ts := httptest.NewServer(srv.WebsocketHandler([]string{"*"}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	client, err := newRPCClient(context.Background(), wsURL)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	client.Close()
+}
+
+func TestNewRPCClient_UnsupportedScheme(t *testing.T) {
+	client, err := newRPCClient(context.Background(), "ftp://example.com")
+	require.Error(t, err)
+	require.Nil(t, client)
 }

@@ -1,18 +1,18 @@
 package sender
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -90,6 +90,29 @@ func newHttpClient(opts ...HttpClientOption) *http.Client {
 	}
 }
 
+// newRPCClient returns a go-ethereum client configured for the endpoint scheme.
+// HTTP(S) endpoints reuse the tuned otelhttp-backed transport; WS(S) endpoints
+// use the default go-ethereum WebSocket transport.
+func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption) (*ethclient.Client, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse endpoint %q: %w", endpoint, err)
+	}
+
+	switch u.Scheme {
+	case "http", "https":
+		rpcClient, err := rpc.DialOptions(ctx, endpoint, rpc.WithHTTPClient(newHttpClient(opts...)))
+		if err != nil {
+			return nil, err
+		}
+		return ethclient.NewClient(rpcClient), nil
+	case "ws", "wss", "":
+		return ethclient.DialContext(ctx, endpoint)
+	default:
+		return nil, fmt.Errorf("unsupported RPC scheme %q for endpoint %s", u.Scheme, endpoint)
+	}
+}
+
 // NewWorker creates a new worker for a specific endpoint
 func NewWorker(id int, seiChainID string, endpoint string, bufferSize int, workers int, limiter *rate.Limiter) *Worker {
 	w := &Worker{
@@ -115,12 +138,17 @@ func (w *Worker) SetStatsCollector(collector *stats.Collector, logger *stats.Log
 // Start begins the worker's processing loop
 func (w *Worker) Run(ctx context.Context) error {
 	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		// Start multiple worker goroutines that share the same channel
-		client := newHttpClient()
+		client, err := newRPCClient(ctx, w.endpoint)
+		if err != nil {
+			return fmt.Errorf("dial %s: %w", w.endpoint, err)
+		}
+		defer client.Close()
+
+		// Start multiple worker goroutines that share the same channel and RPC client.
 		for range w.workers {
 			s.Spawn(func() error { return w.processTransactions(ctx, client) })
 		}
-		return w.watchTransactions(ctx)
+		return w.watchTransactions(ctx, client)
 	})
 }
 
@@ -144,22 +172,10 @@ func (w *Worker) SetTrackReceipts(trackReceipts bool) {
 	w.trackReceipts = trackReceipts
 }
 
-func (w *Worker) watchTransactions(ctx context.Context) error {
+func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
 	if w.dryRun || !w.trackReceipts {
 		return nil
 	}
-	dialCtx, dialSpan := tracer.Start(ctx, "sender.dial_endpoint", trace.WithAttributes(
-		attribute.String("seiload.endpoint", w.endpoint),
-		attribute.String("seiload.chain_id", w.seiChainID),
-		attribute.Int("seiload.worker_id", w.id),
-	))
-	eth, err := ethclient.DialContext(dialCtx, w.endpoint)
-	if err != nil {
-		dialSpan.RecordError(err)
-		dialSpan.End()
-		return fmt.Errorf("ethclient.Dial(%q): %w", w.endpoint, err)
-	}
-	dialSpan.End()
 	for ctx.Err() == nil {
 		tx, err := utils.Recv(ctx, w.sentTxs)
 		if err != nil {
@@ -224,13 +240,11 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 }
 
 // processTransactions is the main worker loop that processes transactions
-func (w *Worker) processTransactions(ctx context.Context, client *http.Client) error {
+func (w *Worker) processTransactions(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
 		// Apply rate limiting before getting the next transaction
-		if w.limiter != nil {
-			if !w.limiter.Allow() {
-				continue
-			}
+		if err:=w.limiter.Wait(ctx); err!=nil {
+			return err
 		}
 
 		tx, err := utils.Recv(ctx, w.txChan)
@@ -255,7 +269,7 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *types.LoadTx) (_err error) {
+func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
 		attribute.String("seiload.endpoint", w.endpoint),
@@ -282,52 +296,14 @@ func (w *Worker) sendTransaction(ctx context.Context, client *http.Client, tx *t
 		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
-	// Create HTTP request with JSON-RPC payload
-	req, err := http.NewRequestWithContext(ctx, "POST", w.endpoint, bytes.NewReader(tx.JSONRPCPayload))
-	if err != nil {
-		return fmt.Errorf("Worker %d: Failed to create request: %w", w.id, err)
-	}
-
-	// Set headers for JSON-RPC
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Send the request
-	resp, err := client.Do(req)
-	if err != nil {
+	// Send through go-ethereum so the same code path supports both HTTP(S) and WS(S) RPC.
+	if err := client.SendTransaction(ctx, tx.EthTx); err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("endpoint", w.endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("reason", "transport"),
+			attribute.String("reason", "rpc"),
 		))
 		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.id, err)
-	}
-	defer func() {
-		// Limit read to prevent memory issues with large responses
-		_, err = io.CopyN(io.Discard, resp.Body, 64*1024) // Read up to 64KB
-		if err != nil && err != io.EOF {
-			log.Printf("Worker %d: Failed to read response body: %v", w.id, err)
-			// Log but don't fail - this is just for connection reuse
-		}
-
-		// Close response body and handle error
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Worker %d: Failed to close response body: %v", w.id, closeErr)
-		}
-	}()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		httpErrors.Add(ctx, 1, metric.WithAttributes(
-			attribute.Int("status_code", resp.StatusCode),
-			attribute.String("endpoint", w.endpoint),
-		))
-		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", w.endpoint),
-			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("reason", "http_status"),
-		))
-		return fmt.Errorf("Worker %d: HTTP error %d for transaction to %s", w.id, resp.StatusCode, w.endpoint)
 	}
 
 	txsAccepted.Add(ctx, 1, metric.WithAttributes(

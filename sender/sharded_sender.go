@@ -23,7 +23,6 @@ type ShardedSender struct {
 	mu         sync.RWMutex
 	collector  *stats.Collector
 	logger     *stats.Logger
-	limiter    *rate.Limiter // Shared rate limiter for all workers
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
@@ -41,7 +40,6 @@ func NewShardedSender(cfg *config.LoadConfig, bufferSize int, workers int, limit
 		workers:    workerList,
 		numShards:  len(cfg.Endpoints),
 		bufferSize: bufferSize,
-		limiter:    limiter,
 	}, nil
 }
 
