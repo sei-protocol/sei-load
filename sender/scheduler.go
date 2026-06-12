@@ -34,8 +34,12 @@ import (
 // is enqueued: the scheduler stamps tx.OnComplete with the release, and the
 // worker invokes it after sendTransaction returns. So maxInFlight bounds true
 // unacked in-flight sends and dropped measures genuine load-shed, not buffer
-// geometry (the worker's send is async enqueue-and-return). Note: schedule_lag
-// (PLT-463), not the drop count, remains the primary coordinated-omission gate.
+// geometry. Note the two distinct phases of the worker path: the ENQUEUE into
+// the worker's txChan (TxSender.Send) is async and returns immediately, but the
+// RPC send itself (sendTransaction → eth_sendRawTransaction) is SYNCHRONOUS — so
+// the permit is held for the full RPC round-trip, not just the enqueue. Note
+// also: schedule_lag (PLT-463), not the drop count, remains the primary
+// coordinated-omission gate.
 type openLoopScheduler struct {
 	generator   generator.Generator
 	sender      TxSender
