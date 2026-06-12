@@ -42,12 +42,9 @@ SOLC_EVM_VERSION := paris
 # Falls back to grepping go.mod if `go list` is unavailable.
 GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
 
-# Pinned golangci-lint version. MUST match the `version:` pinned in
-# .github/workflows/build-and-test.yml (golangci-lint-action). golangci-lint's
-# default linter set + check behavior drifts between releases, so an unpinned
-# `latest` is a "passes locally, fails CI" trap. `make install-lint` installs
-# exactly this version; `make lint` warns if the binary on PATH differs.
-# Bump here + in the workflow + re-validate `.golangci.yml` together.
+# Pinned golangci-lint version. Keep in sync with the workflow `version:` and
+# `.golangci.yml` (bump all three together); an unpinned `latest` drifts into a
+# "passes locally, fails CI" trap. See README "Before you push".
 GOLANGCI_VERSION := 2.12.2
 
 # Find all .sol files in contracts directory
@@ -201,10 +198,8 @@ check-bindings:
 		fi
 	@echo "✅ Bindings are in sync with contracts"
 
-# Install golangci-lint pinned to GOLANGCI_VERSION (see note above the variable).
-# `go install` at the exact tag keeps the linter binary — and therefore the
-# default linter set / check behavior — reproducible across dev machines and CI.
-# CI installs the same version via golangci-lint-action (pinned, not `latest`).
+# Install golangci-lint pinned to GOLANGCI_VERSION for CI parity (CI pins the
+# same version via golangci-lint-action).
 install-lint:
 	@echo "📦 Installing golangci-lint@v$(GOLANGCI_VERSION) ..."
 	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_VERSION)
@@ -238,11 +233,8 @@ test:
 	@go tool cover -func=coverage.out
 	@echo "✅ Tests passed"
 
-# Run linting and static analysis.
-# Expects golangci-lint pinned to GOLANGCI_VERSION (run `make install-lint`).
-# We warn — not fail — on a version mismatch: the linter set is pinned in
-# .golangci.yml, but a different binary can still shift check results, which is
-# exactly the "passes locally, fails CI" trap this target guards against.
+# Run linting. Expects golangci-lint == GOLANGCI_VERSION (`make install-lint`);
+# warns (not fails) on a mismatch, since a different binary can shift results.
 lint:
 	@echo "🔍 Running linting and static analysis..."
 	@have=$$(golangci-lint version --short 2>/dev/null || golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
@@ -252,10 +244,7 @@ lint:
 	@golangci-lint run
 	@echo "✅ Linting and static analysis passed"
 
-# Local CI parity: run exactly what CI gates on, in the same order.
-#   - lint            -> .github/workflows/build-and-test.yml (make lint)
-#   - test            -> .github/workflows/build-and-test.yml (make test)
-#   - check-bindings  -> .github/workflows/bindings-check.yml (make check-bindings)
-# Run this before pushing: a green `make verify` means the gating CI jobs pass.
+# Local CI parity: lint + test + check-bindings — the gating jobs in
+# build-and-test.yml + bindings-check.yml. Green = those CI jobs pass.
 verify: lint test check-bindings
 	@echo "✅ verify passed (lint + test + check-bindings) — local CI parity"
