@@ -455,3 +455,59 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 		"at most one admitted tx may be unaccounted at cancel (admitted=%d completed=%d dropped=%d)",
 		admitted, completed.Load(), sched.Dropped())
 }
+
+// TestDispatcher_PrewarmRateLimitedInOpenLoop guards the prewarm-flood
+// regression: in open-loop the workers are constructed RateLimited=false, but
+// the scheduler paces only the MAIN load. Prewarm runs first over those same
+// ungated workers, so it must pace itself off the shared limiter or it floods
+// the SUT. With workers wired exactly as in open-loop, a low limit, and many
+// more prewarm txs than the worker pool could absorb instantly, an unpaced
+// prewarm would drain in well under the limiter's minimum span. We assert the
+// run took at least the paced floor — i.e. the limiter actually gated prewarm —
+// and that every prewarm tx still reached the RPC server (no drops on prewarm).
+func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
+	srv := newRPCServer(t)
+	const prewarmTxs = 40
+	const rps = 200.0 // limiter: 200 tx/s → unpaced 40 txs is near-instant
+
+	worker := newRealWorker(srv.url(), 8, 256) // RateLimited=false, open-loop shape
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
+			scope.SpawnBg(func() error { return worker.Run(ctx) })
+			<-ctx.Done()
+			return nil
+		})
+	}()
+
+	limiter := rate.NewLimiter(rate.Limit(rps), 1)
+	d := NewDispatcher(newSignedTxGenerator(t, 0), worker)
+	d.SetOpenLoop(limiter, 256) // sets d.limiter so Prewarm self-paces
+	d.SetPrewarmGenerator(newSignedTxGenerator(t, prewarmTxs))
+
+	start := time.Now()
+	require.NoError(t, d.Prewarm(ctx))
+	elapsed := time.Since(start)
+
+	// Paced floor: (N-1) gaps at the limiter rate (burst=1 lets the first through
+	// immediately). Use half as a generous lower bound to absorb scheduling slop
+	// while still excluding the unpaced (near-zero) case decisively.
+	pacedFloor := time.Duration(float64(prewarmTxs-1) / rps * float64(time.Second))
+	require.Greater(t, elapsed, pacedFloor/2,
+		"prewarm must be limiter-paced in open-loop, not flooded (elapsed=%s floor=%s)",
+		elapsed, pacedFloor)
+
+	require.Eventually(t, func() bool {
+		return srv.handled.Load() == uint64(prewarmTxs)
+	}, 2*time.Second, 2*time.Millisecond,
+		"every prewarm tx must reach the SUT (handled=%d want=%d)",
+		srv.handled.Load(), prewarmTxs)
+
+	cancel()
+	wg.Wait()
+}

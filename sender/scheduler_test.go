@@ -367,13 +367,17 @@ func (s *flakyAsyncSender) Send(ctx context.Context, tx *types.LoadTx) error {
 	}
 }
 
-// TestOpenLoopSchedule_Conservation checks the accounting invariant under
-// injected send failures: every issued tx reaches exactly one terminal state —
-// dropped (not admitted), succeeded (admitted, nil err), or failed (admitted,
-// non-nil err). A failed send must be counted as failed, never silently lost,
-// so issued == dropped + succeeded + failed holds. No permit leaks, no double
-// count. The dispatcher's onSent is the accountant under test (via a stand-in
-// here that mirrors its succeeded/failed split).
+// TestOpenLoopSchedule_Conservation checks the two-level accounting invariant
+// (see package doc, Conservation) under injected send failures:
+//
+//	scheduled == dropped + admitted        (every tick has one arrival outcome)
+//	admitted  == succeeded + failed        (every admitted tx has one send outcome)
+//
+// scheduled is the scheduler's own arrival count (Admitted + Dropped), NOT the
+// generator's issued count: after admit-before-generate a dropped tick never
+// calls Generate, so len(issuedTxs) tracks admitted draws, not scheduled ticks.
+// A failed send must land in failed, never be silently lost. The dispatcher's
+// onSent is the accountant under test (via a stand-in mirroring its split).
 func TestOpenLoopSchedule_Conservation(t *testing.T) {
 	gen := newFakeGenerator(300)
 	// Generous capacity so most txs complete; a few may drop on brief bursts.
@@ -395,16 +399,21 @@ func TestOpenLoopSchedule_Conservation(t *testing.T) {
 	sched := newOpenLoopScheduler(gen, snd, limiter, 256, onSent)
 	runScheduler(ctx, sched)
 
-	issued := uint64(len(gen.issuedTxs()))
-	require.Positive(t, issued)
+	admitted := sched.Admitted()
+	require.Positive(t, admitted)
+	// scheduled == dropped + admitted: a dropped tick consumes no Generate draw,
+	// so the generator's issued count tracks admitted ticks, not scheduled ticks.
+	require.Equal(t, admitted, uint64(len(gen.issuedTxs())),
+		"each admitted tick must draw exactly one tx (admit-before-generate)")
+
 	// Allow the in-flight sends spawned just before deadline to settle, then
-	// assert the full conservation invariant including the failed bucket.
+	// assert admitted == succeeded + failed (the send-outcome partition).
 	require.Eventually(t, func() bool {
-		return succeeded.Load()+failed.Load()+sched.Dropped() == issued
+		return succeeded.Load()+failed.Load() == sched.Admitted()
 	}, time.Second, 5*time.Millisecond,
-		"every issued tx must be succeeded, failed, or dropped exactly once "+
-			"(issued=%d succeeded=%d failed=%d dropped=%d)",
-		issued, succeeded.Load(), failed.Load(), sched.Dropped())
+		"every admitted tx must be succeeded or failed exactly once "+
+			"(admitted=%d succeeded=%d failed=%d)",
+		sched.Admitted(), succeeded.Load(), failed.Load())
 	require.Positive(t, failed.Load(),
 		"injected failures must be counted as failed, not lost or dropped")
 }

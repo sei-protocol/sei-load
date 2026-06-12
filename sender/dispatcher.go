@@ -41,10 +41,10 @@ type Dispatcher struct {
 	limiter      *rate.Limiter
 	maxInFlight  int
 
-	// Statistics for the open-loop conservation invariant; see the package doc
-	// (Conservation): scheduled = dropped + admitted, admitted = succeeded + failed.
-	totalSent uint64 // admitted sends that completed with a nil error (succeeded)
-	failed    uint64 // admitted sends that completed with a non-nil error (failed)
+	// Conservation counters (doc.go): scheduled = dropped + admitted,
+	// admitted = succeeded + failed.
+	totalSent uint64 // admitted, nil send error (succeeded)
+	failed    uint64 // admitted, non-nil send error
 	dropped   uint64
 	mu        sync.RWMutex
 	collector *stats.Collector
@@ -99,6 +99,12 @@ func (d *Dispatcher) SetPrewarmGenerator(prewarmGen generator.Generator) {
 func (d *Dispatcher) Prewarm(ctx context.Context) error {
 	d.mu.RLock()
 	prewarmGen := d.prewarmGen
+	// In open-loop the workers are not rate-limited (the scheduler is the rate
+	// authority), but the scheduler only paces the MAIN load. Prewarm runs first,
+	// over those same ungated workers, so it must pace itself off the shared
+	// limiter or it floods the SUT. In closed-loop limiter is nil here and the
+	// worker gates the send instead, so there is never a double-throttle.
+	limiter := d.limiter
 	d.mu.RUnlock()
 
 	gen, ok := prewarmGen.Get()
@@ -112,6 +118,12 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 
 	// Run prewarm generator until completion
 	for ctx.Err() == nil {
+		if limiter != nil {
+			if err := limiter.Wait(ctx); err != nil {
+				return err
+			}
+		}
+
 		tx, ok := gen.Generate()
 		if !ok {
 			break // Prewarming is complete
@@ -182,19 +194,16 @@ func (d *Dispatcher) runOpenLoop(ctx context.Context) error {
 	err := service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		return sched.Run(ctx, s)
 	})
-	// Fold the scheduler's drop count into the dispatcher's accounting so the
-	// final summary can report it.
+	// Fold the scheduler's drop count into the summary accounting.
 	d.mu.Lock()
 	d.dropped = sched.Dropped()
 	d.mu.Unlock()
 	return err
 }
 
-// onSent records a completed open-loop send (an admitted tx whose send attempt
-// finished). A nil error advances totalSent (succeeded); a non-nil error
-// advances failed. An admitted tx is therefore always counted exactly once as
-// succeeded or failed — never silently lost — preserving
-// admitted == succeeded + failed under RPC failures.
+// onSent records a completed open-loop send: nil err advances totalSent
+// (succeeded), non-nil advances failed. Each admitted tx is counted exactly
+// once, never lost (doc.go: admitted == succeeded + failed).
 func (d *Dispatcher) onSent(tx *types.LoadTx, err error) {
 	if err != nil {
 		log.Printf("Scheduler: send failed (seq %d): %v", tx.SequenceIndex, err)

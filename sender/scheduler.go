@@ -28,19 +28,15 @@ type openLoopScheduler struct {
 	onSent      func(tx *types.LoadTx, err error)
 	maxInFlight int
 
-	// dropped and admitted partition scheduled ticks; see the package doc
-	// (Conservation) for the invariant scheduled = dropped + admitted. A tick
-	// whose Generate returns no work (generator exhausted under a held permit) is
-	// neither: the permit is released and no arrival is counted. Written by the
-	// Run goroutine; read after Run returns or concurrently via Dropped/Admitted.
+	// Written by Run; read after Run returns or concurrently via Dropped/Admitted.
+	// See package doc (Conservation) for scheduled = dropped + admitted.
 	dropped  atomic.Uint64
 	admitted atomic.Uint64
 }
 
-// minScheduleRate floors λ in the inter-arrival gap so a zero/negative limit
-// cannot divide-by-zero or yield a +Inf gap. It does not cap the sleep: a small
-// finite λ still yields a long gap. The degenerate λ=Inf / TPS=0 case is
-// rejected up front (see config.Settings.Validate).
+// minScheduleRate floors λ so a zero/negative limit can't divide-by-zero or
+// yield a +Inf gap; the degenerate λ=Inf/TPS=0 case is rejected up front
+// (config.Settings.Validate).
 const minScheduleRate = 1e-9
 
 func newOpenLoopScheduler(
@@ -63,10 +59,8 @@ func newOpenLoopScheduler(
 // Dropped returns the number of ticks shed so far because in-flight was saturated.
 func (s *openLoopScheduler) Dropped() uint64 { return s.dropped.Load() }
 
-// Admitted returns the admitted-tick count (ticks that took a permit and drew a
-// real tx). It exposes the conservation invariant for tests/audit, mirroring
-// Dropped; no production path consumes it (only Dropped folds into the run
-// summary).
+// Admitted returns the admitted-tick count (took a permit and drew a tx), for
+// the conservation invariant in tests/audit; mirrors Dropped.
 func (s *openLoopScheduler) Admitted() uint64 { return s.admitted.Load() }
 
 // Run drives the arrival clock until ctx is canceled or the generator is
@@ -90,44 +84,36 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 			return err
 		}
 
-		// Advance the arrival clock for this scheduled tick before admission, so
-		// the schedule walks at λ whether or not the tx is admitted.
+		// Advance the clock per scheduled tick before admission (walks at λ
+		// regardless of drops).
 		intendedSendTime := nextSend
 		seqIndex := i
 		nextSend = nextSend.Add(gap)
 		i++
 
-		// Admit BEFORE generating: a non-blocking TryAcquire that never throttles
-		// the arrival clock (see package doc: coordinated omission). On a drop the
-		// tick is counted but the generator is NOT advanced — a dropped slot
-		// consumes zero seeded-stream draws and no signing CPU, so admitted txs are
-		// a deterministic prefix of the seeded sequence regardless of how many
-		// ticks were shed (the per-stream reproducibility contract, PLT-456).
+		// Admit before generating: a dropped tick must not advance the seeded
+		// generator (determinism). TryAcquire is non-blocking — see package doc.
 		release, ok := s.inflight.TryAcquire()
 		if !ok {
 			s.dropped.Add(1)
 			continue
 		}
 
-		// Permit held: now draw the next tx from the (seeded) generator.
 		tx, ok := s.generator.Generate()
 		if !ok {
-			// No work left: release the permit we will not use and stop.
-			release()
+			release() // generator exhausted: release the unused permit and stop.
 			log.Print("Scheduler: generator returned no more transactions")
 			return nil
 		}
 
-		// Stamp the scheduled instant and arrival index while sole owner (see
-		// LoadTx concurrency contract).
+		// Stamp while sole owner (see LoadTx concurrency contract).
 		tx.IntendedSendTime = intendedSendTime
 		tx.SequenceIndex = seqIndex
 		s.admitted.Add(1)
 
-		// complete fires once on send completion: releases the permit and reports
-		// the result. The worker invokes it via tx.OnComplete after the real send
-		// (see package doc: permit lifecycle). The Once guards against the
-		// enqueue-failure fallback below racing the worker.
+		// complete releases the permit and reports the result, exactly once: the
+		// worker invokes it via tx.OnComplete after the real send; the Once guards
+		// the enqueue-failure fallback below from racing the worker.
 		var once sync.Once
 		complete := func(err error) {
 			once.Do(func() {
@@ -140,13 +126,11 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 		tx.OnComplete = complete
 
 		scope.Spawn(func() error {
-			// Send returns at enqueue; the worker releases the permit on real
-			// completion. On enqueue failure the tx never reaches a worker, so
-			// complete here to avoid leaking the permit.
+			// On enqueue failure the tx never reaches a worker; complete here so the
+			// permit isn't leaked. A send error must not tear down the campaign.
 			if err := s.sender.Send(ctx, tx); err != nil {
 				complete(err)
 			}
-			// A send error must not tear down the campaign; surfaced via counters.
 			return nil
 		})
 	}
