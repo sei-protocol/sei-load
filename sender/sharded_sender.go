@@ -19,6 +19,7 @@ type ShardedSender struct {
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
 func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
+	pool := NewQueuePool[*types.LoadTx](len(cfg.Endpoints) * cfg.Settings.BufferSize)
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
@@ -35,6 +36,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			TrackReceipts: cfg.Settings.TrackReceipts,
 			Debug:         cfg.Settings.Debug,
 			Collector:     collector,
+			Queue:         pool.NewQueue(),
 			Limiter:       limiter,
 		})
 	}

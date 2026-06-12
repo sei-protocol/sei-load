@@ -37,6 +37,7 @@ type WorkerConfig struct {
 	DryRun        bool
 	Debug         bool
 	TrackReceipts bool
+	Queue         *Queue[*types.LoadTx]
 	Collector     *stats.Collector
 	Limiter       *rate.Limiter // Shared rate limiter for transaction sending
 }
@@ -44,7 +45,6 @@ type WorkerConfig struct {
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
 	cfg     *WorkerConfig
-	txChan  chan *types.LoadTx
 	sentTxs chan *types.LoadTx
 }
 
@@ -121,7 +121,6 @@ func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption
 func NewWorker(cfg *WorkerConfig) *Worker {
 	w := &Worker{
 		cfg:     cfg,
-		txChan:  make(chan *types.LoadTx, cfg.BufferSize),
 		sentTxs: make(chan *types.LoadTx, cfg.BufferSize),
 	}
 	meterWorkerQueueLength(w)
@@ -146,7 +145,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // Send queues a transaction for this worker to process
 func (w *Worker) Send(ctx context.Context, tx *types.LoadTx) error {
-	return utils.Send(ctx, w.txChan, tx)
+	return w.cfg.Queue.Send(ctx, tx)
 }
 
 func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
@@ -224,7 +223,7 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 			return err
 		}
 
-		tx, err := utils.Recv(ctx, w.txChan)
+		tx, err := w.cfg.Queue.Recv(ctx)
 		if err != nil {
 			return err
 		}
@@ -293,7 +292,7 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 
 // ChannelLength returns the current length of the worker's channel (for monitoring).
 // This function is safe for concurrent calls.
-func (w *Worker) ChannelLength() int { return len(w.txChan) }
+func (w *Worker) ChannelLength() int { return w.cfg.Queue.Len() }
 
 // Endpoint returns the worker's endpoint
 func (w *Worker) Endpoint() string { return w.cfg.Endpoint }
