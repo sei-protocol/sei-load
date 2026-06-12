@@ -256,23 +256,22 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		}
 
 		// Create the sender from the config struct
+		// Enable dry-run mode in sender if specified
+		if settings.DryRun {
+			cfg.Settings.DryRun = true
+		}
+		if settings.Debug {
+			cfg.Settings.Debug = true
+		}
+		if settings.TrackReceipts {
+			cfg.Settings.TrackReceipts = true
+		}
+		if settings.TrackBlocks {
+			cfg.Settings.TrackBlocks = true
+		}
 		snd, err := sender.NewShardedSender(cfg, settings.BufferSize, settings.Workers, sharedLimiter)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
-		}
-
-		// Enable dry-run mode in sender if specified
-		if settings.DryRun {
-			snd.SetDryRun(true)
-		}
-		if settings.Debug {
-			snd.SetDebug(true)
-		}
-		if settings.TrackReceipts {
-			snd.SetTrackReceipts(true)
-		}
-		if settings.TrackBlocks {
-			snd.SetTrackBlocks(true)
 		}
 
 		// Set statistics collector for sender and its workers
@@ -322,7 +321,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 		if settings.TxsDir == "" {
 			// Start the sender (starts all workers)
 			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", snd.GetNumShards())
+			log.Printf("✅ Connected to %d endpoints", snd.NumShards())
 		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if settings.Prewarm {
