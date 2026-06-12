@@ -59,6 +59,16 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 
+	// Pin the fixed scaffold calldata: rmw(uint256 slot, bytes _pad) with
+	// slot == 0 and an empty pad. ABI head is the slot operand (32B) then the
+	// bytes offset (0x40); the tail is the bytes length (0). All zero except the
+	// 0x40 offset, so the full body is 96 bytes.
+	body := data[4:]
+	require.Len(t, body, 96)
+	wantBody := make([]byte, 96)
+	wantBody[63] = 0x40 // offset to the _pad bytes argument
+	require.Equal(t, wantBody, body)
+
 	// Sanity: the selector we assert against matches the binding's ABI.
 	parsed, err := bindings.StorageRWv1MetaData.GetAbi()
 	require.NoError(t, err)

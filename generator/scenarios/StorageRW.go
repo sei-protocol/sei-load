@@ -84,5 +84,11 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 // a single hardcoded slot with an empty pad to prove the deploy/send path; the
 // per-tx slot/value/pad distribution arrives in PLT-465.
 func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+	// rmw is SLOAD+SSTORE on one slot (~26k warm, ~44k cold-first-touch); 50k
+	// covers cold-first-touch with headroom for the (currently empty) pad, and
+	// packs ~4x denser than the 200k CreateTransactionOpts default on a
+	// gas-limit-admission chain. PLT-465 revisits this once the calldata pad is
+	// distribution-driven (pad changes calldata gas).
+	auth.GasLimit = 50000
 	return s.contract.Rmw(auth, storageRWSlot, storageRWPad)
 }
