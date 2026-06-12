@@ -45,6 +45,29 @@ const (
 	ArrivalModelOpenLoop   = "open_loop"
 )
 
+// Validate checks resolved settings for self-consistent run configuration,
+// failing fast on combinations that would otherwise produce a silently
+// degenerate run. Call once after ResolveSettings.
+func (s Settings) Validate() error {
+	switch s.ArrivalModel {
+	case ArrivalModelClosedLoop, ArrivalModelOpenLoop:
+	default:
+		return fmt.Errorf("invalid arrival-model %q: must be %q or %q",
+			s.ArrivalModel, ArrivalModelOpenLoop, ArrivalModelClosedLoop)
+	}
+
+	// Open-loop derives the inter-arrival gap as 1/λ. With no finite positive
+	// arrival rate, λ is rate.Inf, the gap collapses to 0, IntendedSendTime
+	// never advances past t₀, and the scheduler spins and drops everything —
+	// the latency anchor degenerates to "time since campaign start". A finite λ
+	// comes from either a configured TPS>0 or a ramp curve (RampUp), which the
+	// ramper drives to finite limits. Reject the degenerate case up front.
+	if s.ArrivalModel == ArrivalModelOpenLoop && s.TPS <= 0 && !s.RampUp {
+		return fmt.Errorf("arrival-model %q requires a finite positive arrival rate: set --tps>0 or --ramp-up", ArrivalModelOpenLoop)
+	}
+	return nil
+}
+
 // DefaultSettings returns the default configuration values
 func DefaultSettings() Settings {
 	return Settings{

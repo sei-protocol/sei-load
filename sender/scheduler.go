@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,13 @@ import (
 // In-flight work is bounded by a semaphore. A tx that cannot acquire a permit
 // without blocking is dropped (the senders are saturated); the scheduler never
 // blocks on capacity, which is what keeps the arrival clock unthrottled.
+//
+// The permit is held until the actual network send completes, not until the tx
+// is enqueued: the scheduler stamps tx.OnComplete with the release, and the
+// worker invokes it after sendTransaction returns. So maxInFlight bounds true
+// unacked in-flight sends and dropped measures genuine load-shed, not buffer
+// geometry (the worker's send is async enqueue-and-return). Note: schedule_lag
+// (PLT-463), not the drop count, remains the primary coordinated-omission gate.
 type openLoopScheduler struct {
 	generator   generator.Generator
 	sender      TxSender
@@ -41,9 +49,11 @@ type openLoopScheduler struct {
 	dropped atomic.Uint64
 }
 
-// minScheduleRate floors λ when computing the inter-arrival gap so a near-zero
-// limit (e.g. the ramper's recovery-phase rate.Limit(1), or a misconfigured 0)
-// cannot produce an unbounded sleep that wedges the scheduler.
+// minScheduleRate floors λ when computing the inter-arrival gap so a zero or
+// negative limit cannot make the gap divide-by-zero or blow up to a +Inf
+// duration. It does not bound how long the scheduler sleeps: a small-but-finite
+// λ still yields a long gap. The degenerate λ=Inf / TPS=0 open-loop case is
+// rejected up front in config validation (see config.Settings.Validate).
 const minScheduleRate = 1e-9
 
 func newOpenLoopScheduler(
@@ -115,11 +125,31 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 			s.dropped.Add(1)
 			continue
 		}
+
+		// Complete fires exactly once when the send finishes: it releases the
+		// in-flight permit and reports the result. The worker invokes it via
+		// tx.OnComplete after the real send (the happy path), so the permit is
+		// held for the whole unacked-in-flight window, not just the enqueue.
+		// The Once guards the enqueue-failure fallback below from racing the
+		// worker — though by construction only one path runs.
+		var once sync.Once
+		complete := func(err error) {
+			once.Do(func() {
+				release()
+				if s.onSent != nil {
+					s.onSent(tx, err)
+				}
+			})
+		}
+		tx.OnComplete = complete
+
 		scope.Spawn(func() error {
-			defer release()
-			err := s.sender.Send(ctx, tx)
-			if s.onSent != nil {
-				s.onSent(tx, err)
+			// Send returns at enqueue; the permit release is deferred to the
+			// worker via tx.OnComplete on real completion. If the enqueue itself
+			// fails (e.g. ctx canceled), the tx never reaches a worker, so we
+			// complete it here to avoid leaking the permit.
+			if err := s.sender.Send(ctx, tx); err != nil {
+				complete(err)
 			}
 			// A send error must not tear down the campaign; the closed-loop
 			// path logs-and-continues identically. Drops/errors are surfaced

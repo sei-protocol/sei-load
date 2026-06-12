@@ -257,6 +257,12 @@ func (w *Worker) processTransactions(ctx context.Context, client *http.Client) e
 		// so stamping the actual send-attempt time here is race-free (see LoadTx).
 		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
+		// Release the in-flight permit on actual send completion (open-loop).
+		// This is what makes maxInFlight bound true unacked sends rather than
+		// enqueue backlog; the closed-loop and batch paths leave it nil.
+		if tx.OnComplete != nil {
+			tx.OnComplete(err)
+		}
 		// Record statistics if collector is available
 		if w.collector != nil {
 			w.collector.RecordTransaction(tx.Scenario.Name, w.endpoint, time.Since(startTime), err == nil)

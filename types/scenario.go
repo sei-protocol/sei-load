@@ -33,19 +33,31 @@ type LoadTx struct {
 	// here (independent of when a sender is free), which is the basis for
 	// coordinated-omission-free latency. In the legacy closed-loop model it
 	// instead holds the back-pressured enqueue time and must not be used to
-	// derive latency. SequenceIndex disambiguates which model produced it: a
-	// nonzero SequenceIndex (or index 0 from a campaign start) marks the
-	// open-loop scheduler as the writer.
+	// derive latency. A LoadTx cannot self-describe which model wrote it — an
+	// open-loop tx and a closed-loop tx are byte-identical (both can have
+	// SequenceIndex 0). Latency and schedule-lag consumers must gate on the
+	// run-level arrival model (RunSummary.ArrivalModel), not on any field here.
 	IntendedSendTime time.Time
 	// SequenceIndex is the monotonic per-campaign arrival index i assigned by
 	// the open-loop scheduler, which schedules tx i at t₀ + i/λ. It attributes
 	// per-tx schedule lag (IntendedSendTime vs AttemptedSendTime) back to a
 	// position in the arrival sequence. Zero in the legacy closed-loop model,
-	// where no scheduler assigns it.
+	// where no scheduler assigns it — so the value alone does not identify the
+	// model (see IntendedSendTime); the run's arrival model is authoritative.
 	SequenceIndex uint64
 	// AttemptedSendTime is when the send was actually attempted, written by the
 	// worker goroutine that owns the tx between dequeue and the sentTxs hand-off.
 	AttemptedSendTime time.Time
+	// OnComplete, if set, is invoked exactly once when the network send attempt
+	// for this tx finishes (after sendTransaction returns), with the send error
+	// or nil. The open-loop scheduler sets it to release the in-flight permit so
+	// the bound covers true unacked sends (enqueue + send), not just queue depth;
+	// see the open-loop scheduler. The worker invokes it after sendTransaction
+	// and is the sole invoker on the happy path. Nil in the closed-loop and batch
+	// paths, where the worker simply skips it. The callback must be cheap and
+	// non-blocking — the worker holds the tx and calls it inline. Written by the
+	// owning goroutine before hand-off, per the lifecycle concurrency contract.
+	OnComplete func(err error)
 	// InclusionTime is when the tx was observed included on-chain, written only
 	// by the inclusion tracker.
 	InclusionTime time.Time

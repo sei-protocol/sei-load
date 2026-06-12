@@ -110,6 +110,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	// Get resolved settings from the config package
 	settings := config.ResolveSettings()
+	if err := settings.Validate(); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")

@@ -14,9 +14,11 @@ type RunSummary struct {
 	// ArrivalModel is "open_loop" or "closed_loop"; tags the dropped gauge so a
 	// nonzero drop count is attributable to the model that produced it.
 	ArrivalModel string
-	// Dropped is the count of open-loop txs shed on in-flight saturation. These
-	// never reach the inclusion tracker, so they carry a zero InclusionTime;
-	// keep them out of later inclusion-rate denominators (PLT-463 forward-note).
+	// Dropped is the count of open-loop txs shed on in-flight saturation. A
+	// dropped tx never reaches the inclusion tracker and carries no
+	// InclusionTime, so it must stay out of inclusion-rate denominators: the
+	// denominator is sent (txs that reached a sender), never issued (sent +
+	// dropped).
 	Dropped uint64
 }
 
