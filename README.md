@@ -170,6 +170,28 @@ blocks height=5191 time(p50=2s p99=5s max=8s) gas(p50=21000 p99=50000 max=100000
 
 ## Development
 
+### Before you push
+
+Run the full local CI gate in one command:
+
+```bash
+make verify   # lint + test + check-bindings (exactly what CI gates on)
+```
+
+A green `make verify` means the gating CI jobs (`build-and-test`, `bindings-check`)
+will pass. Install the pinned toolchain once first so your local results match CI:
+
+```bash
+make install-tools   # full toolchain: Node (via nvm), solc, abigen, golangci-lint (pinned to v2.12.2)
+# or, for the linter only:
+make install-lint    # golangci-lint pinned to v2.12.2
+```
+
+`golangci-lint` is pinned to a specific version (Makefile `GOLANGCI_VERSION`,
+the workflow's `golangci-lint-action` `version:`, and `.golangci.yml`); `make lint`
+warns if the binary on your PATH differs. A drifting/unpinned linter is the usual
+"passes locally, fails CI" trap — `make install-lint` gives you the exact CI version.
+
 ### Build
 ```bash
 make build
@@ -177,7 +199,7 @@ make build
 
 ### Test
 ```bash
-make test
+make test   # runs with -race
 ```
 
 ### Lint
