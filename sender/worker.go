@@ -39,10 +39,9 @@ type WorkerConfig struct {
 	TrackReceipts bool
 	Collector     *stats.Collector
 	Limiter       *rate.Limiter // Shared rate authority; nil disables gating.
-	// SkipRateLimit opts a worker out of limiter gating. Zero value (false) keeps
-	// the safe default: a worker with a non-nil Limiter rate-limits. Set true only
-	// in open-loop, where the scheduler owns the clock and worker-side gating would
-	// double-throttle (see doc.go).
+	// SkipRateLimit opts a worker out of limiter gating. Zero value (false) is the
+	// safe default (gate when Limiter is set); set true only in open-loop, where
+	// the scheduler owns the clock (see doc.go).
 	SkipRateLimit bool
 }
 
@@ -224,8 +223,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 // runTxSender is the main worker loop that processes transactions
 func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
-		// Closed-loop gating: block on the limiter before dequeuing. Skipped in
-		// open-loop where the scheduler is the rate authority (see doc.go).
+		// Closed-loop gates on the limiter before dequeue; open-loop skips it.
 		if !w.cfg.SkipRateLimit && w.cfg.Limiter != nil {
 			if err := w.cfg.Limiter.Wait(ctx); err != nil {
 				return err
@@ -241,9 +239,8 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		// Sole owner between dequeue and hand-off: stamp is race-free (see LoadTx).
 		tx.AttemptedSendTime = startTime
 		err = w.sendTransaction(ctx, client, tx)
-		// CRITICAL: OnComplete must fire only after the real send returns — that is
-		// what makes the open-loop semaphore bound true unacked sends (doc.go:
-		// permit lifecycle). Nil on closed-loop/batch.
+		// OnComplete must fire only after the real send returns — that is what
+		// bounds true unacked in-flight (see doc.go). Nil on closed-loop/batch.
 		if tx.OnComplete != nil {
 			tx.OnComplete(err)
 		}

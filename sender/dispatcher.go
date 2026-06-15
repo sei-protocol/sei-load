@@ -99,11 +99,9 @@ func (d *Dispatcher) SetPrewarmGenerator(prewarmGen generator.Generator) {
 func (d *Dispatcher) Prewarm(ctx context.Context) error {
 	d.mu.RLock()
 	prewarmGen := d.prewarmGen
-	// In open-loop the workers are not rate-limited (the scheduler is the rate
-	// authority), but the scheduler only paces the MAIN load. Prewarm runs first,
-	// over those same ungated workers, so it must pace itself off the shared
-	// limiter or it floods the SUT. In closed-loop limiter is nil here and the
-	// worker gates the send instead, so there is never a double-throttle.
+	// Prewarm runs over the workers before the scheduler paces anything, so in
+	// open-loop (ungated workers) it must self-pace off the shared limiter or it
+	// floods the SUT. Nil in closed-loop, where the worker gates instead.
 	limiter := d.limiter
 	d.mu.RUnlock()
 

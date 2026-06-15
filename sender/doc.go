@@ -68,6 +68,11 @@
 // probe, not an arrival — it advances neither the clock nor the counters, so it
 // is excluded from the conservation totals.
 //
+// Shutdown boundary (accepted, not drift). admitted == succeeded + failed holds
+// on a clean drain (generator exhaustion). On ctx cancel (SIGTERM/duration),
+// admitted txs still buffered for a worker exit uncounted; the undercount is
+// bounded by the channel backlog and never affects a cleanly completed run.
+//
 // LoadTx lifecycle and scheduling. The scheduling-relevant fields of [types.LoadTx]
 // follow its single-writer concurrency contract: each is written once by the
 // goroutine that solely owns the tx at that stage, then is immutable as ownership

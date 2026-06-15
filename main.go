@@ -295,11 +295,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Set statistics collector for dispatcher
 		dispatcher.SetStatsCollector(collector)
 
-		// Open-loop arrival: the scheduler owns the rate (via the shared
-		// limiter, which the ramper still drives) and drops on overrun. The
-		// workers' own rate gating is disabled at construction for this model
-		// (see NewShardedSender) so they don't double-throttle. Only applies to
-		// the live-send path; the txs writer path has no arrival clock.
+		// Open-loop drives arrivals from the scheduler (see sender doc); the
+		// txs-writer path has no arrival clock, so it stays closed-loop.
 		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
 		switch {
 		case openLoop && cfg.Settings.TxsDir == "":
