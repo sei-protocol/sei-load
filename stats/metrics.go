@@ -95,6 +95,19 @@ var (
 		"run_schedule_lag_p99",
 		metric.WithDescription("p99 of per-tx send lag (attempted − intended) over this open-loop run (emitted once at run end)"),
 		metric.WithUnit("s")))
+
+	// Unsampled tail signal: the reservoir p99 above can dilute a sub-percentile
+	// late-run tail, so the verdict also gates on the exact over-bound fraction.
+	// Max is diagnostic; fraction is the gate.
+	runScheduleLagMax = must(meter.Float64Gauge(
+		"run_schedule_lag_max",
+		metric.WithDescription("max per-tx send lag (attempted − intended) over this open-loop run, un-sampled (emitted once at run end)"),
+		metric.WithUnit("s")))
+
+	runScheduleLagOverBoundFraction = must(meter.Float64Gauge(
+		"run_schedule_lag_over_bound_fraction",
+		metric.WithDescription("exact fraction of sends whose lag exceeded the VOID bound over this open-loop run (emitted once at run end)"),
+		metric.WithUnit("1")))
 )
 
 // meteredInclusionTrackers backs the inclusion_inflight gauge: each tracker

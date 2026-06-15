@@ -323,6 +323,12 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		switch {
 		case openLoop && cfg.Settings.TxsDir == "":
 			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
+			// Arm the unsampled over-bound counter for this fixed-λ open-loop run:
+			// same VOID bound the verdict uses (threshold × 1/λ), known here at run
+			// start. Inert on non-fixed-λ runs (no SetScheduleLagBound call).
+			if bound := stats.ScheduleLagBound(cfg.Settings.TPS, cfg.Settings.ScheduleLagVoidThreshold); bound > 0 {
+				collector.SetScheduleLagBound(bound)
+			}
 			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
 		case openLoop:
 			// open_loop was requested but the txs-writer path has no arrival clock,
@@ -426,10 +432,22 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// verdict. Gated on the model the run actually used (summary.ArrivalModel,
 	// not the requested flag — the txs-writer path downgrades to closed_loop).
 	openLoopRun := summary.ArrivalModel == config.ArrivalModelOpenLoop
-	verdict := stats.EvaluateScheduleLag(
-		collector.ScheduleLagSamples(), cfg.Settings.TPS, openLoopRun,
-		cfg.Settings.RampUp, admitted, cfg.Settings.ScheduleLagVoidThreshold)
+	lagTotal, lagOverBound, lagMax := collector.ScheduleLagTail()
+	verdict := stats.EvaluateScheduleLag(stats.ScheduleLagInputs{
+		Samples:        collector.ScheduleLagSamples(),
+		TargetTPS:      cfg.Settings.TPS,
+		OpenLoop:       openLoopRun,
+		Ramped:         cfg.Settings.RampUp,
+		Admitted:       admitted,
+		Threshold:      cfg.Settings.ScheduleLagVoidThreshold,
+		OverBoundCount: lagOverBound,
+		OverBoundTotal: lagTotal,
+		MaxLag:         lagMax,
+	})
 	summary.ScheduleLagP99 = verdict.ScheduleLagP99
+	summary.ScheduleLagMax = verdict.MaxLag
+	summary.ScheduleLagOverBoundCount = verdict.OverBoundCount
+	summary.ScheduleLagTotal = verdict.OverBoundTotal
 	summary.Verdict = verdict.Verdict
 	summary.VoidReason = verdict.VoidReason
 	if verdict.Anomaly {

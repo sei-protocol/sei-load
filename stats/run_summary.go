@@ -48,6 +48,15 @@ type RunSummary struct {
 	// run was generator-bound, not open-loop, and is VOID. Reported on every run
 	// regardless of verdict; Verdict is N/A for closed-loop or non-fixed-λ runs.
 	ScheduleLagP99 time.Duration
+	// ScheduleLagMax is the largest single send lag recorded (un-sampled),
+	// surfaced for diagnostics; the verdict gates on a fraction, not this max.
+	ScheduleLagMax time.Duration
+	// ScheduleLagOverBoundCount / ScheduleLagTotal are the exact (un-sampled)
+	// count of sends past the VOID bound and the total recorded; their ratio is
+	// the tail-degradation signal the sampled p99 cannot dilute. Total zero / no
+	// bound armed means the figures are inert (non-fixed-λ run).
+	ScheduleLagOverBoundCount uint64
+	ScheduleLagTotal          uint64
 	// Verdict is VerdictValid, VerdictVoid, or VerdictNA.
 	Verdict string
 	// VoidReason explains a VOID verdict; empty otherwise.
@@ -73,6 +82,18 @@ func (c *Collector) EmitRunSummary(ctx context.Context, summary RunSummary) {
 		runInflightAtShutdown.Record(ctx, int64(summary.InflightAtShutdown))
 	}
 	runScheduleLagP99.Record(ctx, summary.ScheduleLagP99.Seconds(),
+		metric.WithAttributes(
+			attribute.String("arrival_model", summary.ArrivalModel),
+			attribute.String("verdict", summary.Verdict)))
+	runScheduleLagMax.Record(ctx, summary.ScheduleLagMax.Seconds(),
+		metric.WithAttributes(
+			attribute.String("arrival_model", summary.ArrivalModel),
+			attribute.String("verdict", summary.Verdict)))
+	var overBoundFraction float64
+	if summary.ScheduleLagTotal > 0 {
+		overBoundFraction = float64(summary.ScheduleLagOverBoundCount) / float64(summary.ScheduleLagTotal)
+	}
+	runScheduleLagOverBoundFraction.Record(ctx, overBoundFraction,
 		metric.WithAttributes(
 			attribute.String("arrival_model", summary.ArrivalModel),
 			attribute.String("verdict", summary.Verdict)))

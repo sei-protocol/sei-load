@@ -48,6 +48,43 @@ func TestRecordScheduleLag_FeedsVerdict(t *testing.T) {
 	}
 	c.RecordScheduleLag(50 * time.Millisecond)
 
-	v := EvaluateScheduleLag(c.ScheduleLagSamples(), 100, true, false, 100, 0)
+	v := EvaluateScheduleLag(ScheduleLagInputs{
+		Samples: c.ScheduleLagSamples(), TargetTPS: 100, OpenLoop: true, Admitted: 100,
+	})
 	require.Equal(t, VerdictVoid, v.Verdict)
+}
+
+// The unsampled tail counters are exact, not reservoir-diluted: with the bound
+// armed, every over-bound lag is counted regardless of reservoir replacement,
+// and the max is the true max.
+func TestRecordScheduleLag_UnsampledTailCounters(t *testing.T) {
+	c := NewCollector()
+	// Bound = 10% of 1/100 = 1ms (matches ScheduleLagBound(100, 0.10)).
+	c.SetScheduleLagBound(ScheduleLagBound(100, 0.10))
+
+	// Record far more than the reservoir cap so sampling is in play.
+	const over = 50
+	for range scheduleLagReservoirCap * 2 {
+		c.RecordScheduleLag(100 * time.Microsecond) // under bound
+	}
+	for range over {
+		c.RecordScheduleLag(5 * time.Millisecond) // over the 1ms bound
+	}
+	c.RecordScheduleLag(80 * time.Millisecond) // the max
+
+	total, overBound, max := c.ScheduleLagTail()
+	require.Equal(t, uint64(scheduleLagReservoirCap*2+over+1), total)
+	require.Equal(t, uint64(over+1), overBound) // exact, not sampled
+	require.Equal(t, 80*time.Millisecond, max)
+}
+
+// Without an armed bound the over-bound counter stays inert (ramped /
+// closed-loop / no-λ runs), but the max is still tracked for diagnostics.
+func TestRecordScheduleLag_OverBoundInertWhenUnset(t *testing.T) {
+	c := NewCollector()
+	c.RecordScheduleLag(500 * time.Millisecond)
+	total, overBound, max := c.ScheduleLagTail()
+	require.Equal(t, uint64(1), total)
+	require.Equal(t, uint64(0), overBound) // no bound armed → inert
+	require.Equal(t, 500*time.Millisecond, max)
 }

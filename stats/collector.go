@@ -51,6 +51,18 @@ type Collector struct {
 	scheduleLagSeen uint64
 	scheduleLagRand *rand.Rand
 
+	// Unsampled schedule_lag tail signal: the reservoir is a uniform sample, so a
+	// sub-percentile late-run tail can stay under the whole-run p99 yet still mean
+	// the generator fell behind. These exact (un-sampled) counters give the
+	// verdict a tail-degradation signal the reservoir cannot dilute.
+	// scheduleLagBound is the VOID bound (threshold × 1/λ) set once at run start
+	// for a fixed-λ open-loop run; zero leaves over-bound counting inert (ramped /
+	// closed-loop / no-λ runs are N/A anyway). scheduleLagMax is the largest lag
+	// ever recorded, surfaced for diagnostics.
+	scheduleLagBound     time.Duration
+	scheduleLagOverBound uint64
+	scheduleLagMax       time.Duration
+
 	// Configuration
 	maxLatencyHistory int // Limit latency history to prevent memory leaks
 }
@@ -94,6 +106,13 @@ func (c *Collector) RecordScheduleLag(lag time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if lag > c.scheduleLagMax {
+		c.scheduleLagMax = lag
+	}
+	if c.scheduleLagBound > 0 && lag > c.scheduleLagBound {
+		c.scheduleLagOverBound++
+	}
+
 	c.scheduleLagSeen++
 	if len(c.scheduleLag) < scheduleLagReservoirCap {
 		c.scheduleLag = append(c.scheduleLag, lag)
@@ -116,6 +135,25 @@ func (c *Collector) ScheduleLagSamples() []time.Duration {
 	out := make([]time.Duration, len(c.scheduleLag))
 	copy(out, c.scheduleLag)
 	return out
+}
+
+// SetScheduleLagBound arms the unsampled over-bound counter with the run's VOID
+// bound (threshold × 1/λ). Call once at run start, only for a fixed-λ open-loop
+// run; left unset (or set to <=0), over-bound counting stays inert.
+func (c *Collector) SetScheduleLagBound(bound time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.scheduleLagBound = bound
+}
+
+// ScheduleLagTail reports the exact (un-sampled) tail figures: total lags
+// recorded, how many exceeded the VOID bound, and the max lag observed. total is
+// the true count, distinct from the bounded reservoir's len. overBound is zero
+// when no bound was armed.
+func (c *Collector) ScheduleLagTail() (total, overBound uint64, max time.Duration) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.scheduleLagSeen, c.scheduleLagOverBound, c.scheduleLagMax
 }
 
 // RecordTransaction records a transaction attempt
