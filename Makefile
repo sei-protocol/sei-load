@@ -42,6 +42,11 @@ SOLC_EVM_VERSION := paris
 # Falls back to grepping go.mod if `go list` is unavailable.
 GETH_VERSION := $(shell go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum 2>/dev/null || grep -E 'github.com/ethereum/go-ethereum ' go.mod | awk '{print $$2}')
 
+# Pinned golangci-lint version. Keep in sync with the workflow `version:` and
+# `.golangci.yml` (bump all three together); an unpinned `latest` drifts into a
+# "passes locally, fails CI" trap. See README "Before you push".
+GOLANGCI_VERSION := 2.12.2
+
 # Find all .sol files in contracts directory
 SOL_FILES := $(wildcard $(CONTRACTS_DIR)/*.sol)
 CONTRACT_NAMES := $(basename $(notdir $(SOL_FILES)))
@@ -52,23 +57,30 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate generate-bindings check-bindings install-abigen clean help build-cli install setup-node build test lint
+.PHONY: generate generate-bindings check-bindings check-lint-pin install-abigen install-lint clean help build-cli install setup-node build test lint verify
 
 # Default target
 help:
 	@echo "Available targets:"
+	@echo "  verify            - Run the gating CI checks: check-lint-pin + lint + test + build + CLI --help + check-bindings"
 	@echo "  build             - Build the seiload CLI (alias for build-cli)"
-	@echo "  test              - Run tests with coverage"
-	@echo "  lint              - Run linting and static analysis"
+	@echo "  test              - Run tests with coverage (race detector enabled)"
+	@echo "  lint              - Run linting and static analysis (golangci-lint $(GOLANGCI_VERSION))"
 	@echo "  setup-node        - Install nvm, Node.js 20, and solc"
 	@echo "  generate          - Generate Go bindings and scenario templates for all contracts"
 	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
 	@echo "  check-bindings    - Fail if committed bindings are out of sync with contracts"
+	@echo "  check-lint-pin    - Fail if the golangci-lint version pin diverges across files"
+	@echo "  install-tools     - Install the full pinned toolchain (solc, abigen, golangci-lint)"
 	@echo "  install-abigen    - Install abigen pinned to the go.mod go-ethereum version"
+	@echo "  install-lint      - Install golangci-lint pinned to $(GOLANGCI_VERSION)"
 	@echo "  clean             - Remove generated files"
 	@echo "  help              - Show this help message"
 	@echo "  build-cli         - Build the seiload CLI"
 	@echo "  install           - Install the seiload CLI"
+	@echo ""
+	@echo "Before pushing: run 'make verify' (local CI parity). Run 'make install-tools'"
+	@echo "first to get the pinned toolchain (golangci-lint $(GOLANGCI_VERSION) etc.)."
 
 # Setup Node.js environment with nvm
 setup-node:
@@ -187,8 +199,48 @@ check-bindings:
 		fi
 	@echo "✅ Bindings are in sync with contracts"
 
+# Drift check: GOLANGCI_VERSION (this Makefile) is the source of truth for the
+# pinned golangci-lint. The same version is duplicated, by convention, in the
+# workflow's golangci-lint-action `version:` and in .golangci.yml's header
+# comment. A bump that misses a file silently splits local from CI ("passes
+# locally, fails CI"). This target fails loudly, naming the diverging file.
+# Mind the `v` prefix: Makefile holds 2.12.2; the others hold v2.12.2.
+check-lint-pin:
+	@echo "🔍 Checking golangci-lint version pin is in sync..."
+	@expected="v$(GOLANGCI_VERSION)"; \
+		rc=0; \
+		wf=".github/workflows/build-and-test.yml"; \
+		gc=".golangci.yml"; \
+		wf_ver=$$(grep -E '^[[:space:]]*version:[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+' $$wf | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		if [ -z "$$wf_ver" ]; then \
+			echo "❌ $$wf: could not find a golangci-lint-action 'version: vX.Y.Z' line"; rc=1; \
+		elif [ "$$wf_ver" != "$$expected" ]; then \
+			echo "❌ $$wf: golangci-lint-action version $$wf_ver != Makefile $$expected"; rc=1; \
+		fi; \
+		gc_ver=$$(grep -oE 'golangci-lint v[0-9]+\.[0-9]+\.[0-9]+' $$gc | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		if [ -z "$$gc_ver" ]; then \
+			echo "❌ $$gc: could not find a 'vX.Y.Z' version reference in the header comment"; rc=1; \
+		elif [ "$$gc_ver" != "$$expected" ]; then \
+			echo "❌ $$gc: referenced version $$gc_ver != Makefile $$expected"; rc=1; \
+		fi; \
+		if [ $$rc -ne 0 ]; then \
+			echo ""; \
+			echo "   golangci-lint pin diverged. Source of truth is GOLANGCI_VERSION"; \
+			echo "   ($(GOLANGCI_VERSION)) in the Makefile. Bump all three together:"; \
+			echo "   Makefile, $$wf, $$gc."; \
+			exit 1; \
+		fi; \
+		echo "✅ golangci-lint pin in sync at $$expected (Makefile, $$wf, $$gc)"
+
+# Install golangci-lint pinned to GOLANGCI_VERSION for CI parity (CI pins the
+# same version via golangci-lint-action).
+install-lint:
+	@echo "📦 Installing golangci-lint@v$(GOLANGCI_VERSION) ..."
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_VERSION)
+	@echo "✅ Installed golangci-lint@v$(GOLANGCI_VERSION)"
+
 # Install tools (optional convenience target)
-install-tools: setup-node install-abigen
+install-tools: setup-node install-abigen install-lint
 	@echo "✅ Tools installation complete"
 
 # Build the seiload CLI binary
@@ -215,8 +267,35 @@ test:
 	@go tool cover -func=coverage.out
 	@echo "✅ Tests passed"
 
-# Run linting and static analysis
+# Run linting. Expects golangci-lint == GOLANGCI_VERSION (`make install-lint`);
+# warns (not fails) on a mismatch, since a different binary can shift results.
 lint:
 	@echo "🔍 Running linting and static analysis..."
+	@have=$$(golangci-lint version --short 2>/dev/null || golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		have=$${have#v}; \
+		if [ -n "$$have" ] && [ "$$have" != "$(GOLANGCI_VERSION)" ]; then \
+			echo "⚠️  golangci-lint $$have on PATH != pinned $(GOLANGCI_VERSION). Run 'make install-lint' for CI parity."; \
+		fi
 	@golangci-lint run
 	@echo "✅ Linting and static analysis passed"
+
+# Local CI parity for the gating jobs (build-and-test.yml + bindings-check.yml).
+# Mirrors build-and-test's lint/test/build/--help so a broken main/CLI is caught
+# locally, not in CI. The one CI step NOT folded in is the dry-run smoke: it's a
+# backgrounded run killed after 5s and never asserts an exit code, so it's a weak,
+# non-deterministic signal that's not worth a 5s+ wall-time tax on every verify.
+# That step stays CI-only; see README "Before you push".
+#
+# The gates are invoked as ordered sub-makes (not prerequisites) so `verify`
+# runs them sequentially regardless of `-j`. As parallel prerequisites under
+# `make -j`, `build` and `check-bindings` would run concurrently and both write
+# the shared $(BUILD_DIR) tree (CLI binary vs. contract .abi/.bin from check-
+# bindings' `-B generate-bindings`), racing each other. Sub-makes scope the
+# serialization to `verify` alone, leaving the rest of the Makefile parallel-
+# safe (unlike a global `.NOTPARALLEL`). `&&` short-circuits on first failure
+# so a broken gate stops the chain with that gate's non-zero exit.
+verify:
+	@$(MAKE) check-lint-pin && $(MAKE) lint && $(MAKE) test && $(MAKE) build && $(MAKE) check-bindings
+	@echo "🔍 Smoke-testing CLI entrypoint (--help)..."
+	@$(BUILD_DIR)/$(BINARY_NAME) --help > /dev/null
+	@echo "✅ verify passed (check-lint-pin + lint + test + build + --help + check-bindings)"
