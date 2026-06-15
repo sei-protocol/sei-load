@@ -44,8 +44,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			Collector:     collector,
 		}))
 	}
-	poolSize := len(cfg.Endpoints) * cfg.Settings.BufferSize
-	pool := NewQueuePool[*types.LoadTx](poolSize)
+	pool := NewQueuePool[*types.LoadTx](cfg.TotalQueueSize())
 	var shards []*Queue[*types.LoadTx]
 	for range cfg.GetNumShards() {
 		shards = append(shards, pool.NewQueue())
