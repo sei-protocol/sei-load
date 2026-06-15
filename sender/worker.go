@@ -18,9 +18,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/time/rate"
-
-	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
@@ -28,44 +25,58 @@ import (
 
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
-type WorkerConfig struct {
-	ID            int
-	SeiChainID    string
-	Endpoint      string
-	BufferSize    int
-	Tasks         int
-	DryRun        bool
-	Debug         bool
+type sendReq struct {
+	tx *types.LoadTx
+	done chan struct{}
+}
+
+type ethClientConfig struct {
+	ChainID string
+	ID int
+	Endpoint string
+	Tasks int
+	Debug bool
 	TrackReceipts bool
-	Queue         *Queue[*types.LoadTx]
-	Collector     *stats.Collector
-	Limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	ReceiptsBuf int
+}	
+
+type ethClient struct {
+	cfg ethClientConfig	
+	reqs chan sendReq
 }
 
-// Worker handles sending transactions to a specific endpoint
-type Worker struct {
-	cfg     *WorkerConfig
-	sentTxs chan *types.LoadTx
+func (c *ethClient) Run(ctx context.Context) error {
+	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+		u, err := url.Parse(c.cfg.Endpoint)
+		if err != nil {
+			return fmt.Errorf("parse endpoint %q: %w", c.cfg.Endpoint, err)
+		}
+		var opts []rpc.ClientOption
+		switch u.Scheme {
+		case "http", "https":
+			opts = append(opts, rpc.WithHTTPClient(newHttpClient()))
+		}
+		rpcClient, err := rpc.DialOptions(ctx, c.cfg.Endpoint, opts...)
+		if err != nil {
+			return fmt.Errorf("rpc.Dial(%q): %w", c.cfg.Endpoint, err)
+		}
+		client := ethclient.NewClient(rpcClient)
+		defer client.Close()
+		receiptsChan := make(chan *types.LoadTx, c.cfg.ReceiptsBuf)
+		for range c.cfg.Tasks {
+			s.Spawn(func() error { return c.runSender(ctx, client, receiptsChan) }) 
+		}
+		if c.cfg.TrackReceipts {
+			s.Spawn(func() error { return c.watchTransactions(ctx, client, receiptsChan) })
+		}
+		return nil
+	})
 }
 
-// HttpClientOption configures the Transport used by newHttpClient.
-type HttpClientOption func(*http.Transport)
-
-// WithMaxIdleConns overrides the global idle-connection pool size.
-func WithMaxIdleConns(n int) HttpClientOption {
-	return func(t *http.Transport) { t.MaxIdleConns = n }
-}
-
-// WithMaxIdleConnsPerHost overrides the per-host idle-connection pool size.
-// Scale with goroutine count to avoid TCP re-dial on each completion.
-func WithMaxIdleConnsPerHost(n int) HttpClientOption {
-	return func(t *http.Transport) { t.MaxIdleConnsPerHost = n }
-}
-
-// newHttpTransport is the base transport factory. Exists separately so tests
-// can inspect the unwrapped *http.Transport; newHttpClient returns it wrapped
-// in otelhttp, whose inner transport isn't publicly accessible.
-func newHttpTransport(opts ...HttpClientOption) *http.Transport {
+// newHttpClient returns an otelhttp-wrapped client: injects traceparent on
+// outbound, emits http.client.* metrics. Requires observability.Setup to have
+// installed the global TextMapPropagator.
+func newHttpClient() *http.Client {
 	t := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -78,88 +89,42 @@ func newHttpTransport(opts ...HttpClientOption) *http.Transport {
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     false,
 	}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
-}
-
-// newHttpClient returns an otelhttp-wrapped client: injects traceparent on
-// outbound, emits http.client.* metrics. Requires observability.Setup to have
-// installed the global TextMapPropagator.
-func newHttpClient(opts ...HttpClientOption) *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: otelhttp.NewTransport(newHttpTransport(opts...)),
+		Transport: otelhttp.NewTransport(t),
 	}
 }
 
 // newRPCClient returns a go-ethereum client configured for the endpoint scheme.
 // HTTP(S) endpoints reuse the tuned otelhttp-backed transport; WS(S) endpoints
 // use the default go-ethereum WebSocket transport.
-func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption) (*ethclient.Client, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("parse endpoint %q: %w", endpoint, err)
+func newEthClient(ctx context.Context, id int, endpoint string) *ethClient {
+	return &ethClient {
+		id: id,
+		endpoint: endpoint,
+		reqs: make(chan sendReq),
 	}
-
-	switch u.Scheme {
-	case "http", "https":
-		rpcClient, err := rpc.DialOptions(ctx, endpoint, rpc.WithHTTPClient(newHttpClient(opts...)))
-		if err != nil {
-			return nil, err
-		}
-		return ethclient.NewClient(rpcClient), nil
-	case "ws", "wss", "":
-		return ethclient.DialContext(ctx, endpoint)
-	default:
-		return nil, fmt.Errorf("unsupported RPC scheme %q for endpoint %s", u.Scheme, endpoint)
-	}
-}
-
-// NewWorker creates a new worker for a specific endpoint
-func NewWorker(cfg *WorkerConfig) *Worker {
-	w := &Worker{
-		cfg:     cfg,
-		sentTxs: make(chan *types.LoadTx, cfg.BufferSize),
-	}
-	meterWorkerQueueLength(w)
-	return w
-}
-
-// Start begins the worker's processing loop
-func (w *Worker) Run(ctx context.Context) error {
-	client, err := newRPCClient(ctx, w.cfg.Endpoint)
-	if err != nil {
-		return fmt.Errorf("dial %s: %w", w.cfg.Endpoint, err)
-	}
-	defer client.Close()
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		// Start multiple goroutines that share the same channel and RPC client.
-		for range w.cfg.Tasks {
-			s.Spawn(func() error { return w.runTxSender(ctx, client) })
-		}
-		return w.watchTransactions(ctx, client)
-	})
 }
 
 // Send queues a transaction for this worker to process
-func (w *Worker) Send(ctx context.Context, tx *types.LoadTx) error {
-	return w.cfg.Queue.Send(ctx, tx)
+func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) error {
+	done := make(chan struct{})
+	if err:=utils.Send(ctx,c.reqs,sendReq{tx,done}); err!=nil {
+		return err
+	}
+	_,_,err := utils.RecvOrClosed(ctx,done)
+	return err
 }
 
-func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
-	if w.cfg.DryRun || !w.cfg.TrackReceipts {
-		return nil
-	}
+func (c *ethClient) watchTransactions(ctx context.Context, eth *ethclient.Client, sentTxs <-chan *types.LoadTx) error {	
 	for ctx.Err() == nil {
-		tx, err := utils.Recv(ctx, w.sentTxs)
+		tx, err := utils.Recv(ctx, sentTxs)
 		if err != nil {
 			return err
 		}
 		// Cancel per-iteration; defer would leak contexts under sustained load.
 		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := w.waitForReceipt(waitCtx, eth, tx); err != nil {
+		if err := c.waitForReceipt(waitCtx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
 		}
 		cancel()
@@ -167,12 +132,12 @@ func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) e
 	return ctx.Err()
 }
 
-func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
+func (c *ethClient) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", w.cfg.Endpoint),
-		attribute.Int("seiload.worker_id", w.cfg.ID),
-		attribute.String("seiload.chain_id", w.cfg.SeiChainID),
+		attribute.String("seiload.endpoint", c.endpoint),
+		attribute.Int("seiload.worker_id", c.id),
+		attribute.String("seiload.chain_id", c.chainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {
@@ -184,8 +149,8 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", w.cfg.Endpoint),
-				attribute.String("chain_id", w.cfg.SeiChainID),
+				attribute.String("endpoint", c.endpoint),
+				attribute.String("chain_id", c.chainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
@@ -207,7 +172,7 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 		if receipt.Status != 1 {
 			return fmt.Errorf("tx %s failed", tx.EthTx.Hash().Hex())
 		}
-		if w.cfg.Debug {
+		if c.cfg.Debug {
 			log.Printf("✅ tx %s, %s, gas=%d succeeded\n", tx.Scenario.Name, tx.EthTx.Hash().Hex(), receipt.GasUsed)
 		}
 		return nil
@@ -215,15 +180,10 @@ func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *
 	return ctx.Err()
 }
 
-// runTxSender is the main worker loop that processes transactions
-func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) error {
+// runSender handles the tx send requests. 
+func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client, receiptsChan chan<- *types.LoadTx) error {
 	for ctx.Err() == nil {
-		// Apply rate limiting before getting the next transaction
-		if err := w.cfg.Limiter.Wait(ctx); err != nil {
-			return err
-		}
-
-		tx, err := w.cfg.Queue.Recv(ctx)
+		tx, err := utils.Recv(ctx,c.reqs)
 		if err != nil {
 			return err
 		}
@@ -243,12 +203,12 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 }
 
 // sendTransaction sends a single transaction to the endpoint
-func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, tx *types.LoadTx) (_err error) {
+func (c *ethClient) sendTransaction(ctx context.Context, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", w.cfg.Endpoint),
-		attribute.Int("seiload.worker_id", w.cfg.ID),
-		attribute.String("seiload.chain_id", w.cfg.SeiChainID),
+		attribute.String("seiload.endpoint", c.endpoint),
+		attribute.Int("seiload.worker_id", c.id),
+		attribute.String("seiload.chain_id", c.chainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {

@@ -2,11 +2,11 @@ package sender
 
 import (
 	"context"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // Acquired at package init, before observability.Setup installs the real
@@ -17,24 +17,24 @@ var meter = otel.Meter("github.com/sei-protocol/sei-load/sender")
 
 // Synchronous instruments — read by Record/Add call sites.
 var (
-	sendLatency = must(meter.Float64Histogram(
+	sendLatency = utils.OrPanic1(meter.Float64Histogram(
 		"send_latency",
 		metric.WithDescription("Latency of sending transactions in seconds"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
 
-	receiptLatency = must(meter.Float64Histogram(
+	receiptLatency = utils.OrPanic1(meter.Float64Histogram(
 		"receipt_latency",
 		metric.WithDescription("Latency from transaction submission to receipt confirmation in seconds"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
 
-	txsAccepted = must(meter.Int64Counter(
+	txsAccepted = utils.OrPanic1(meter.Int64Counter(
 		"txs_accepted",
 		metric.WithDescription("Transactions successfully submitted to an endpoint"),
 		metric.WithUnit("{transactions}")))
 
-	txsRejected = must(meter.Int64Counter(
+	txsRejected = utils.OrPanic1(meter.Int64Counter(
 		"txs_rejected",
 		metric.WithDescription("Transactions rejected by the target or local client, by reason"),
 		metric.WithUnit("{transactions}")))
@@ -44,24 +44,26 @@ var (
 // Return values are discarded because OTel invokes the callbacks on each
 // collection; we never read the instrument handles.
 func init() {
-	must(meter.Int64ObservableGauge(
+	utils.OrPanic1(meter.Int64ObservableGauge(
 		"worker_queue_length",
 		metric.WithDescription("Length of the worker's queue"),
 		metric.WithUnit("{count}"),
 		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
-			meteredChainWorkers.lock.RLock()
-			defer meteredChainWorkers.lock.RUnlock()
-			for _, worker := range meteredChainWorkers.workers {
-				observer.Observe(int64(worker.ChannelLength()), metric.WithAttributes(
-					attribute.String("endpoint", worker.Endpoint()),
-					attribute.Int("worker_id", worker.cfg.ID),
-					attribute.String("chain_id", worker.cfg.SeiChainID),
-				))
+			for _,senders := range meteredSenders.RLock() {
+				for _,ss := range senders {
+					for _, shard := range ss.shards {
+						observer.Observe(int64(worker.ChannelLength()), metric.WithAttributes(
+							attribute.String("endpoint", worker.Endpoint()),
+							attribute.Int("worker_id", worker.cfg.ID),
+							attribute.String("chain_id", worker.cfg.SeiChainID),
+						))
+					}
+				}
 			}
 			return nil
 		})))
 
-	must(meter.Float64ObservableGauge(
+	utils.OrPanic1(meter.Float64ObservableGauge(
 		"tps_achieved",
 		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
 		metric.WithUnit("{transactions}/s"),
@@ -69,37 +71,9 @@ func init() {
 }
 
 // meteredChainWorkers is the registry the worker_queue_length callback reads.
-var meteredChainWorkers = &chainWorkerObserver{
-	workers: make(map[chainWorkerID]*Worker),
-}
+var meteredSenders = utils.NewRWMutex(map[*ShardedSender]struct{}{})
 
-type chainWorkerObserver struct {
-	lock    sync.RWMutex
-	workers map[chainWorkerID]*Worker
-}
-type chainWorkerID struct {
-	workerID int
-	chainID  string
-}
-
-func meterWorkerQueueLength(worker *Worker) {
-	meteredChainWorkers.lock.Lock()
-	defer meteredChainWorkers.lock.Unlock()
-	id := chainWorkerID{
-		workerID: worker.cfg.ID,
-		chainID:  worker.cfg.SeiChainID,
-	}
-	if _, exists := meteredChainWorkers.workers[id]; !exists {
-		meteredChainWorkers.workers[id] = worker
-	}
-}
-
-var tpsObserverRegistry = struct {
-	lock    sync.RWMutex
-	samples map[tpsSampleKey]float64
-}{
-	samples: make(map[tpsSampleKey]float64),
-}
+var tpsObserverRegistry = utils.NewRWMutex(map[tpsSampleKey]float64{})
 
 type tpsSampleKey struct {
 	endpoint string
@@ -133,11 +107,4 @@ func statusAttrFromError(err error) attribute.KeyValue {
 		return attribute.String(key, "success")
 	}
 	return attribute.String(key, "failure")
-}
-
-func must[V any](v V, err error) V {
-	if err != nil {
-		panic(err)
-	}
-	return v
 }

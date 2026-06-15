@@ -14,41 +14,65 @@ import (
 
 // ShardedSender implements TxSender with multiple workers, one per endpoint
 type ShardedSender struct {
-	workers []*Worker
+	cfg *config.LoadConfig
+	collector     *stats.Collector
+	limiter       *rate.Limiter // Shared rate limiter for transaction sending
+	clients 			[]*ethClient
+	shards 				[]*Queue[*types.LoadTx]
 }
 
 // NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
-	pool := NewQueuePool[*types.LoadTx](len(cfg.Endpoints) * cfg.Settings.BufferSize)
+func NewShardedSender(ctx context.Context, cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
-
-	workers := make([]*Worker, len(cfg.Endpoints))
-	for i, endpoint := range cfg.Endpoints {
-		workers[i] = NewWorker(&WorkerConfig{
-			ID:            i,
-			SeiChainID:    cfg.SeiChainID,
-			Endpoint:      endpoint,
-			BufferSize:    cfg.Settings.BufferSize,
-			Tasks:         cfg.Settings.TasksPerEndpoint,
-			DryRun:        cfg.Settings.DryRun,
+	var clients []*ethClient
+	for id,endpoint := range cfg.Endpoints {
+		clients = append(clients, newEthClient(&ethClientConfig {
+			ChainID: cfg.SeiChainID,
+			ID: id,
+			Endpoint: endpoint,
+			Tasks: cfg.Settings.TasksPerEndpoint,
+			Debug: cfg.Settings.Debug,
 			TrackReceipts: cfg.Settings.TrackReceipts,
-			Debug:         cfg.Settings.Debug,
-			Collector:     collector,
-			Queue:         pool.NewQueue(),
-			Limiter:       limiter,
-		})
+			ReceiptsBuf: cfg.Settings.BufferSize,
+		}))
 	}
-
-	return &ShardedSender{workers: workers}, nil
+	numShards := len(cfg.Endpoints)
+	poolSize := numShards * cfg.Settings.BufferSize
+	pool := NewQueuePool[*types.LoadTx](poolSize)
+	var shards []*Queue[*types.LoadTx]
+	for range shards {
+		q := pool.NewQueue()
+		shards = append(shards,q)
+		meterWorkerQueueLength(q)
+	}
+	return &ShardedSender{
+		cfg:cfg,
+		collector:collector,
+		limiter:limiter,
+		clients:clients,
+		shards:shards,
+	}, nil
 }
 
 // Start initializes and starts all workers
-func (s *ShardedSender) Run(ctx context.Context) error {
-	return service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
-		for _, worker := range s.workers {
-			scope.Spawn(func() error { return worker.Run(ctx) })
+func (ss *ShardedSender) Run(ctx context.Context) error {
+	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+		for _,client := range ss.clients {
+			s.Spawn(func() error { return client.Run(ctx) })
+		}
+		for i, shard := range ss.shards {
+			s.Spawn(func() error {
+				for ctx.Err()==nil {
+					// Apply rate limiting before getting the next transaction
+					if err := ss.limiter.Wait(ctx); err != nil {
+						return err
+					}
+					return w.runTxSender(ctx, client)
+				}
+				return ctx.Err()
+			})
 		}
 		return nil
 	})
@@ -56,31 +80,5 @@ func (s *ShardedSender) Run(ctx context.Context) error {
 
 // Send implements TxSender interface - calculates shard ID and routes to appropriate worker
 func (s *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
-	// Calculate shard ID based on the transaction
-	shardID := tx.ShardID(len(s.workers))
-	// Send to the appropriate worker
-	return s.workers[shardID].Send(ctx, tx)
+	return s.shards[tx.ShardID(len(s.shards))].Send(ctx, tx)
 }
-
-// GetWorkerStats returns statistics for all workers
-func (s *ShardedSender) GetWorkerStats() []WorkerStats {
-	stats := make([]WorkerStats, len(s.workers))
-	for i, worker := range s.workers {
-		stats[i] = WorkerStats{
-			WorkerID:      i,
-			Endpoint:      worker.Endpoint(),
-			ChannelLength: worker.ChannelLength(),
-		}
-	}
-	return stats
-}
-
-// WorkerStats contains statistics for a single worker
-type WorkerStats struct {
-	WorkerID      int
-	Endpoint      string
-	ChannelLength int
-}
-
-// GetNumShards returns the number of shards (workers)
-func (s *ShardedSender) NumShards() int { return len(s.workers) }
