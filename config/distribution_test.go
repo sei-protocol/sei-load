@@ -177,7 +177,34 @@ func TestZipfianInitCostBounded(t *testing.T) {
 		require.Less(t, v, uint64(n))
 	}
 	elapsed := time.Since(start)
-	require.Less(t, elapsed, 2*time.Second, "zipfian init+draws for n=1e6 too slow: %s", elapsed)
+	// Regression sentinel: init+1000 draws measures ~30ms; 500ms is ~16x
+	// headroom (non-flaky) yet trips long before a real O(n)-per-draw regression.
+	require.Less(t, elapsed, 500*time.Millisecond, "zipfian init+draws for n=1e6 too slow: %s", elapsed)
+}
+
+// TestZipfianRecomputesOnNChange locks the documented n-stability contract: the
+// zeta cache is keyed on n, so presenting a sampler a different n recomputes the
+// O(n) state rather than reusing a stale cache. Callers must bind one sampler per
+// fixed-size keyspace; this test pins the recompute behavior so a future refactor
+// that drops the n-change check (silently serving stale state) is caught.
+func TestZipfianRecomputesOnNChange(t *testing.T) {
+	t.Parallel()
+	d := distribution(t, `{"Name":"zipfian","theta":0.9}`)
+	d.SetStream(rng.NewSource(1).Stream("x"))
+
+	// Same seed + same draw index against two different keyspaces: if the cache
+	// ignored the n change, the second n would reuse the first's zetaN/eta and the
+	// draw could fall outside [0, n2). The in-range check is the recompute witness.
+	const n1, n2 = 1_000_000, 10
+	v1, err := d.SampleIndex(n1)
+	require.NoError(t, err)
+	require.Less(t, v1, uint64(n1))
+
+	for i := 0; i < 1000; i++ {
+		v2, err := d.SampleIndex(n2)
+		require.NoError(t, err)
+		require.Less(t, v2, uint64(n2), "draw must be in [0, n2) after n change; stale cache would overshoot")
+	}
 }
 
 // TestZipfianNoNaNAcrossThetaRange: across the valid theta range and small

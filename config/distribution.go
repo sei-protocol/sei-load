@@ -83,6 +83,8 @@ func (d *Distribution) UnmarshalJSON(data []byte) error {
 }
 
 // UniformDistribution draws each index with equal probability.
+//
+// copy-safe: holds no mutex; the *rng.Stream pointer aliases on copy.
 type UniformDistribution struct {
 	stream *rng.Stream
 }
