@@ -302,7 +302,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		if cfg.Settings.TxsDir == "" {
 			// Start the sender (starts all workers)
 			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", snd.NumShards())
+			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if cfg.Settings.Prewarm {

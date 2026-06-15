@@ -14,62 +14,72 @@ import (
 
 // ShardedSender implements TxSender with multiple workers, one per endpoint
 type ShardedSender struct {
-	cfg *config.LoadConfig
-	collector     *stats.Collector
-	limiter       *rate.Limiter // Shared rate limiter for transaction sending
-	clients 			[]*ethClient
-	shards 				[]*Queue[*types.LoadTx]
+	cfg     *config.LoadConfig
+	limiter *rate.Limiter // Shared rate limiter for transaction sending
+	clients []*ethClient
+	shards  []*Queue[*types.LoadTx]
 }
 
-// NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(ctx context.Context, cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
+// NewShardedSender creates a new sharded sender.
+// Txs of each shard are sent sequentially, using a single eth client.
+func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
 	var clients []*ethClient
-	for id,endpoint := range cfg.Endpoints {
-		clients = append(clients, newEthClient(&ethClientConfig {
-			ChainID: cfg.SeiChainID,
-			ID: id,
-			Endpoint: endpoint,
-			Tasks: cfg.Settings.TasksPerEndpoint,
-			Debug: cfg.Settings.Debug,
+	for id, endpoint := range cfg.Endpoints {
+		clients = append(clients, newEthClient(&ethClientConfig{
+			ChainID:       cfg.SeiChainID,
+			ID:            id,
+			Endpoint:      endpoint,
+			Tasks:         cfg.Settings.TasksPerEndpoint,
+			Debug:         cfg.Settings.Debug,
 			TrackReceipts: cfg.Settings.TrackReceipts,
-			ReceiptsBuf: cfg.Settings.BufferSize,
+			ReceiptsBuf:   cfg.Settings.BufferSize,
+			Collector:     collector,
 		}))
 	}
-	numShards := len(cfg.Endpoints)
-	poolSize := numShards * cfg.Settings.BufferSize
+	poolSize := len(cfg.Endpoints) * cfg.Settings.BufferSize
 	pool := NewQueuePool[*types.LoadTx](poolSize)
 	var shards []*Queue[*types.LoadTx]
-	for range shards {
-		q := pool.NewQueue()
-		shards = append(shards,q)
-		meterWorkerQueueLength(q)
+	for range cfg.GetNumShards() {
+		shards = append(shards, pool.NewQueue())
 	}
 	return &ShardedSender{
-		cfg:cfg,
-		collector:collector,
-		limiter:limiter,
-		clients:clients,
-		shards:shards,
+		cfg:     cfg,
+		limiter: limiter,
+		clients: clients,
+		shards:  shards,
 	}, nil
+}
+
+// Send implements TxSender interface - calculates shard ID and routes to appropriate worker
+func (s *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
+	return s.shards[tx.ShardID(len(s.shards))].Send(ctx, tx)
 }
 
 // Start initializes and starts all workers
 func (ss *ShardedSender) Run(ctx context.Context) error {
+	cancel := meteredSenders.MustRegister(ss)
+	defer cancel()
 	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
-		for _,client := range ss.clients {
+		for _, client := range ss.clients {
 			s.Spawn(func() error { return client.Run(ctx) })
 		}
 		for i, shard := range ss.shards {
 			s.Spawn(func() error {
-				for ctx.Err()==nil {
-					// Apply rate limiting before getting the next transaction
+				client := ss.clients[i%len(ss.clients)]
+				for ctx.Err() == nil {
 					if err := ss.limiter.Wait(ctx); err != nil {
 						return err
 					}
-					return w.runTxSender(ctx, client)
+					tx, err := shard.Recv(ctx)
+					if err != nil {
+						return err
+					}
+					if err := client.Send(ctx, tx); err != nil {
+						return err
+					}
 				}
 				return ctx.Err()
 			})
@@ -78,7 +88,22 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 	})
 }
 
-// Send implements TxSender interface - calculates shard ID and routes to appropriate worker
-func (s *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
-	return s.shards[tx.ShardID(len(s.shards))].Send(ctx, tx)
+type ShardStats struct {
+	ChainID   string
+	ID        int
+	Endpoint  string
+	TxsQueued int
+}
+
+func (ss *ShardedSender) ShardStats() []ShardStats {
+	var stats []ShardStats
+	for i, shard := range ss.shards {
+		stats = append(stats, ShardStats{
+			ChainID:   ss.cfg.SeiChainID,
+			ID:        i,
+			Endpoint:  ss.clients[i%len(ss.clients)].cfg.Endpoint,
+			TxsQueued: shard.Len(),
+		})
+	}
+	return stats
 }

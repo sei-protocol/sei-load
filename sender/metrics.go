@@ -3,10 +3,10 @@ package sender
 import (
 	"context"
 
+	"github.com/sei-protocol/sei-load/utils"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"github.com/sei-protocol/sei-load/utils"
 )
 
 // Acquired at package init, before observability.Setup installs the real
@@ -49,15 +49,13 @@ func init() {
 		metric.WithDescription("Length of the worker's queue"),
 		metric.WithUnit("{count}"),
 		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
-			for _,senders := range meteredSenders.RLock() {
-				for _,ss := range senders {
-					for _, shard := range ss.shards {
-						observer.Observe(int64(worker.ChannelLength()), metric.WithAttributes(
-							attribute.String("endpoint", worker.Endpoint()),
-							attribute.Int("worker_id", worker.cfg.ID),
-							attribute.String("chain_id", worker.cfg.SeiChainID),
-						))
-					}
+			for _, ss := range meteredSenders.Get() {
+				for _, stats := range ss.ShardStats() {
+					observer.Observe(int64(stats.TxsQueued), metric.WithAttributes(
+						attribute.String("endpoint", stats.Endpoint),
+						attribute.Int("worker_id", stats.ID),
+						attribute.String("chain_id", stats.ChainID),
+					))
 				}
 			}
 			return nil
@@ -70,8 +68,41 @@ func init() {
 		metric.WithFloat64Callback(observeTPS)))
 }
 
+type Registry[T comparable] struct {
+	r utils.RWMutex[map[T]struct{}]
+}
+
+func (r *Registry[T]) Get() []T {
+	for r := range r.r.RLock() {
+		var vs []T
+		for v := range r {
+			vs = append(vs, v)
+		}
+		return vs
+	}
+	panic("unreachable")
+}
+
+func NewRegistry[T comparable]() *Registry[T] {
+	return &Registry[T]{r: utils.NewRWMutex(map[T]struct{}{})}
+}
+
+func (r *Registry[T]) MustRegister(val T) (cancel func()) {
+	for r := range r.r.Lock() {
+		if _, ok := r[val]; ok {
+			panic("already registered")
+		}
+		r[val] = struct{}{}
+	}
+	return func() {
+		for r := range r.r.Lock() {
+			delete(r, val)
+		}
+	}
+}
+
 // meteredChainWorkers is the registry the worker_queue_length callback reads.
-var meteredSenders = utils.NewRWMutex(map[*ShardedSender]struct{}{})
+var meteredSenders = NewRegistry[*ShardedSender]()
 
 var tpsObserverRegistry = utils.NewRWMutex(map[tpsSampleKey]float64{})
 
@@ -83,20 +114,20 @@ type tpsSampleKey struct {
 
 // RecordTPSSample publishes the latest TPS sample read by the tps_achieved gauge.
 func RecordTPSSample(endpoint, chainID, scenario string, tps float64) {
-	tpsObserverRegistry.lock.Lock()
-	defer tpsObserverRegistry.lock.Unlock()
-	tpsObserverRegistry.samples[tpsSampleKey{endpoint, chainID, scenario}] = tps
+	for r := range tpsObserverRegistry.Lock() {
+		r[tpsSampleKey{endpoint, chainID, scenario}] = tps
+	}
 }
 
 func observeTPS(_ context.Context, observer metric.Float64Observer) error {
-	tpsObserverRegistry.lock.RLock()
-	defer tpsObserverRegistry.lock.RUnlock()
-	for k, v := range tpsObserverRegistry.samples {
-		observer.Observe(v, metric.WithAttributes(
-			attribute.String("endpoint", k.endpoint),
-			attribute.String("chain_id", k.chainID),
-			attribute.String("scenario", k.scenario),
-		))
+	for r := range tpsObserverRegistry.RLock() {
+		for k, v := range r {
+			observer.Observe(v, metric.WithAttributes(
+				attribute.String("endpoint", k.endpoint),
+				attribute.String("chain_id", k.chainID),
+				attribute.String("scenario", k.scenario),
+			))
+		}
 	}
 	return nil
 }

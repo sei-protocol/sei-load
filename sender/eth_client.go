@@ -13,36 +13,40 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
+	"github.com/sei-protocol/sei-load/utils/scope"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type sendReq struct {
-	tx *types.LoadTx
+	tx   *types.LoadTx
 	done chan struct{}
 }
 
 type ethClientConfig struct {
-	ChainID string
-	ID int
-	Endpoint string
-	Tasks int
-	Debug bool
+	ChainID       string
+	ID            int
+	Endpoint      string
+	Tasks         int
+	Debug         bool
+	DryRun        bool
 	TrackReceipts bool
-	ReceiptsBuf int
-}	
+	ReceiptsBuf   int
+	Collector     *stats.Collector
+}
 
 type ethClient struct {
-	cfg ethClientConfig	
-	reqs chan sendReq
+	cfg      *ethClientConfig
+	reqs     chan sendReq
+	receipts chan *types.LoadTx
 }
 
 func (c *ethClient) Run(ctx context.Context) error {
@@ -62,12 +66,11 @@ func (c *ethClient) Run(ctx context.Context) error {
 		}
 		client := ethclient.NewClient(rpcClient)
 		defer client.Close()
-		receiptsChan := make(chan *types.LoadTx, c.cfg.ReceiptsBuf)
 		for range c.cfg.Tasks {
-			s.Spawn(func() error { return c.runSender(ctx, client, receiptsChan) }) 
+			s.Spawn(func() error { return c.runSender(ctx, client) })
 		}
 		if c.cfg.TrackReceipts {
-			s.Spawn(func() error { return c.watchTransactions(ctx, client, receiptsChan) })
+			s.Spawn(func() error { return c.watchTransactions(ctx, client) })
 		}
 		return nil
 	})
@@ -98,46 +101,49 @@ func newHttpClient() *http.Client {
 // newRPCClient returns a go-ethereum client configured for the endpoint scheme.
 // HTTP(S) endpoints reuse the tuned otelhttp-backed transport; WS(S) endpoints
 // use the default go-ethereum WebSocket transport.
-func newEthClient(ctx context.Context, id int, endpoint string) *ethClient {
-	return &ethClient {
-		id: id,
-		endpoint: endpoint,
-		reqs: make(chan sendReq),
+func newEthClient(cfg *ethClientConfig) *ethClient {
+	receiptsBuf := 0
+	if cfg.TrackReceipts {
+		receiptsBuf = cfg.ReceiptsBuf
+	}
+	return &ethClient{
+		cfg:      cfg,
+		reqs:     make(chan sendReq),
+		receipts: make(chan *types.LoadTx, receiptsBuf),
 	}
 }
 
 // Send queues a transaction for this worker to process
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) error {
 	done := make(chan struct{})
-	if err:=utils.Send(ctx,c.reqs,sendReq{tx,done}); err!=nil {
+	if err := utils.Send(ctx, c.reqs, sendReq{tx, done}); err != nil {
 		return err
 	}
-	_,_,err := utils.RecvOrClosed(ctx,done)
+	_, _, err := utils.RecvOrClosed(ctx, done)
 	return err
 }
 
-func (c *ethClient) watchTransactions(ctx context.Context, eth *ethclient.Client, sentTxs <-chan *types.LoadTx) error {	
+func (c *ethClient) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
 	for ctx.Err() == nil {
-		tx, err := utils.Recv(ctx, sentTxs)
+		tx, err := utils.Recv(ctx, c.receipts)
 		if err != nil {
 			return err
 		}
-		// Cancel per-iteration; defer would leak contexts under sustained load.
-		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := c.waitForReceipt(waitCtx, eth, tx); err != nil {
+		if err := c.waitForReceipt(ctx, eth, tx); err != nil {
 			log.Printf("❌ %v", err)
 		}
-		cancel()
 	}
 	return ctx.Err()
 }
 
 func (c *ethClient) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", c.endpoint),
-		attribute.Int("seiload.worker_id", c.id),
-		attribute.String("seiload.chain_id", c.chainID),
+		attribute.String("seiload.endpoint", c.cfg.Endpoint),
+		attribute.Int("seiload.worker_id", c.cfg.ID),
+		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {
@@ -149,8 +155,8 @@ func (c *ethClient) waitForReceipt(ctx context.Context, eth *ethclient.Client, t
 		receiptLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", c.endpoint),
-				attribute.String("chain_id", c.chainID),
+				attribute.String("endpoint", c.cfg.Endpoint),
+				attribute.String("chain_id", c.cfg.ChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
@@ -180,10 +186,10 @@ func (c *ethClient) waitForReceipt(ctx context.Context, eth *ethclient.Client, t
 	return ctx.Err()
 }
 
-// runSender handles the tx send requests. 
-func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client, receiptsChan chan<- *types.LoadTx) error {
+// runSender handles the tx send requests.
+func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client) error {
 	for ctx.Err() == nil {
-		tx, err := utils.Recv(ctx,c.reqs)
+		req, err := utils.Recv(ctx, c.reqs)
 		if err != nil {
 			return err
 		}
@@ -191,10 +197,9 @@ func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client, rec
 		startTime := time.Now()
 		// This goroutine solely owns tx between dequeue and the sentTxs hand-off,
 		// so stamping the actual send-attempt time here is race-free (see LoadTx).
-		tx.AttemptedSendTime = startTime
-		err = w.sendTransaction(ctx, client, tx)
-		// Record statistics if collector is available
-		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
+		req.tx.AttemptedSendTime = startTime
+		err = c.sendTx(ctx, client, req.tx)
+		c.cfg.Collector.RecordTransaction(req.tx.Scenario.Name, c.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err != nil {
 			log.Printf("%v", err)
 		}
@@ -202,13 +207,12 @@ func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client, rec
 	return ctx.Err()
 }
 
-// sendTransaction sends a single transaction to the endpoint
-func (c *ethClient) sendTransaction(ctx context.Context, tx *types.LoadTx) (_err error) {
+func (c *ethClient) sendTx(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", c.endpoint),
-		attribute.Int("seiload.worker_id", c.id),
-		attribute.String("seiload.chain_id", c.chainID),
+		attribute.String("seiload.endpoint", c.cfg.Endpoint),
+		attribute.Int("seiload.worker_id", c.cfg.ID),
+		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
 	defer func(start time.Time) {
 		if _err != nil {
@@ -219,40 +223,31 @@ func (c *ethClient) sendTransaction(ctx context.Context, tx *types.LoadTx) (_err
 		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", w.cfg.Endpoint),
-				attribute.String("chain_id", w.cfg.SeiChainID),
+				attribute.String("endpoint", c.cfg.Endpoint),
+				attribute.String("chain_id", c.cfg.ChainID),
 				statusAttrFromError(_err)),
 		)
 	}(time.Now())
-	if w.cfg.DryRun {
+	if c.cfg.DryRun {
 		// In dry-run mode, simulate processing time and mark as successful
 		// Use very minimal delay to avoid channel overflow
 		return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
 	}
 
 	// Send through go-ethereum so the same code path supports both HTTP(S) and WS(S) RPC.
-	if err := client.SendTransaction(ctx, tx.EthTx); err != nil {
+	if err := eth.SendTransaction(ctx, tx.EthTx); err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", w.cfg.Endpoint),
+			attribute.String("endpoint", c.cfg.Endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "rpc"),
 		))
-		return fmt.Errorf("Worker %d: Failed to send transaction: %w", w.cfg.ID, err)
+		return fmt.Errorf("Worker %d: Failed to send transaction: %w", c.cfg.ID, err)
 	}
 
 	txsAccepted.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("endpoint", w.cfg.Endpoint),
+		attribute.String("endpoint", c.cfg.Endpoint),
 		attribute.String("scenario", tx.Scenario.Name),
 	))
-
-	// Write to sentTxs channel without blocking
-	utils.SendOrDrop(w.sentTxs, tx)
+	utils.SendOrDrop(c.receipts, tx)
 	return nil
 }
-
-// ChannelLength returns the current length of the worker's channel (for monitoring).
-// This function is safe for concurrent calls.
-func (w *Worker) ChannelLength() int { return w.cfg.Queue.Len() }
-
-// Endpoint returns the worker's endpoint
-func (w *Worker) Endpoint() string { return w.cfg.Endpoint }
