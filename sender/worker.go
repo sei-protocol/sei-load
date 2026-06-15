@@ -184,8 +184,8 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		}
 		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
 		// Register at send-completion, only on success: registered ⊆ succeeded.
-		// (The tracker is wired only for live runs — see main.go; DryRun never
-		// gets a tracker, so simulated sends are not inclusion-tracked.)
+		// The tracker is present only for live runs (wired in main.go; never under
+		// DryRun).
 		if err == nil {
 			if t, ok := w.cfg.Inclusion.Get(); ok {
 				t.Register(tx)

@@ -30,7 +30,6 @@ type RunSummary struct {
 	// registered == Included + Expired + InflightAtShutdown, with
 	// registered ⊆ succeeded. InclusionTracked disambiguates a not-tracked run
 	// (all zero, flag false) from a tracked run with no inclusions yet.
-	// TODO(PLT-467): owns run-summary schema versioning for these fields.
 	InclusionTracked bool
 	// Included is the count of txs the tracker observed on-chain (stamped).
 	Included uint64
@@ -42,7 +41,7 @@ type RunSummary struct {
 	// InflightAtShutdown is len(inflight) read after workers and tracker joined.
 	InflightAtShutdown uint64
 
-	// Open-loop self-check (PLT-463): schedule_lag = AttemptedSendTime −
+	// Open-loop self-check: schedule_lag = AttemptedSendTime −
 	// IntendedSendTime per tx. A p99 above the threshold fraction of the arrival
 	// interval (1/λ) means the generator could not keep its own schedule, so the
 	// run was generator-bound, not open-loop, and is VOID. Reported on every run

@@ -88,7 +88,7 @@ var (
 		metric.WithDescription("In-flight inclusion registry size at run end (emitted once at run end)"),
 		metric.WithUnit("{transactions}")))
 
-	// Open-loop self-check (PLT-463). Emitted once at run end on every run; the
+	// Open-loop self-check. Emitted once at run end on every run; the
 	// verdict label distinguishes VALID / VOID / N/A so a generator-bound run is
 	// queryable, not just a log line.
 	runScheduleLagP99 = must(meter.Float64Gauge(

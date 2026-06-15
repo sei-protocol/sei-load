@@ -43,7 +43,7 @@ type Settings struct {
 	// counted rather than throttling the arrival clock. Ignored in closed-loop.
 	MaxInFlight int `json:"maxInFlight,omitempty"`
 	// ScheduleLagVoidThreshold is the fraction of the arrival interval (1/λ) that
-	// schedule_lag_p99 may reach before an open-loop run is VOID (PLT-463). Zero
+	// schedule_lag_p99 may reach before an open-loop run is VOID. Zero
 	// uses the provisional built-in default; set via config to retune without a
 	// rebuild. Ignored in closed-loop.
 	ScheduleLagVoidThreshold float64 `json:"scheduleLagVoidThreshold,omitempty"`

@@ -261,8 +261,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		// The --track-receipts flag now enables the block-indexed inclusion
-		// tracker (the lossy per-tx receipt path is retired).
+		// --track-receipts enables the block-indexed inclusion tracker.
 		// Not wired under --dry-run: simulated sends never hit the chain, so they
 		// would all reap as expired and pollute the inclusion stats.
 		inclusion := utils.None[*stats.InclusionTracker]()
@@ -429,9 +428,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("📦 Inclusion: included=%d expired=%d dropped_at_cap=%d inflight_at_shutdown=%d",
 			incl.Included, incl.Expired, incl.DroppedAtCap, incl.InflightAtShutdown)
 	}
-	// Open-loop self-check (PLT-463): compute schedule_lag_p99 and the run
-	// verdict. Gated on the model the run actually used (summary.ArrivalModel,
-	// not the requested flag — the txs-writer path downgrades to closed_loop).
+	// Open-loop self-check: compute schedule_lag_p99 and the run verdict. Gated
+	// on the model the run actually used (summary.ArrivalModel, not the requested
+	// flag — the txs-writer path downgrades to closed_loop).
 	openLoopRun := summary.ArrivalModel == config.ArrivalModelOpenLoop
 	lagTotal, lagOverBound, lagMax := collector.ScheduleLagTail()
 	verdict := stats.EvaluateScheduleLag(stats.ScheduleLagInputs{
