@@ -75,30 +75,10 @@ func TestArgumentPrecedence(t *testing.T) {
 			err := json.Unmarshal([]byte(tt.configContent), configSettings)
 			require.NoError(t, err, "Failed to unmarshal config file")
 
-			// Create test command with flags
-			cmd := &cobra.Command{
-				Use: "test",
-			}
-
-			// Add flags (with zero defaults to avoid precedence issues)
-			cmd.Flags().Duration("stats-interval", 0, "Stats interval")
-			cmd.Flags().Int("workers", 0, "Number of workers")
-			cmd.Flags().Float64("tps", 0, "TPS")
-			cmd.Flags().Bool("dry-run", false, "Dry run")
-			cmd.Flags().Bool("debug", false, "Debug")
-			cmd.Flags().Bool("track-receipts", false, "Track receipts")
-			cmd.Flags().Bool("track-blocks", false, "Track blocks")
-			cmd.Flags().Bool("prewarm", false, "Prewarm")
-			cmd.Flags().Bool("track-user-latency", false, "Track user latency")
-			cmd.Flags().Int("buffer-size", 0, "Buffer size")
-			cmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
-			cmd.Flags().String("report-path", "", "Report path")
-			cmd.Flags().String("txs-dir", "", "Txs dir")
-			cmd.Flags().Uint64("target-gas", 0, "Target gas")
-			cmd.Flags().Int("num-blocks-to-write", 0, "Number of blocks to write")
-			cmd.Flags().Duration("post-summary-flush-delay", 0, "Post-summary flush delay")
-			cmd.Flags().String("arrival-model", "", "Arrival model")
-			cmd.Flags().Int("max-in-flight", 0, "Max in-flight")
+			// Create test command with the shared flag set (single source of
+			// truth — see registerSettingsFlags in regression_fence_test.go).
+			cmd := &cobra.Command{Use: "test"}
+			registerSettingsFlags(cmd)
 
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
