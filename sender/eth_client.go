@@ -50,22 +50,22 @@ type ethClient struct {
 }
 
 func (c *ethClient) Run(ctx context.Context) error {
+	u, err := url.Parse(c.cfg.Endpoint)
+	if err != nil {
+		return fmt.Errorf("parse endpoint %q: %w", c.cfg.Endpoint, err)
+	}
+	var opts []rpc.ClientOption
+	switch u.Scheme {
+	case "http", "https":
+		opts = append(opts, rpc.WithHTTPClient(newHttpClient()))
+	}
+	rpcClient, err := rpc.DialOptions(ctx, c.cfg.Endpoint, opts...)
+	if err != nil {
+		return fmt.Errorf("rpc.Dial(%q): %w", c.cfg.Endpoint, err)
+	}
+	client := ethclient.NewClient(rpcClient)
+	defer client.Close()
 	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
-		u, err := url.Parse(c.cfg.Endpoint)
-		if err != nil {
-			return fmt.Errorf("parse endpoint %q: %w", c.cfg.Endpoint, err)
-		}
-		var opts []rpc.ClientOption
-		switch u.Scheme {
-		case "http", "https":
-			opts = append(opts, rpc.WithHTTPClient(newHttpClient()))
-		}
-		rpcClient, err := rpc.DialOptions(ctx, c.cfg.Endpoint, opts...)
-		if err != nil {
-			return fmt.Errorf("rpc.Dial(%q): %w", c.cfg.Endpoint, err)
-		}
-		client := ethclient.NewClient(rpcClient)
-		defer client.Close()
 		for range c.cfg.Tasks {
 			s.Spawn(func() error { return c.runSender(ctx, client) })
 		}
@@ -199,6 +199,7 @@ func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client) err
 		// so stamping the actual send-attempt time here is race-free (see LoadTx).
 		req.tx.AttemptedSendTime = startTime
 		err = c.sendTx(ctx, client, req.tx)
+		close(req.done)
 		c.cfg.Collector.RecordTransaction(req.tx.Scenario.Name, c.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err != nil {
 			log.Printf("%v", err)
