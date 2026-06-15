@@ -419,6 +419,10 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 		return nil, fmt.Errorf("no scenarios specified in config")
 	}
 
+	if err := cfg.ValidateScenarios(); err != nil {
+		return nil, err
+	}
+
 	if err := cfg.ValidateFunding(); err != nil {
 		return nil, err
 	}

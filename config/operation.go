@@ -17,15 +17,9 @@ const (
 	OpWrite
 )
 
-// stream is set by SetStream; nil means draw from the unseeded global RNG. The
-// pointer aliases on copy, matching GasPicker/Distribution.
-type opStreamHolder struct {
-	stream *rng.Stream
-}
-
 // SetStream binds the selector to a deterministic sub-stream (nil = unseeded
 // global RNG), mirroring GasPicker.SetStream and Distribution.SetStream.
-func (m *OperationMix) SetStream(s *rng.Stream) { m.holder.stream = s }
+func (m *OperationMix) SetStream(s *rng.Stream) { m.stream = s }
 
 // Select draws one operation in proportion to the configured weights. A zero
 // total (all weights zero) falls back to OpRmw so an empty mix is the scaffold
@@ -36,8 +30,8 @@ func (m *OperationMix) Select() Operation {
 		return OpRmw
 	}
 	var u uint64
-	if m.holder.stream != nil {
-		u = m.holder.stream.Uint64N(total)
+	if m.stream != nil {
+		u = m.stream.Uint64N(total)
 	} else {
 		u = rand.Uint64N(total)
 	}
