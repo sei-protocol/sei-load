@@ -48,6 +48,6 @@ func TestRecordScheduleLag_FeedsVerdict(t *testing.T) {
 	}
 	c.RecordScheduleLag(50 * time.Millisecond)
 
-	v := EvaluateScheduleLag(c.ScheduleLagSamples(), 100, true, 0)
+	v := EvaluateScheduleLag(c.ScheduleLagSamples(), 100, true, false, 100, 0)
 	require.Equal(t, VerdictVoid, v.Verdict)
 }

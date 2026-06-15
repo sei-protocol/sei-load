@@ -99,9 +99,7 @@ func DefaultSettings() Settings {
 		NumBlocksToWrite:      100,
 		PostSummaryFlushDelay: Duration(25 * time.Second),
 		ArrivalModel:          ArrivalModelClosedLoop,
-		MaxInFlight:           10_000,
-		// Zero defers to the stats package's provisional default; surfaced here so
-		// a config file can override without a CLI flag.
+		MaxInFlight:              10_000,
 		ScheduleLagVoidThreshold: 0,
 	}
 }

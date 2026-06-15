@@ -17,9 +17,10 @@ const scheduleLagVoidThreshold = 0.10
 const (
 	VerdictValid = "VALID"
 	VerdictVoid  = "VOID"
-	// VerdictNA marks a run where the self-check does not apply (closed-loop, or
-	// no fixed arrival rate to compare against). schedule_lag_p99 is still
-	// reported, but no pass/fail gate is rendered.
+	// VerdictNA marks a run where the self-check does not apply: closed-loop, a
+	// ramped λ (no single 1/λ), no fixed arrival rate, or a fixed-λ run that
+	// recorded zero schedule_lag samples (cannot prove open-loop either way).
+	// schedule_lag_p99 is still reported, but no pass/fail gate is rendered.
 	VerdictNA = "N/A"
 )
 
@@ -32,6 +33,12 @@ type ScheduleLagVerdict struct {
 	Verdict string
 	// VoidReason is a human-readable explanation, empty unless Verdict is VOID.
 	VoidReason string
+	// NAReason explains an N/A verdict (why no gate applies); empty otherwise.
+	NAReason string
+	// Anomaly is true when the inputs are self-inconsistent — admitted txs but
+	// zero schedule_lag samples — so the caller can log loudly: the recorder is
+	// likely mis-wired rather than the run being clean.
+	Anomaly bool
 	// ScheduleLagP99 is the 99th-percentile send lag across sampled open-loop
 	// txs; zero when no open-loop samples were recorded.
 	ScheduleLagP99 time.Duration
@@ -46,15 +53,20 @@ type ScheduleLagVerdict struct {
 
 // EvaluateScheduleLag computes the open-loop self-check verdict from the
 // recorded schedule_lag samples, the configured arrival rate targetTPS (λ), the
-// run's arrival model, and the VOID threshold fraction (<=0 falls back to the
-// provisional default). p99 is the sorted-slice percentile, matching the repo's
-// block-time percentile idiom.
+// run's arrival model, whether the run ramped λ, the count of admitted txs, and
+// the VOID threshold fraction (<=0 falls back to the provisional default). p99
+// is the sorted-slice percentile, matching the repo's block-time percentile
+// idiom.
 //
-// The verdict is N/A — reported, never a gate — when the model is not open-loop
-// or when λ is not a single fixed rate (targetTPS <= 0, e.g. a ramping run),
-// since there is no single 1/λ to bound against. schedule_lag_p99 is still
-// reported in those cases.
-func EvaluateScheduleLag(samples []time.Duration, targetTPS float64, openLoop bool, threshold float64) ScheduleLagVerdict {
+// The verdict is N/A — reported, never a gate — when the model is not open-loop,
+// when the run ramped λ (a ramp has no single 1/λ to bound against, and the
+// ramper drives the live limit so targetTPS is stale), or when λ is not a single
+// fixed rate (targetTPS <= 0). A fixed-λ open-loop run that recorded zero
+// schedule_lag samples is also N/A, not VALID: zero samples cannot distinguish a
+// SUT that kept up from a recorder that never fired. When admitted > 0 yet no
+// samples landed, Anomaly is set so the caller logs the mis-wiring loudly.
+// schedule_lag_p99 is still reported in every case.
+func EvaluateScheduleLag(samples []time.Duration, targetTPS float64, openLoop, ramped bool, admitted uint64, threshold float64) ScheduleLagVerdict {
 	if threshold <= 0 {
 		threshold = scheduleLagVoidThreshold
 	}
@@ -66,18 +78,28 @@ func EvaluateScheduleLag(samples []time.Duration, targetTPS float64, openLoop bo
 		Threshold:      threshold,
 	}
 
-	if !openLoop || targetTPS <= 0 {
+	if !openLoop {
+		v.NAReason = "closed-loop run: open-loop self-check does not apply"
+		return v
+	}
+	if ramped {
+		v.NAReason = "ramped λ has no single arrival interval"
+		return v
+	}
+	if targetTPS <= 0 {
+		v.NAReason = "no fixed arrival rate (λ): nothing to bound against"
 		return v
 	}
 
 	arrivalInterval := time.Duration(float64(time.Second) / targetTPS)
 	v.ArrivalInterval = arrivalInterval
 
-	// No samples: the run scheduled nothing open-loop. Treat as VALID (nothing
-	// disproves open-loop) rather than VOID — VOID is reserved for an observed
-	// generator-bound run.
+	// Zero samples is N/A, not VALID: it cannot tell a SUT that kept up from a
+	// recorder that never fired or a run that dropped every tick. Admitted txs
+	// with no samples is an outright anomaly — flag it for the caller.
 	if len(samples) == 0 {
-		v.Verdict = VerdictValid
+		v.NAReason = "no schedule_lag samples recorded"
+		v.Anomaly = admitted > 0
 		return v
 	}
 

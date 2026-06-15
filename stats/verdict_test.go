@@ -26,7 +26,7 @@ func TestEvaluateScheduleLag_OverDrivenIsVoid(t *testing.T) {
 	}
 	samples = append(samples, 50*time.Millisecond) // the p99 element
 
-	v := EvaluateScheduleLag(samples, 100, true, 0)
+	v := EvaluateScheduleLag(samples, 100, true, false, 100, 0)
 
 	require.Equal(t, VerdictVoid, v.Verdict)
 	require.NotEmpty(t, v.VoidReason)
@@ -39,7 +39,7 @@ func TestEvaluateScheduleLag_HealthyIsValid(t *testing.T) {
 	samples := lags(0, 0, 0, 0, 0, 0, 0, 0, 0, 0) // all 0ms, p99 = 0
 	samples = append(samples, 200*time.Microsecond)
 
-	v := EvaluateScheduleLag(samples, 100, true, 0)
+	v := EvaluateScheduleLag(samples, 100, true, false, 100, 0)
 
 	require.Equal(t, VerdictValid, v.Verdict)
 	require.Empty(t, v.VoidReason)
@@ -55,7 +55,7 @@ func TestEvaluateScheduleLag_P99ComputedCorrectly(t *testing.T) {
 	}
 
 	// targetTPS=0 keeps verdict N/A but still reports p99.
-	v := EvaluateScheduleLag(samples, 0, true, 0)
+	v := EvaluateScheduleLag(samples, 0, true, false, 100, 0)
 	require.Equal(t, 100*time.Millisecond, v.ScheduleLagP99)
 	require.Equal(t, 100, v.SampleCount)
 }
@@ -64,31 +64,53 @@ func TestEvaluateScheduleLag_P99ComputedCorrectly(t *testing.T) {
 func TestEvaluateScheduleLag_ClosedLoopIsNA(t *testing.T) {
 	samples := lags(500, 500, 500) // huge lag, would be VOID if open-loop
 
-	v := EvaluateScheduleLag(samples, 100, false, 0)
+	v := EvaluateScheduleLag(samples, 100, false, false, 3, 0)
 
 	require.Equal(t, VerdictNA, v.Verdict)
 	require.Empty(t, v.VoidReason)
 	require.Equal(t, 500*time.Millisecond, v.ScheduleLagP99) // still reported
 }
 
-// Open-loop with no fixed λ (e.g. ramping, TPS=0) cannot bound against 1/λ → N/A.
+// Open-loop with no fixed λ (TPS=0) cannot bound against 1/λ → N/A.
 func TestEvaluateScheduleLag_NoFixedRateIsNA(t *testing.T) {
-	v := EvaluateScheduleLag(lags(100, 200, 300), 0, true, 0)
+	v := EvaluateScheduleLag(lags(100, 200, 300), 0, true, false, 3, 0)
 	require.Equal(t, VerdictNA, v.Verdict)
 	require.Equal(t, time.Duration(0), v.ArrivalInterval)
 }
 
-// No open-loop samples is VALID, not VOID: VOID needs an observed bad run.
-func TestEvaluateScheduleLag_NoSamplesIsValid(t *testing.T) {
-	v := EvaluateScheduleLag(nil, 100, true, 0)
-	require.Equal(t, VerdictValid, v.Verdict)
+// A ramped run drives λ via the limiter, so the configured TPS is stale and
+// there is no single 1/λ to gate against — N/A regardless of TPS.
+func TestEvaluateScheduleLag_RampedIsNA(t *testing.T) {
+	// TPS>0 but ramped: must still be N/A, not gated against the stale 1/TPS.
+	v := EvaluateScheduleLag(lags(500, 500, 500), 100, true, true, 3, 0)
+	require.Equal(t, VerdictNA, v.Verdict)
+	require.Empty(t, v.VoidReason)
+	require.Equal(t, "ramped λ has no single arrival interval", v.NAReason)
+	require.Equal(t, time.Duration(0), v.ArrivalInterval)
+}
+
+// No samples on a fixed-λ run is N/A, not VALID: it cannot distinguish a SUT
+// that kept up from a recorder that never fired.
+func TestEvaluateScheduleLag_NoSamplesIsNA(t *testing.T) {
+	v := EvaluateScheduleLag(nil, 100, true, false, 0, 0)
+	require.Equal(t, VerdictNA, v.Verdict)
+	require.Equal(t, "no schedule_lag samples recorded", v.NAReason)
+	require.False(t, v.Anomaly) // zero admitted: no anomaly, just an empty run
 	require.Equal(t, time.Duration(0), v.ScheduleLagP99)
+}
+
+// Admitted txs but zero samples is an anomaly: the recorder likely never fired.
+func TestEvaluateScheduleLag_AdmittedButNoSamplesIsAnomaly(t *testing.T) {
+	v := EvaluateScheduleLag(nil, 100, true, false, 5000, 0)
+	require.Equal(t, VerdictNA, v.Verdict)
+	require.Equal(t, "no schedule_lag samples recorded", v.NAReason)
+	require.True(t, v.Anomaly)
 }
 
 // A configured threshold overrides the default boundary.
 func TestEvaluateScheduleLag_ConfiguredThreshold(t *testing.T) {
 	samples := lags(2) // p99 = 2ms; interval at 100 TPS = 10ms
 	// 10% bound = 1ms → VOID; 50% bound = 5ms → VALID.
-	require.Equal(t, VerdictVoid, EvaluateScheduleLag(samples, 100, true, 0.10).Verdict)
-	require.Equal(t, VerdictValid, EvaluateScheduleLag(samples, 100, true, 0.50).Verdict)
+	require.Equal(t, VerdictVoid, EvaluateScheduleLag(samples, 100, true, false, 1, 0.10).Verdict)
+	require.Equal(t, VerdictValid, EvaluateScheduleLag(samples, 100, true, false, 1, 0.50).Verdict)
 }

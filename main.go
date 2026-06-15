@@ -396,11 +396,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		ramper.LogFinalStats()
 	}
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
+	var admitted uint64
 	if dispatcher != nil {
 		summary.ArrivalModel = string(dispatcher.ArrivalModel())
 		dstats := dispatcher.GetStats()
 		summary.Dropped = dstats.Dropped
 		summary.Failed = dstats.Failed
+		admitted = dstats.TotalSent + dstats.Failed
 		if summary.Dropped > 0 {
 			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
 		}
@@ -425,14 +427,22 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// not the requested flag — the txs-writer path downgrades to closed_loop).
 	openLoopRun := summary.ArrivalModel == config.ArrivalModelOpenLoop
 	verdict := stats.EvaluateScheduleLag(
-		collector.ScheduleLagSamples(), cfg.Settings.TPS, openLoopRun, cfg.Settings.ScheduleLagVoidThreshold)
+		collector.ScheduleLagSamples(), cfg.Settings.TPS, openLoopRun,
+		cfg.Settings.RampUp, admitted, cfg.Settings.ScheduleLagVoidThreshold)
 	summary.ScheduleLagP99 = verdict.ScheduleLagP99
 	summary.Verdict = verdict.Verdict
 	summary.VoidReason = verdict.VoidReason
-	if verdict.Verdict == stats.VerdictVoid {
+	if verdict.Anomaly {
+		log.Printf("🚨 no schedule_lag samples despite %d admitted txs — recorder may be mis-wired", admitted)
+	}
+	switch verdict.Verdict {
+	case stats.VerdictVoid:
 		log.Printf("⚠️  VOID: %s (schedule_lag_p99=%s, samples=%d)",
 			verdict.VoidReason, verdict.ScheduleLagP99.Round(time.Microsecond), verdict.SampleCount)
-	} else {
+	case stats.VerdictNA:
+		log.Printf("🧪 Run verdict: N/A — %s | schedule_lag_p99=%s (samples=%d)",
+			verdict.NAReason, verdict.ScheduleLagP99.Round(time.Microsecond), verdict.SampleCount)
+	default:
 		log.Printf("🧪 Run verdict: %s | schedule_lag_p99=%s (samples=%d, arrival_interval=%s)",
 			verdict.Verdict, verdict.ScheduleLagP99.Round(time.Microsecond),
 			verdict.SampleCount, verdict.ArrivalInterval.Round(time.Microsecond))
