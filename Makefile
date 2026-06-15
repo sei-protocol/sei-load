@@ -211,13 +211,13 @@ check-lint-pin:
 		rc=0; \
 		wf=".github/workflows/build-and-test.yml"; \
 		gc=".golangci.yml"; \
-		wf_ver=$$(grep -E '^\s*version:\s*v[0-9]+\.[0-9]+\.[0-9]+' $$wf | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		wf_ver=$$(grep -E '^[[:space:]]*version:[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+' $$wf | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
 		if [ -z "$$wf_ver" ]; then \
 			echo "❌ $$wf: could not find a golangci-lint-action 'version: vX.Y.Z' line"; rc=1; \
 		elif [ "$$wf_ver" != "$$expected" ]; then \
 			echo "❌ $$wf: golangci-lint-action version $$wf_ver != Makefile $$expected"; rc=1; \
 		fi; \
-		gc_ver=$$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' $$gc | head -1); \
+		gc_ver=$$(grep -oE 'golangci-lint v[0-9]+\.[0-9]+\.[0-9]+' $$gc | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
 		if [ -z "$$gc_ver" ]; then \
 			echo "❌ $$gc: could not find a 'vX.Y.Z' version reference in the header comment"; rc=1; \
 		elif [ "$$gc_ver" != "$$expected" ]; then \

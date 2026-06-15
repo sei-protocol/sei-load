@@ -175,11 +175,11 @@ blocks height=5191 time(p50=2s p99=5s max=8s) gas(p50=21000 p99=50000 max=100000
 Run the full local CI gate in one command:
 
 ```bash
-make verify   # lint + test + build + CLI --help + check-bindings
+make verify   # check-lint-pin + lint + test + build + CLI --help + check-bindings
 ```
 
 `make verify` mirrors the gating CI jobs (`build-and-test`, `bindings-check`):
-lint, test, compile the CLI, and a `--help` smoke. The only gating step it does
+the golangci-lint version-pin check, lint, test, compile the CLI, and a `--help` smoke. The only gating step it does
 *not* run is CI's dry-run smoke (a backgrounded `seiload --dry-run` killed after
 5s) — that asserts no exit code and stays CI-only, so a green `verify` is a strong
 signal but not a literal guarantee of that one step. Install the pinned toolchain
