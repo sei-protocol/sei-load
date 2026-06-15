@@ -28,3 +28,11 @@ func GasTipStream(i int) string { return fmt.Sprintf("gas:%d:tip", i) }
 
 // GasFeeCapStream is the stream id for scenario i's fee-cap gas picker.
 func GasFeeCapStream(i int) string { return fmt.Sprintf("gas:%d:feecap", i) }
+
+// KeyDistributionStream is the stream id for scenario i's key-distribution
+// index sampler (PLT-460).
+func KeyDistributionStream(i int) string { return fmt.Sprintf("dist:%d:key", i) }
+
+// SizeDistributionStream is the stream id for scenario i's size-distribution
+// index sampler (PLT-460).
+func SizeDistributionStream(i int) string { return fmt.Sprintf("dist:%d:size", i) }
