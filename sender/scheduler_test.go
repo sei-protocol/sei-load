@@ -537,6 +537,29 @@ func TestOpenLoopSchedule_HonorsRampedLambda(t *testing.T) {
 		"ramped-up λ must shrink the inter-arrival gap below the initial 20ms")
 }
 
+// TestOpenLoopSchedule_ClampsRunawayLambda guards the maxScheduleRate ceiling:
+// if the ramper drives the limiter to rate.Inf mid-run, the gap (1s/λ) would
+// truncate to 0, nextSend would stop advancing, and the scheduler would spin.
+// The clamp keeps gap > 0, so IntendedSendTime stays strictly increasing across
+// the issued stream.
+func TestOpenLoopSchedule_ClampsRunawayLambda(t *testing.T) {
+	gen := newFakeGenerator(2000)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	snd := newAsyncFakeSender(ctx, 4096, 8, 0)
+	limiter := rate.NewLimiter(rate.Inf, 1) // runaway λ from the start
+	sched := newOpenLoopScheduler(gen, snd, limiter, 4096, nil)
+
+	runScheduler(ctx, sched)
+
+	issued := gen.issuedTxs()
+	require.GreaterOrEqual(t, len(issued), 2, "scheduler must keep issuing under Inf λ")
+	for i := 1; i < len(issued); i++ {
+		require.True(t, issued[i].IntendedSendTime.After(issued[i-1].IntendedSendTime),
+			"clamp must keep IntendedSendTime advancing (gap>0) under rate.Inf, tick %d", i)
+	}
+}
+
 // TestOpenLoopSchedule_StampsBeforeHandoff guards the LoadTx concurrency
 // contract: the scheduler stamps IntendedSendTime and SequenceIndex before the
 // send task can touch the tx. Run under -race to catch a regression.

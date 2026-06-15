@@ -216,20 +216,20 @@ func (g *signedTxGenerator) issuedCount() int {
 }
 
 // newRealWorker builds the production Worker against the given endpoint, in the
-// open-loop configuration (RateLimited=false so the scheduler owns the clock,
+// open-loop configuration (SkipRateLimit=true so the scheduler owns the clock,
 // TrackReceipts=false so watchTransactions returns immediately and we exercise
 // only the send path). It is the real TxSender the scheduler drives.
 func newRealWorker(endpoint string, tasks, buffer int) *Worker {
 	return NewWorker(&WorkerConfig{
-		ID:          0,
-		SeiChainID:  "test",
-		Endpoint:    endpoint,
-		BufferSize:  buffer,
-		Tasks:       tasks,
-		DryRun:      false,
-		Debug:       false,
-		Collector:   stats.NewCollector(),
-		RateLimited: false,
+		ID:            0,
+		SeiChainID:    "test",
+		Endpoint:      endpoint,
+		BufferSize:    buffer,
+		Tasks:         tasks,
+		DryRun:        false,
+		Debug:         false,
+		Collector:     stats.NewCollector(),
+		SkipRateLimit: true,
 	})
 }
 
@@ -457,7 +457,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 }
 
 // TestDispatcher_PrewarmRateLimitedInOpenLoop guards the prewarm-flood
-// regression: in open-loop the workers are constructed RateLimited=false, but
+// regression: in open-loop the workers are constructed SkipRateLimit=true, but
 // the scheduler paces only the MAIN load. Prewarm runs first over those same
 // ungated workers, so it must pace itself off the shared limiter or it floods
 // the SUT. With workers wired exactly as in open-loop, a low limit, and many
@@ -470,7 +470,7 @@ func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
 	const prewarmTxs = 40
 	const rps = 200.0 // limiter: 200 tx/s → unpaced 40 txs is near-instant
 
-	worker := newRealWorker(srv.url(), 8, 256) // RateLimited=false, open-loop shape
+	worker := newRealWorker(srv.url(), 8, 256) // SkipRateLimit=true, open-loop shape
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 

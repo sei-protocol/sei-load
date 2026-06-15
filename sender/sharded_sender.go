@@ -26,7 +26,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 	// The worker is the rate authority only in the closed-loop model. In
 	// open-loop the scheduler owns the arrival clock (driving the same shared
 	// limiter), so worker-side gating would double-throttle the rate.
-	rateLimited := cfg.Settings.ArrivalModel != config.ArrivalModelOpenLoop
+	skipRateLimit := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
 
 	workers := make([]*Worker, len(cfg.Endpoints))
 	for i, endpoint := range cfg.Endpoints {
@@ -41,7 +41,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			Debug:         cfg.Settings.Debug,
 			Collector:     collector,
 			Limiter:       limiter,
-			RateLimited:   rateLimited,
+			SkipRateLimit: skipRateLimit,
 		})
 	}
 

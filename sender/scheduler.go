@@ -39,6 +39,14 @@ type openLoopScheduler struct {
 // (config.Settings.Validate).
 const minScheduleRate = 1e-9
 
+// maxScheduleRate ceilings λ so a mid-run ramp toward rate.Inf can't collapse
+// the gap to 0 (gap = 1s/λ truncates to 0 once λ exceeds ~1e9 = 1s in ns),
+// which would stall nextSend and spin the scheduler. Startup validation only
+// rejects λ=Inf at config time; this defends the ramper driving λ→Inf after the
+// run starts. The ceiling is ~1e8 TPS — orders of magnitude above any realistic
+// load — so it never affects a real run; at λ=maxScheduleRate the gap is 10ns>0.
+const maxScheduleRate = 1e8
+
 func newOpenLoopScheduler(
 	gen generator.Generator,
 	snd TxSender,
@@ -76,6 +84,9 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 		lambda := float64(s.limiter.Limit())
 		if lambda < minScheduleRate {
 			lambda = minScheduleRate
+		}
+		if lambda > maxScheduleRate {
+			lambda = maxScheduleRate
 		}
 		gap := time.Duration(float64(time.Second) / lambda)
 

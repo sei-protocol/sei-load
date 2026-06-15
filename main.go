@@ -301,10 +301,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// (see NewShardedSender) so they don't double-throttle. Only applies to
 		// the live-send path; the txs writer path has no arrival clock.
 		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
-		if openLoop && cfg.Settings.TxsDir == "" {
+		switch {
+		case openLoop && cfg.Settings.TxsDir == "":
 			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
 			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
-		} else {
+		case openLoop:
+			// open_loop was requested but the txs-writer path has no arrival clock,
+			// so the run falls back to closed_loop. Surface the downgrade.
+			log.Printf("📤 Arrival model: closed_loop (txs-writer path; --arrival-model open_loop ignored)")
+		default:
 			log.Printf("📤 Arrival model: closed_loop")
 		}
 
