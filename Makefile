@@ -62,7 +62,7 @@ SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CON
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  verify            - Run exactly what CI gates on: lint + test + check-bindings"
+	@echo "  verify            - Run the gating CI checks: lint + test + build + CLI --help + check-bindings"
 	@echo "  build             - Build the seiload CLI (alias for build-cli)"
 	@echo "  test              - Run tests with coverage (race detector enabled)"
 	@echo "  lint              - Run linting and static analysis (golangci-lint $(GOLANGCI_VERSION))"
@@ -244,7 +244,13 @@ lint:
 	@golangci-lint run
 	@echo "✅ Linting and static analysis passed"
 
-# Local CI parity: lint + test + check-bindings — the gating jobs in
-# build-and-test.yml + bindings-check.yml. Green = those CI jobs pass.
-verify: lint test check-bindings
-	@echo "✅ verify passed (lint + test + check-bindings) — local CI parity"
+# Local CI parity for the gating jobs (build-and-test.yml + bindings-check.yml).
+# Mirrors build-and-test's lint/test/build/--help so a broken main/CLI is caught
+# locally, not in CI. The one CI step NOT folded in is the dry-run smoke: it's a
+# backgrounded run killed after 5s and never asserts an exit code, so it's a weak,
+# non-deterministic signal that's not worth a 5s+ wall-time tax on every verify.
+# That step stays CI-only; see README "Before you push".
+verify: lint test build check-bindings
+	@echo "🔍 Smoke-testing CLI entrypoint (--help)..."
+	@$(BUILD_DIR)/$(BINARY_NAME) --help > /dev/null
+	@echo "✅ verify passed (lint + test + build + --help + check-bindings)"

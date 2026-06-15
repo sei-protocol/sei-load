@@ -175,11 +175,15 @@ blocks height=5191 time(p50=2s p99=5s max=8s) gas(p50=21000 p99=50000 max=100000
 Run the full local CI gate in one command:
 
 ```bash
-make verify   # lint + test + check-bindings (exactly what CI gates on)
+make verify   # lint + test + build + CLI --help + check-bindings
 ```
 
-A green `make verify` means the gating CI jobs (`build-and-test`, `bindings-check`)
-will pass. Install the pinned toolchain once first so your local results match CI:
+`make verify` mirrors the gating CI jobs (`build-and-test`, `bindings-check`):
+lint, test, compile the CLI, and a `--help` smoke. The only gating step it does
+*not* run is CI's dry-run smoke (a backgrounded `seiload --dry-run` killed after
+5s) — that asserts no exit code and stays CI-only, so a green `verify` is a strong
+signal but not a literal guarantee of that one step. Install the pinned toolchain
+once first so your local results match CI:
 
 ```bash
 make install-tools   # full toolchain: Node (via nvm), solc, abigen, golangci-lint (pinned to v2.12.2)
