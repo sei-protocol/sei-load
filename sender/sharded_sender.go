@@ -33,6 +33,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			ID:            id,
 			Endpoint:      endpoint,
 			Tasks:         cfg.Settings.TasksPerEndpoint,
+			DryRun:        cfg.Settings.DryRun,
 			Debug:         cfg.Settings.Debug,
 			TrackReceipts: cfg.Settings.TrackReceipts,
 			ReceiptsBuf:   cfg.Settings.BufferSize,
