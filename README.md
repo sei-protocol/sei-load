@@ -56,7 +56,8 @@ Edit `my-config.json`:
 | `--buffer-size, -b` | 1000 | Buffer size per worker |
 | `--dry-run` | false | Simulate without sending |
 | `--debug` | false | Log each transaction |
-| `--track-receipts` | false | Track transaction receipts |
+| `--track-receipts` | false | Enable the block-indexed tx→inclusion tracker (stamps InclusionTime; reports included/expired/inflight-at-shutdown) |
+| `--inclusion-reap-after` | 30s | How long an un-included tx waits before reaping as expired (tune to expected inclusion time on congested chains) |
 | `--track-blocks` | false | Track block statistics |
 | `--track-user-latency` | false | Track user latency metrics |
 | `--prewarm` | false | Prewarm accounts before test |

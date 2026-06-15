@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -53,6 +54,7 @@ without actually sending requests or deploying contracts.`,
 func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
+	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
 	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
@@ -208,6 +210,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	var ramper *sender.Ramper
 	var dispatcher *sender.Dispatcher
+	var inclusionTracker *stats.InclusionTracker
 
 	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
 		// Create the generator from the config struct
@@ -258,8 +261,27 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
+		// The --track-receipts flag now enables the block-indexed inclusion
+		// tracker (the lossy per-tx receipt path is retired).
+		// Not wired under --dry-run: simulated sends never hit the chain, so they
+		// would all reap as expired and pollute the inclusion stats.
+		inclusion := utils.None[*stats.InclusionTracker]()
+		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
+			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
+			inclusionTracker = stats.NewInclusionTracker(
+				cfg.SeiChainID,
+				reapAfter,
+				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
+				cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop,
+			)
+			inclusion = utils.Some(inclusionTracker)
+			s.SpawnBgNamed("inclusion tracker", func() error {
+				return inclusionTracker.Run(ctx, cfg.Endpoints[0])
+			})
+		}
+
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector)
+		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
@@ -386,6 +408,18 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
 		}
 	}
+	// Read AFTER service.Run returns: both workers and the tracker have joined,
+	// so inflightAtShutdown is final and the conservation identity holds.
+	if inclusionTracker != nil {
+		incl := inclusionTracker.Summary()
+		summary.InclusionTracked = true
+		summary.Included = incl.Included
+		summary.Expired = incl.Expired
+		summary.DroppedAtCap = incl.DroppedAtCap
+		summary.InflightAtShutdown = incl.InflightAtShutdown
+		log.Printf("📦 Inclusion: included=%d expired=%d dropped_at_cap=%d inflight_at_shutdown=%d",
+			incl.Included, incl.Expired, incl.DroppedAtCap, incl.InflightAtShutdown)
+	}
 	collector.EmitRunSummary(ctx, summary)
 	if d := cfg.Settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
 		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
@@ -396,6 +430,27 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		err = nil
 	}
 	return err
+}
+
+// inclusionRegistryCap sizes the inclusion registry. A registry entry lives from
+// send-completion until block-match or reapAfter — far longer than a send is
+// in-flight — so MaxInFlight (which bounds concurrent SENDS) under-sizes it. By
+// Little's law the steady-state registry size ≈ sendRate × residency, so for a
+// fixed rate the cap must come from TPS × reapAfter (×1.5 headroom for jitter),
+// not send concurrency, or healthy high-TPS runs hit dropped_at_cap and
+// undercount inclusion. We take the MAX of that term and the legacy MaxInFlight×4
+// floor. For TPS<=0 (a ramped run with no fixed rate known at config time) the
+// Little's-law term is 0 and we fall back to the floor; if the ramp peak exceeds
+// it the run surfaces dropped_at_cap (un-defer: derive from the ramp peak then).
+func inclusionRegistryCap(maxInFlight int, tps float64, reapAfter time.Duration) int {
+	const maxInflightMultiple = 4
+	const headroom = 1.5
+	floor := maxInFlight * maxInflightMultiple
+	little := int(math.Ceil(tps * reapAfter.Seconds() * headroom))
+	if little > floor {
+		return little
+	}
+	return floor
 }
 
 // loadConfig reads and parses the configuration file

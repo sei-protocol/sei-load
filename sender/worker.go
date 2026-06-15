@@ -2,7 +2,6 @@ package sender
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -10,7 +9,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -29,27 +27,28 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type WorkerConfig struct {
-	ID            int
-	SeiChainID    string
-	Endpoint      string
-	BufferSize    int
-	Tasks         int
-	DryRun        bool
-	Debug         bool
-	TrackReceipts bool
-	Collector     *stats.Collector
-	Limiter       *rate.Limiter // Shared rate authority; nil disables gating.
+	ID         int
+	SeiChainID string
+	Endpoint   string
+	BufferSize int
+	Tasks      int
+	DryRun     bool
+	Debug      bool
+	Collector  *stats.Collector
+	Limiter    *rate.Limiter // Shared rate authority; nil disables gating.
 	// SkipRateLimit opts a worker out of limiter gating. Zero value (false) is the
 	// safe default (gate when Limiter is set); set true only in open-loop, where
 	// the scheduler owns the clock (see doc.go).
 	SkipRateLimit bool
+	// Inclusion, when present, receives each successful send at send-completion so
+	// the tracker can stamp InclusionTime (see doc.go). None disables tracking.
+	Inclusion utils.Option[*stats.InclusionTracker]
 }
 
 // Worker handles sending transactions to a specific endpoint
 type Worker struct {
-	cfg     *WorkerConfig
-	txChan  chan *types.LoadTx
-	sentTxs chan *types.LoadTx
+	cfg    *WorkerConfig
+	txChan chan *types.LoadTx
 }
 
 // HttpClientOption configures the Transport used by newHttpClient.
@@ -124,9 +123,8 @@ func newRPCClient(ctx context.Context, endpoint string, opts ...HttpClientOption
 // NewWorker creates a new worker for a specific endpoint
 func NewWorker(cfg *WorkerConfig) *Worker {
 	w := &Worker{
-		cfg:     cfg,
-		txChan:  make(chan *types.LoadTx, cfg.BufferSize),
-		sentTxs: make(chan *types.LoadTx, cfg.BufferSize),
+		cfg:    cfg,
+		txChan: make(chan *types.LoadTx, cfg.BufferSize),
 	}
 	meterWorkerQueueLength(w)
 	return w
@@ -144,80 +142,13 @@ func (w *Worker) Run(ctx context.Context) error {
 		for range w.cfg.Tasks {
 			s.Spawn(func() error { return w.runTxSender(ctx, client) })
 		}
-		return w.watchTransactions(ctx, client)
+		return nil
 	})
 }
 
 // Send queues a transaction for this worker to process
 func (w *Worker) Send(ctx context.Context, tx *types.LoadTx) error {
 	return utils.Send(ctx, w.txChan, tx)
-}
-
-func (w *Worker) watchTransactions(ctx context.Context, eth *ethclient.Client) error {
-	if w.cfg.DryRun || !w.cfg.TrackReceipts {
-		return nil
-	}
-	for ctx.Err() == nil {
-		tx, err := utils.Recv(ctx, w.sentTxs)
-		if err != nil {
-			return err
-		}
-		// Cancel per-iteration; defer would leak contexts under sustained load.
-		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := w.waitForReceipt(waitCtx, eth, tx); err != nil {
-			log.Printf("❌ %v", err)
-		}
-		cancel()
-	}
-	return ctx.Err()
-}
-
-func (w *Worker) waitForReceipt(ctx context.Context, eth *ethclient.Client, tx *types.LoadTx) (_err error) {
-	ctx, span := tracer.Start(ctx, "sender.check_receipt", trace.WithAttributes(
-		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", w.cfg.Endpoint),
-		attribute.Int("seiload.worker_id", w.cfg.ID),
-		attribute.String("seiload.chain_id", w.cfg.SeiChainID),
-	))
-	defer func(start time.Time) {
-		if _err != nil {
-			span.RecordError(_err)
-		}
-		span.End()
-		// Record inside the span ctx so exemplars link to the trace.
-		// worker_id stays off the histogram (cardinality); available via span.
-		receiptLatency.Record(ctx, time.Since(start).Seconds(),
-			metric.WithAttributes(
-				attribute.String("scenario", tx.Scenario.Name),
-				attribute.String("endpoint", w.cfg.Endpoint),
-				attribute.String("chain_id", w.cfg.SeiChainID),
-				statusAttrFromError(_err)),
-		)
-	}(time.Now())
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for ctx.Err() == nil {
-		if _, err := utils.Recv(ctx, ticker.C); err != nil {
-			return fmt.Errorf("timeout waiting for receipt for tx %s", tx.EthTx.Hash().Hex())
-		}
-		receipt, err := eth.TransactionReceipt(ctx, tx.EthTx.Hash())
-		if err != nil {
-			if errors.Is(err, ethereum.NotFound) {
-				continue
-			}
-			log.Printf("❌ error getting receipt for tx %s: %v", tx.EthTx.Hash().Hex(), err)
-			continue
-		}
-		// Receipt found - log status and return
-		if receipt.Status != 1 {
-			return fmt.Errorf("tx %s failed", tx.EthTx.Hash().Hex())
-		}
-		if w.cfg.Debug {
-			log.Printf("✅ tx %s, %s, gas=%d succeeded\n", tx.Scenario.Name, tx.EthTx.Hash().Hex(), receipt.GasUsed)
-		}
-		return nil
-	}
-	return ctx.Err()
 }
 
 // runTxSender is the main worker loop that processes transactions
@@ -245,6 +176,14 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 			tx.OnComplete(err)
 		}
 		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
+		// Register at send-completion, only on success: registered ⊆ succeeded.
+		// (The tracker is wired only for live runs — see main.go; DryRun never
+		// gets a tracker, so simulated sends are not inclusion-tracked.)
+		if err == nil {
+			if t, ok := w.cfg.Inclusion.Get(); ok {
+				t.Register(tx)
+			}
+		}
 		if err != nil {
 			log.Printf("%v", err)
 		}
@@ -265,7 +204,8 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 			span.RecordError(_err)
 		}
 		span.End()
-		// See receiptLatency above re: span-context recording + no worker_id.
+		// Record inside the span ctx so exemplars link to the trace; worker_id
+		// stays off the histogram (cardinality), available via the span.
 		sendLatency.Record(ctx, time.Since(start).Seconds(),
 			metric.WithAttributes(
 				attribute.String("scenario", tx.Scenario.Name),
@@ -291,8 +231,6 @@ func (w *Worker) sendTransaction(ctx context.Context, client *ethclient.Client, 
 		attribute.String("endpoint", w.cfg.Endpoint),
 		attribute.String("scenario", tx.Scenario.Name),
 	))
-
-	utils.SendOrDrop(w.sentTxs, tx) // non-blocking handoff to receipt poller
 	return nil
 }
 

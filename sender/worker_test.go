@@ -2,18 +2,23 @@ package sender
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // drainWorkerWithLimiter runs runTxSender (DryRun: no RPC) over txCount queued
@@ -71,6 +76,79 @@ func TestRunTxSender_SkipRateLimitBypassesLimiter(t *testing.T) {
 	elapsed := drainWorkerWithLimiter(t, true, txCount, rps)
 	require.Less(t, elapsed, 100*time.Millisecond,
 		"SkipRateLimit must bypass the limiter")
+}
+
+// dryRunTx builds a minimal LoadTx with a real eth tx so EthTx.Hash() works.
+func dryRunTx(nonce uint64) *types.LoadTx {
+	eth := ethtypes.NewTx(&ethtypes.LegacyTx{
+		Nonce: nonce, GasPrice: big.NewInt(1), Gas: 21000,
+		To: &common.Address{}, Value: big.NewInt(0),
+	})
+	return &types.LoadTx{EthTx: eth, Scenario: &types.TxScenario{Name: "incl"}}
+}
+
+// inflightCount reads the tracker's registry size via its Summary (read after a
+// drain, so inflight is the registered-minus-terminal count).
+func inflightCount(tr *stats.InclusionTracker) uint64 {
+	return tr.Summary().InflightAtShutdown
+}
+
+// TestRunTxSender_RegistersSuccessfulSend asserts the inclusion hand-off:
+// a successful (DryRun) send registers the tx with the tracker, and Register
+// runs strictly AFTER OnComplete (the permit-release ordering in doc.go).
+func TestRunTxSender_RegistersSuccessfulSend(t *testing.T) {
+	tracker := stats.NewInclusionTracker("test-chain", time.Hour, 100, true /* openLoop */)
+	collector := stats.NewCollector()
+	w := NewWorker(&WorkerConfig{
+		ID: 0, Endpoint: "dryrun", BufferSize: 4, Tasks: 1, DryRun: true,
+		Collector: collector, SkipRateLimit: true,
+		Inclusion: utils.Some(tracker),
+	})
+
+	// Single tx so the registry starts empty: at OnComplete time inflight must
+	// still be 0, proving Register runs strictly after OnComplete.
+	var inflightAtComplete atomic.Int64
+	tx := dryRunTx(0)
+	tx.OnComplete = func(error) {
+		inflightAtComplete.Store(int64(inflightCount(tracker)))
+	}
+	w.txChan <- tx
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	go func() {
+		for collector.GetStats().TotalTxs < 1 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	_ = w.runTxSender(ctx, nil)
+
+	require.Equal(t, int64(0), inflightAtComplete.Load(),
+		"Register must fire after OnComplete (registry empty at OnComplete time)")
+	require.Equal(t, uint64(1), inflightCount(tracker),
+		"a successful send registers exactly once")
+}
+
+// TestRunTxSender_NoInclusionTracker confirms a None tracker is a safe no-op.
+func TestRunTxSender_NoInclusionTracker(t *testing.T) {
+	collector := stats.NewCollector()
+	w := NewWorker(&WorkerConfig{
+		ID: 0, Endpoint: "dryrun", BufferSize: 2, Tasks: 1, DryRun: true,
+		Collector: collector, SkipRateLimit: true,
+		Inclusion: utils.None[*stats.InclusionTracker](),
+	})
+	w.txChan <- dryRunTx(0)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	go func() {
+		for collector.GetStats().TotalTxs < 1 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	require.NotPanics(t, func() { _ = w.runTxSender(ctx, nil) })
 }
 
 func TestNewHttpTransport_Defaults(t *testing.T) {

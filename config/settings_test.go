@@ -82,6 +82,7 @@ func TestArgumentPrecedence(t *testing.T) {
 
 			// Add flags (with zero defaults to avoid precedence issues)
 			cmd.Flags().Duration("stats-interval", 0, "Stats interval")
+			cmd.Flags().Duration("inclusion-reap-after", 0, "Inclusion reap after")
 			cmd.Flags().Int("workers", 0, "Number of workers")
 			cmd.Flags().Float64("tps", 0, "TPS")
 			cmd.Flags().Bool("dry-run", false, "Dry run")
@@ -130,6 +131,7 @@ func TestDefaultSettings(t *testing.T) {
 		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
+		InclusionReapAfter:    Duration(30 * time.Second),
 		BufferSize:            1000,
 		DryRun:                false,
 		Debug:                 false,

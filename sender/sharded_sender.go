@@ -9,6 +9,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
 
@@ -17,8 +18,10 @@ type ShardedSender struct {
 	workers []*Worker
 }
 
-// NewShardedSender creates a new sharded sender with workers for each endpoint
-func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
+// NewShardedSender creates a new sharded sender with workers for each endpoint.
+// inclusion, when present, is shared across all workers so each routes its
+// successful sends to the one tracker.
+func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector, inclusion utils.Option[*stats.InclusionTracker]) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
@@ -36,11 +39,11 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			BufferSize:    cfg.Settings.BufferSize,
 			Tasks:         cfg.Settings.TasksPerEndpoint,
 			DryRun:        cfg.Settings.DryRun,
-			TrackReceipts: cfg.Settings.TrackReceipts,
 			Debug:         cfg.Settings.Debug,
 			Collector:     collector,
 			Limiter:       limiter,
 			SkipRateLimit: skipRateLimit,
+			Inclusion:     inclusion,
 		})
 	}
 

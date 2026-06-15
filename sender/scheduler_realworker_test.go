@@ -217,8 +217,8 @@ func (g *signedTxGenerator) issuedCount() int {
 
 // newRealWorker builds the production Worker against the given endpoint, in the
 // open-loop configuration (SkipRateLimit=true so the scheduler owns the clock,
-// TrackReceipts=false so watchTransactions returns immediately and we exercise
-// only the send path). It is the real TxSender the scheduler drives.
+// no inclusion tracker so we exercise only the send path). It is the real
+// TxSender the scheduler drives.
 func newRealWorker(endpoint string, tasks, buffer int) *Worker {
 	return NewWorker(&WorkerConfig{
 		ID:            0,
