@@ -2,10 +2,19 @@ package stats
 
 import (
 	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
 )
+
+// scheduleLagReservoirCap bounds the schedule_lag sample set. Open-loop runs can
+// emit millions of txs; storing every lag is unbounded memory. A reservoir of
+// this size keeps a uniform random sample of the full run (Algorithm R), so the
+// p99 stays representative regardless of run length — unlike tail-trimming,
+// which would bias the percentile toward the run's final window. ~16k *
+// time.Duration (8B) ≈ 128KB, negligible against the tx working set.
+const scheduleLagReservoirCap = 16384
 
 // Collector tracks comprehensive statistics for load testing
 type Collector struct {
@@ -34,6 +43,14 @@ type Collector struct {
 	totalTxs       uint64
 	lastWindowTime time.Time
 
+	// schedule_lag reservoir: a bounded uniform sample of per-tx send lag
+	// (AttemptedSendTime − IntendedSendTime), used for the open-loop self-check
+	// verdict. scheduleLagSeen is the total count of recorded samples (the
+	// reservoir's n), needed for Algorithm R replacement probability.
+	scheduleLag     []time.Duration
+	scheduleLagSeen uint64
+	scheduleLagRand *rand.Rand
+
 	// Configuration
 	maxLatencyHistory int // Limit latency history to prevent memory leaks
 }
@@ -56,7 +73,49 @@ func NewCollector() *Collector {
 		startTime:         time.Now(),
 		lastWindowTime:    time.Now(),
 		maxLatencyHistory: 10000, // Keep last 10k latencies per endpoint
+		scheduleLag:       make([]time.Duration, 0, scheduleLagReservoirCap),
+		// Local source: this is a self-check sample, not security-sensitive, and a
+		// per-collector source avoids contending the global rand mutex on the hot
+		// send path.
+		scheduleLagRand: rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // sampling, not crypto
 	}
+}
+
+// RecordScheduleLag records one open-loop send lag (AttemptedSendTime −
+// IntendedSendTime) into the bounded reservoir. The worker calls it right after
+// stamping AttemptedSendTime, only when IntendedSendTime is set (open-loop txs;
+// closed-loop/prewarm pass a zero IntendedSendTime and are excluded by the
+// caller). Negative lags (clock skew between scheduler and worker reads) are
+// clamped to zero so they cannot deflate the p99.
+func (c *Collector) RecordScheduleLag(lag time.Duration) {
+	if lag < 0 {
+		lag = 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.scheduleLagSeen++
+	if len(c.scheduleLag) < scheduleLagReservoirCap {
+		c.scheduleLag = append(c.scheduleLag, lag)
+		return
+	}
+	// Reservoir full: replace a uniformly random slot with probability
+	// cap/seen (Algorithm R), keeping the retained set a uniform sample.
+	j := c.scheduleLagRand.Int63n(int64(c.scheduleLagSeen))
+	if j < int64(scheduleLagReservoirCap) {
+		c.scheduleLag[j] = lag
+	}
+}
+
+// ScheduleLagSamples returns a copy of the current schedule_lag reservoir. Call
+// at run end to feed EvaluateScheduleLag; the copy keeps the caller's percentile
+// sort off the live slice.
+func (c *Collector) ScheduleLagSamples() []time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]time.Duration, len(c.scheduleLag))
+	copy(out, c.scheduleLag)
+	return out
 }
 
 // RecordTransaction records a transaction attempt

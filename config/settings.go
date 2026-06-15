@@ -42,6 +42,11 @@ type Settings struct {
 	// txs that would exceed it at their scheduled instant are dropped and
 	// counted rather than throttling the arrival clock. Ignored in closed-loop.
 	MaxInFlight int `json:"maxInFlight,omitempty"`
+	// ScheduleLagVoidThreshold is the fraction of the arrival interval (1/λ) that
+	// schedule_lag_p99 may reach before an open-loop run is VOID (PLT-463). Zero
+	// uses the provisional built-in default; set via config to retune without a
+	// rebuild. Ignored in closed-loop.
+	ScheduleLagVoidThreshold float64 `json:"scheduleLagVoidThreshold,omitempty"`
 }
 
 // Arrival model identifiers for the ArrivalModel setting.
@@ -95,6 +100,9 @@ func DefaultSettings() Settings {
 		PostSummaryFlushDelay: Duration(25 * time.Second),
 		ArrivalModel:          ArrivalModelClosedLoop,
 		MaxInFlight:           10_000,
+		// Zero defers to the stats package's provisional default; surfaced here so
+		// a config file can override without a CLI flag.
+		ScheduleLagVoidThreshold: 0,
 	}
 }
 
@@ -150,6 +158,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("postSummaryFlushDelay", defaults.PostSummaryFlushDelay.ToDuration())
 	viper.SetDefault("arrivalModel", defaults.ArrivalModel)
 	viper.SetDefault("maxInFlight", defaults.MaxInFlight)
+	viper.SetDefault("scheduleLagVoidThreshold", defaults.ScheduleLagVoidThreshold)
 	return nil
 }
 
@@ -193,7 +202,8 @@ func ResolveSettings() *Settings {
 		TargetGas:             viper.GetUint64("targetGas"),
 		NumBlocksToWrite:      viper.GetInt("numBlocksToWrite"),
 		PostSummaryFlushDelay: Duration(viper.GetDuration("postSummaryFlushDelay")),
-		ArrivalModel:          viper.GetString("arrivalModel"),
-		MaxInFlight:           viper.GetInt("maxInFlight"),
+		ArrivalModel:             viper.GetString("arrivalModel"),
+		MaxInFlight:              viper.GetInt("maxInFlight"),
+		ScheduleLagVoidThreshold: viper.GetFloat64("scheduleLagVoidThreshold"),
 	}
 }

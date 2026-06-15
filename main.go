@@ -420,6 +420,24 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("📦 Inclusion: included=%d expired=%d dropped_at_cap=%d inflight_at_shutdown=%d",
 			incl.Included, incl.Expired, incl.DroppedAtCap, incl.InflightAtShutdown)
 	}
+	// Open-loop self-check (PLT-463): compute schedule_lag_p99 and the run
+	// verdict. Gated on the model the run actually used (summary.ArrivalModel,
+	// not the requested flag — the txs-writer path downgrades to closed_loop).
+	openLoopRun := summary.ArrivalModel == config.ArrivalModelOpenLoop
+	verdict := stats.EvaluateScheduleLag(
+		collector.ScheduleLagSamples(), cfg.Settings.TPS, openLoopRun, cfg.Settings.ScheduleLagVoidThreshold)
+	summary.ScheduleLagP99 = verdict.ScheduleLagP99
+	summary.Verdict = verdict.Verdict
+	summary.VoidReason = verdict.VoidReason
+	if verdict.Verdict == stats.VerdictVoid {
+		log.Printf("⚠️  VOID: %s (schedule_lag_p99=%s, samples=%d)",
+			verdict.VoidReason, verdict.ScheduleLagP99.Round(time.Microsecond), verdict.SampleCount)
+	} else {
+		log.Printf("🧪 Run verdict: %s | schedule_lag_p99=%s (samples=%d, arrival_interval=%s)",
+			verdict.Verdict, verdict.ScheduleLagP99.Round(time.Microsecond),
+			verdict.SampleCount, verdict.ArrivalInterval.Round(time.Microsecond))
+	}
+
 	collector.EmitRunSummary(ctx, summary)
 	if d := cfg.Settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
 		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)

@@ -41,6 +41,17 @@ type RunSummary struct {
 	DroppedAtCap uint64
 	// InflightAtShutdown is len(inflight) read after workers and tracker joined.
 	InflightAtShutdown uint64
+
+	// Open-loop self-check (PLT-463): schedule_lag = AttemptedSendTime −
+	// IntendedSendTime per tx. A p99 above the threshold fraction of the arrival
+	// interval (1/λ) means the generator could not keep its own schedule, so the
+	// run was generator-bound, not open-loop, and is VOID. Reported on every run
+	// regardless of verdict; Verdict is N/A for closed-loop or non-fixed-λ runs.
+	ScheduleLagP99 time.Duration
+	// Verdict is VerdictValid, VerdictVoid, or VerdictNA.
+	Verdict string
+	// VoidReason explains a VOID verdict; empty otherwise.
+	VoidReason string
 }
 
 // EmitRunSummary records the run-summary gauges. Call once at shutdown.
@@ -61,4 +72,8 @@ func (c *Collector) EmitRunSummary(ctx context.Context, summary RunSummary) {
 	if summary.InclusionTracked {
 		runInflightAtShutdown.Record(ctx, int64(summary.InflightAtShutdown))
 	}
+	runScheduleLagP99.Record(ctx, summary.ScheduleLagP99.Seconds(),
+		metric.WithAttributes(
+			attribute.String("arrival_model", summary.ArrivalModel),
+			attribute.String("verdict", summary.Verdict)))
 }

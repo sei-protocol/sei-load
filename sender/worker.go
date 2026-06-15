@@ -169,6 +169,13 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		startTime := time.Now()
 		// Sole owner between dequeue and hand-off: stamp is race-free (see LoadTx).
 		tx.AttemptedSendTime = startTime
+		// schedule_lag self-check: only open-loop txs carry a true scheduled
+		// instant. A zero IntendedSendTime (prewarm) is excluded here; the
+		// closed-loop enqueue time is excluded at the run level (the verdict gates
+		// on the arrival model, see stats.EvaluateScheduleLag).
+		if !tx.IntendedSendTime.IsZero() {
+			w.cfg.Collector.RecordScheduleLag(startTime.Sub(tx.IntendedSendTime))
+		}
 		err = w.sendTransaction(ctx, client, tx)
 		// OnComplete must fire only after the real send returns — that is what
 		// bounds true unacked in-flight (see doc.go). Nil on closed-loop/batch.
