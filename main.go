@@ -325,8 +325,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
 			// Arm the unsampled over-bound counter for this fixed-λ open-loop run:
 			// same VOID bound the verdict uses (threshold × 1/λ), known here at run
-			// start. Inert on non-fixed-λ runs (no SetScheduleLagBound call).
-			if bound := stats.ScheduleLagBound(cfg.Settings.TPS, cfg.Settings.ScheduleLagVoidThreshold); bound > 0 {
+			// start. Skipped under RampUp (verdict is N/A — no single 1/λ) and on
+			// non-fixed-λ runs, so the counter stays inert where it isn't judged.
+			if bound := stats.ScheduleLagBound(cfg.Settings.TPS, cfg.Settings.ScheduleLagVoidThreshold); bound > 0 && !cfg.Settings.RampUp {
 				collector.SetScheduleLagBound(bound)
 			}
 			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
