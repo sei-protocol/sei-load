@@ -27,8 +27,13 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
 	}
-	if cfg.GetNumShards() <= 0 {
+	numShards := cfg.GetNumShards()
+	if numShards <= 0 {
 		return nil, fmt.Errorf("no shards configured")
+	}
+	totalQueueSize := cfg.TotalQueueSize()
+	if totalQueueSize <= 0 {
+		return nil, fmt.Errorf("queue size has to be positive")
 	}
 	var clients []*ethClient
 	for id, endpoint := range cfg.Endpoints {
@@ -44,9 +49,9 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 			Collector:     collector,
 		}))
 	}
-	pool := NewQueuePool[*types.LoadTx](cfg.TotalQueueSize())
+	pool := NewQueuePool[*types.LoadTx](totalQueueSize)
 	var shards []*Queue[*types.LoadTx]
-	for range cfg.GetNumShards() {
+	for range numShards {
 		shards = append(shards, pool.NewQueue())
 	}
 	return &ShardedSender{
