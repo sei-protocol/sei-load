@@ -64,10 +64,18 @@ type InclusionTracker struct {
 	state       utils.Mutex[*inclusionState]
 }
 
+// defaultMaxInflight bounds the registry when the caller passes a non-positive
+// cap (e.g. --max-in-flight unset in closed-loop): a zero cap would otherwise
+// make len(inflight) >= cap always true and drop every registration.
+const defaultMaxInflight = 10_000
+
 // NewInclusionTracker builds a tracker bounded at maxInflight in-flight txs that
 // reaps un-included txs after reapAfter. The block source is the production
 // ethclient impl; tests inject via newInclusionTrackerWithSource.
 func NewInclusionTracker(seiChainID string, reapAfter time.Duration, maxInflight int) *InclusionTracker {
+	if maxInflight <= 0 {
+		maxInflight = defaultMaxInflight
+	}
 	t := &InclusionTracker{
 		seiChainID:  seiChainID,
 		reapAfter:   reapAfter,

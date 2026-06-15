@@ -163,6 +163,17 @@ func TestInclusion_BoundedCap(t *testing.T) {
 	require.Equal(t, cap, inflightLen(t, tr))
 }
 
+// Test 4b: a non-positive cap falls back to the default bound instead of
+// dropping every registration (len >= 0 is always true at cap 0).
+func TestInclusion_NonPositiveCapFallsBack(t *testing.T) {
+	tr := newTestTracker(t, time.Minute, 0, NewMockBlockSource())
+	for i := range uint64(5) {
+		tr.Register(loadTx(i, time.Now()))
+	}
+	require.Equal(t, 5, inflightLen(t, tr), "registrations are admitted, not all dropped")
+	require.Equal(t, uint64(0), tr.Summary().DroppedAtCap)
+}
+
 // Test 5: conservation identity registered == included + expired +
 // inflightAtShutdown, table-driven over register/match/reap mixes.
 func TestInclusion_Conservation(t *testing.T) {
