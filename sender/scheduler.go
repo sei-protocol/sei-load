@@ -95,32 +95,35 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 			return err
 		}
 
-		// Advance the clock per scheduled tick before admission (walks at λ
-		// regardless of drops).
+		// Snapshot the schedule; clock/index advance only when a tick resolves to
+		// a real arrival, so the terminal exhaust probe isn't counted (see doc).
 		intendedSendTime := nextSend
 		seqIndex := i
-		nextSend = nextSend.Add(gap)
-		i++
 
-		// Admit before generating: a dropped tick must not advance the seeded
-		// generator (determinism). TryAcquire is non-blocking — see package doc.
+		// Admit before generating: a dropped tick must not consume a seeded
+		// generator draw (determinism). TryAcquire is non-blocking.
 		release, ok := s.inflight.TryAcquire()
 		if !ok {
 			s.dropped.Add(1)
+			nextSend = nextSend.Add(gap)
+			i++
 			continue
 		}
 
 		tx, ok := s.generator.Generate()
 		if !ok {
-			release() // generator exhausted: release the unused permit and stop.
+			// Generator drained: not an arrival — release the permit and stop.
+			release()
 			log.Print("Scheduler: generator returned no more transactions")
 			return nil
 		}
 
-		// Stamp while sole owner (see LoadTx concurrency contract).
+		// Stamp while sole owner (LoadTx concurrency contract), then advance.
 		tx.IntendedSendTime = intendedSendTime
 		tx.SequenceIndex = seqIndex
 		s.admitted.Add(1)
+		nextSend = nextSend.Add(gap)
+		i++
 
 		// complete releases the permit and reports the result, exactly once: the
 		// worker invokes it via tx.OnComplete after the real send; the Once guards

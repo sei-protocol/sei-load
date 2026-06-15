@@ -63,7 +63,10 @@
 // succeeded (nil send error) or failed (non-nil send error) — a failed send is
 // counted, never lost. So scheduled == dropped + admitted and
 // admitted == succeeded + failed. The dispatcher folds these into the run
-// summary (dropped and failed gauges) for goodput accounting.
+// summary (dropped and failed gauges) for goodput accounting. A finite workload
+// ends when the generator drains; the terminal tick that discovers this is a
+// probe, not an arrival — it advances neither the clock nor the counters, so it
+// is excluded from the conservation totals.
 //
 // LoadTx lifecycle and scheduling. The scheduling-relevant fields of [types.LoadTx]
 // follow its single-writer concurrency contract: each is written once by the
