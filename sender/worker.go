@@ -27,15 +27,15 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type WorkerConfig struct {
-	ID            int
-	SeiChainID    string
-	Endpoint      string
-	BufferSize    int
-	Tasks         int
-	DryRun        bool
-	Debug         bool
-	Collector     *stats.Collector
-	Limiter       *rate.Limiter // Shared rate authority; nil disables gating.
+	ID         int
+	SeiChainID string
+	Endpoint   string
+	BufferSize int
+	Tasks      int
+	DryRun     bool
+	Debug      bool
+	Collector  *stats.Collector
+	Limiter    *rate.Limiter // Shared rate authority; nil disables gating.
 	// SkipRateLimit opts a worker out of limiter gating. Zero value (false) is the
 	// safe default (gate when Limiter is set); set true only in open-loop, where
 	// the scheduler owns the clock (see doc.go).
@@ -177,6 +177,8 @@ func (w *Worker) runTxSender(ctx context.Context, client *ethclient.Client) erro
 		}
 		w.cfg.Collector.RecordTransaction(tx.Scenario.Name, w.cfg.Endpoint, time.Since(startTime), err == nil)
 		// Register at send-completion, only on success: registered ⊆ succeeded.
+		// (The tracker is wired only for live runs — see main.go; DryRun never
+		// gets a tracker, so simulated sends are not inclusion-tracked.)
 		if err == nil {
 			if t, ok := w.cfg.Inclusion.Get(); ok {
 				t.Register(tx)

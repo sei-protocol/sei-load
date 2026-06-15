@@ -167,21 +167,26 @@ func TestInclusion_BoundedCap(t *testing.T) {
 // inflightAtShutdown, table-driven over register/match/reap mixes.
 func TestInclusion_Conservation(t *testing.T) {
 	cases := []struct {
-		name      string
-		registered int
-		matched    int
-		reaped     int
+		name     string
+		attempts int // Register calls
+		cap      int // tracker maxInflight
+		matched  int
+		reaped   int
 	}{
-		{"all_included", 5, 5, 0},
-		{"all_expired", 5, 0, 5},
-		{"mixed", 6, 2, 3},
-		{"none_terminal", 4, 0, 0},
+		{"all_included", 5, 100, 5, 0},
+		{"all_expired", 5, 100, 0, 5},
+		{"mixed", 6, 100, 2, 3},
+		{"none_terminal", 4, 100, 0, 0},
+		// attempts (10) > cap (5): 5 are dropped_at_cap (never registered), the
+		// other 5 terminate as included/expired/inflight — proving dropped_at_cap
+		// sits OUTSIDE the registered identity.
+		{"with_cap_drops", 10, 5, 2, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := NewMockBlockSource()
-			tr := newTestTracker(t, time.Hour, 100, src)
-			txs := make([]*types.LoadTx, tc.registered)
+			tr := newTestTracker(t, time.Hour, tc.cap, src)
+			txs := make([]*types.LoadTx, tc.attempts)
 			for i := range txs {
 				txs[i] = loadTx(uint64(i), time.Unix(1000, 0))
 				tr.Register(txs[i])
@@ -194,7 +199,7 @@ func TestInclusion_Conservation(t *testing.T) {
 			for s := range tr.state.Lock() {
 				old := time.Now().Add(-2 * time.Hour)
 				reaped := 0
-				for i := tc.matched; i < tc.registered && reaped < tc.reaped; i++ {
+				for i := tc.matched; i < tc.attempts && reaped < tc.reaped; i++ {
 					if e, ok := s.inflight[txs[i].EthTx.Hash()]; ok {
 						e.registeredAt = old
 						reaped++
@@ -204,9 +209,11 @@ func TestInclusion_Conservation(t *testing.T) {
 			tr.reap()
 
 			s := tr.Summary()
-			require.Equal(t, uint64(tc.registered),
-				s.Included+s.Expired+s.InflightAtShutdown,
-				"registered == included + expired + inflight_at_shutdown")
+			// dropped_at_cap is excluded from the registered set, so every Register
+			// attempt is accounted by exactly one of the four buckets.
+			require.Equal(t, uint64(tc.attempts),
+				s.Included+s.Expired+s.InflightAtShutdown+s.DroppedAtCap,
+				"attempts == included + expired + inflight_at_shutdown + dropped_at_cap")
 		})
 	}
 }

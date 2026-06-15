@@ -150,6 +150,9 @@ func (t *InclusionTracker) Run(ctx context.Context, firstEndpoint string) error 
 // processHead handles one arriving head: counts any gap (no backfill), matches
 // the block, and returns the new lastSeen. lastSeen==0 seeds on the first head.
 func (t *InclusionTracker) processHead(ctx context.Context, num uint64, arrival time.Time, lastSeen uint64) uint64 {
+	if lastSeen != 0 && num <= lastSeen {
+		return lastSeen // duplicate or out-of-order head: no re-fetch, no spurious gap.
+	}
 	if lastSeen != 0 && num > lastSeen+1 {
 		inclusionBlockGaps.Add(ctx, int64(num-lastSeen-1), metric.WithAttributes(
 			attribute.String("chain_id", t.seiChainID)))
@@ -180,12 +183,20 @@ func (t *InclusionTracker) matchBlock(ctx context.Context, num uint64, arrival t
 			e.tx.InclusionTime = arrival
 			delete(s.inflight, h)
 			s.included++
-			inclusionLatency.Record(ctx, arrival.Sub(e.tx.IntendedSendTime).Seconds(),
-				metric.WithAttributes(attribute.String("chain_id", t.seiChainID)))
+			// Latency needs a submit reference; a zero IntendedSendTime means
+			// "not scheduled" (e.g. prewarm txs), so skip the sample rather than
+			// record a bogus epoch-based duration. See LoadTx contract.
+			if !e.tx.IntendedSendTime.IsZero() {
+				inclusionLatency.Record(ctx, arrival.Sub(e.tx.IntendedSendTime).Seconds(),
+					metric.WithAttributes(attribute.String("chain_id", t.seiChainID)))
+			}
 		}
 	}
 }
 
+// reapLoop sweeps every reapAfter; worst-case eviction latency is ~2×reapAfter
+// (a tx registered just after a tick waits a full period for the next sweep) —
+// a calibration nuance, not a conservation concern.
 func (t *InclusionTracker) reapLoop(ctx context.Context) error {
 	ticker := time.NewTicker(t.reapAfter)
 	defer ticker.Stop()

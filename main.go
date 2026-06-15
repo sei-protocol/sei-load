@@ -268,8 +268,10 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// tracker (the lossy per-tx receipt path is retired). maxInflight is sized
 		// off the open-loop --max-in-flight so the registry comfortably holds the
 		// admitted in-flight set; the ×4 headroom absorbs inclusion lag.
+		// Not wired under --dry-run: simulated sends never hit the chain, so they
+		// would all reap as expired and pollute the inclusion stats.
 		inclusion := utils.None[*stats.InclusionTracker]()
-		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts {
+		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
 			const maxInflightMultiple = 4
 			inclusionTracker = stats.NewInclusionTracker(
 				cfg.SeiChainID,
