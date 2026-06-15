@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"math/big"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -18,6 +19,9 @@ import (
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func TestEthClientSendTx_HTTP(t *testing.T) {
@@ -25,8 +29,20 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 	srv := rpc.NewServer()
 	require.NoError(t, srv.RegisterName("eth", api))
 
-	ts := httptest.NewServer(srv)
+	// We check the TraceID as a proof that otel Transport was used.
+	var traceparent string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceparent = r.Header.Get("traceparent")
+		srv.ServeHTTP(w, r)
+	}))
 	defer ts.Close()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	otel.SetTracerProvider(sdktrace.NewTracerProvider())
+	ctx, span := otel.Tracer("sender-test").Start(t.Context(), "parent")
+	defer span.End()
 
 	tx := testLoadTx(t)
 	client := newEthClient(&ethClientConfig{
@@ -37,12 +53,13 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 		Collector: stats.NewCollector(),
 	})
 
-	err := scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
+	err := scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		s.SpawnBg(func() error { return utils.IgnoreCancel(client.Run(ctx)) })
 		return client.Send(ctx, tx)
 	})
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{tx.Payload}, api.RawTransactions())
+	require.Contains(t, traceparent, span.SpanContext().TraceID().String())
 }
 
 func TestEthClientSendTx_WS(t *testing.T) {
