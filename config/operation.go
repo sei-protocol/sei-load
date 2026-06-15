@@ -11,7 +11,7 @@ type Operation uint8
 
 const (
 	// OpRmw is the read-modify-write operation; it is the zero value so a
-	// zero/nil OperationMix selects rmw, matching the scaffold default.
+	// zero/nil OperationMix selects rmw, matching the default.
 	OpRmw Operation = iota
 	OpRead
 	OpWrite
@@ -22,8 +22,8 @@ const (
 func (m *OperationMix) SetStream(s *rng.Stream) { m.stream = s }
 
 // Select draws one operation in proportion to the configured weights. A zero
-// total (all weights zero) falls back to OpRmw so an empty mix is the scaffold
-// default rather than a panic.
+// total (all weights zero) falls back to OpRmw so an empty mix is the default
+// rather than a panic.
 func (m *OperationMix) Select() Operation {
 	total := m.Read + m.Write + m.Rmw
 	if total == 0 {

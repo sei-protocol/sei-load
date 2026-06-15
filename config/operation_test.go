@@ -10,7 +10,7 @@ import (
 )
 
 // TestOperationMixEmptyFallsBackToRmw: a zero-weight (or nil-equivalent) mix
-// selects rmw, the scaffold default, rather than panicking on a zero total.
+// selects rmw, the default, rather than panicking on a zero total.
 func TestOperationMixEmptyFallsBackToRmw(t *testing.T) {
 	t.Parallel()
 	var m config.OperationMix

@@ -85,14 +85,14 @@ type Scenario struct {
 	SizeDistribution *Distribution  `json:"sizeDistribution,omitempty"`
 	// RecordCount is the keyspace size the KeyDistribution indexes into: the
 	// per-tx slot is a draw in [0, RecordCount). Zero (the default) is the
-	// single-slot, 100%-conflict scaffold behavior.
+	// single-slot, 100%-conflict behavior.
 	RecordCount uint64 `json:"recordCount,omitempty"`
 	// SizeBuckets is the calldata-pad-length histogram the SizeDistribution
 	// indexes into: the per-tx pad length is SizeBuckets[draw]. Empty (the
-	// default) is the empty-pad scaffold behavior.
+	// default) is the empty-pad behavior.
 	SizeBuckets []int `json:"sizeBuckets,omitempty"`
 	// Operations is the read/write/rmw selection mix. Nil (the default) is the
-	// all-rmw scaffold behavior.
+	// all-rmw behavior.
 	Operations *OperationMix `json:"operations,omitempty"`
 }
 
@@ -131,7 +131,7 @@ func (c *LoadConfig) ValidateScenarios() error {
 // OperationMix is the relative weighting of the StorageRW read/write/rmw
 // operations. The weights need not sum to anything in particular; a per-tx draw
 // selects an operation in proportion to its weight over the total. An all-zero
-// (or nil) mix falls back to rmw, the scaffold default.
+// (or nil) mix falls back to rmw, the default.
 type OperationMix struct {
 	Read  uint64 `json:"read,omitempty"`
 	Write uint64 `json:"write,omitempty"`

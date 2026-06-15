@@ -63,7 +63,7 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 
-	// Pin the fixed scaffold calldata: rmw(uint256 slot, bytes _pad) with
+	// Pin the fixed default-path calldata: rmw(uint256 slot, bytes _pad) with
 	// slot == 0 and an empty pad. ABI head is the slot operand (32B) then the
 	// bytes offset (0x40); the tail is the bytes length (0). All zero except the
 	// 0x40 offset, so the full body is 96 bytes.
@@ -172,7 +172,7 @@ func TestStorageRWContentionSweep(t *testing.T) {
 
 	t.Run("single_slot_full_collision", func(t *testing.T) {
 		t.Parallel()
-		// No key distribution => scaffold single-slot default: every draw is slot 0.
+		// No key distribution => single-slot default: every draw is slot 0.
 		gen := newConfiguredStorageRW(t, 1, config.Scenario{})
 		slots := drawSlots(t, gen, parsed, draws)
 		for _, s := range slots {
@@ -302,8 +302,8 @@ func TestStorageRWOpMix(t *testing.T) {
 }
 
 // TestStorageRWDefaultPathByteIdentical pins the additive guarantee: a scenario
-// with no distribution config produces calldata byte-identical to the PLT-461
-// scaffold (fixed slot 0, empty pad, rmw) for a fixed sender/nonce.
+// with no distribution config produces the fixed default-path calldata (slot 0,
+// empty pad, rmw), byte-identical for a fixed sender/nonce.
 func TestStorageRWDefaultPathByteIdentical(t *testing.T) {
 	t.Parallel()
 	gen := newConfiguredStorageRW(t, 99, config.Scenario{})

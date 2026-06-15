@@ -29,7 +29,7 @@ const (
 )
 
 // storageRWDefaultSlot is the single slot every tx targets when no key
-// distribution is configured (the scaffold's 100%-conflict default).
+// distribution is configured — the 100%-conflict default.
 var storageRWDefaultSlot = big.NewInt(0)
 
 // StorageRWScenario implements the TxGenerator interface for StorageRWv1 contract operations
@@ -91,7 +91,7 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 // CreateContractTransaction implements ContractDeployer interface - builds one
 // StorageRWv1 transaction whose slot (key contention), operation, and calldata
 // pad (tx size) are drawn from the configured distributions. With no
-// distribution config it reproduces the scaffold's single-slot empty-pad rmw.
+// distribution config it falls back to a single-slot empty-pad rmw.
 // See package doc for the gas rationale.
 func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	slot, err := s.pickSlot()
@@ -119,7 +119,7 @@ func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, s
 
 // pickSlot draws the storage slot from the key distribution over the configured
 // RecordCount keyspace. With no key distribution it returns the fixed default
-// slot, preserving the scaffold's 100%-conflict behavior.
+// slot — the 100%-conflict default.
 func (s *StorageRWScenario) pickSlot() (*big.Int, error) {
 	cfg := s.scenarioConfig
 	if cfg.KeyDistribution == nil || cfg.RecordCount == 0 {
@@ -134,7 +134,7 @@ func (s *StorageRWScenario) pickSlot() (*big.Int, error) {
 
 // pickPad draws the calldata pad length from the size distribution over the
 // configured SizeBuckets histogram, on a sub-stream independent of the key draw.
-// With no size distribution it returns an empty pad, preserving the scaffold.
+// With no size distribution it returns an empty pad.
 func (s *StorageRWScenario) pickPad() ([]byte, error) {
 	cfg := s.scenarioConfig
 	if cfg.SizeDistribution == nil || len(cfg.SizeBuckets) == 0 {
@@ -148,7 +148,7 @@ func (s *StorageRWScenario) pickPad() ([]byte, error) {
 }
 
 // pickOp selects read/write/rmw from the configured mix on its own independent
-// sub-stream. With no mix it returns rmw, preserving the scaffold.
+// sub-stream. With no mix it returns rmw.
 func (s *StorageRWScenario) pickOp() config.Operation {
 	if s.scenarioConfig.Operations == nil {
 		return config.OpRmw
