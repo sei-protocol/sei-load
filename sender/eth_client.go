@@ -242,7 +242,7 @@ func (c *ethClient) sendTx(ctx context.Context, eth *ethclient.Client, tx *types
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "rpc"),
 		))
-		return fmt.Errorf("Worker %d: Failed to send transaction: %w", c.cfg.ID, err)
+		return fmt.Errorf("eth.SendTransaction(): %w", err)
 	}
 
 	txsAccepted.Add(ctx, 1, metric.WithAttributes(
