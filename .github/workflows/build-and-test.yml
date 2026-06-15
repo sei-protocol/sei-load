@@ -39,13 +39,17 @@ jobs:
     - name: Verify dependencies
       run: go mod verify
     
+    - name: Check golangci-lint version pin is in sync
+      run: make check-lint-pin
+
     - name: Install golangci-lint
       uses: golangci/golangci-lint-action@v7
       with:
         # Pinned (not `latest`) for determinism. MUST match GOLANGCI_VERSION in
-        # the Makefile and the `version:` in .golangci.yml's schema. `latest`
-        # drifts between releases and shifts the default linter set, which is a
-        # "passes locally, fails CI" trap. Bump all three together.
+        # the Makefile and the version note in .golangci.yml's header comment.
+        # `latest` drifts between releases and shifts the default linter set,
+        # which is a "passes locally, fails CI" trap. Bump all three together;
+        # `make check-lint-pin` (run as a CI step above) enforces the sync.
         version: v2.12.2
     
     - name: Run linting

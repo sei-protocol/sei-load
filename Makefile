@@ -57,12 +57,12 @@ BIN_FILES := $(addprefix $(BUILD_DIR)/, $(addsuffix .bin, $(CONTRACT_NAMES)))
 BINDING_FILES := $(addprefix $(BINDINGS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 SCENARIO_TEMPLATE_FILES := $(addprefix $(SCENARIOS_DIR)/, $(addsuffix .go, $(CONTRACT_NAMES)))
 
-.PHONY: generate generate-bindings check-bindings install-abigen install-lint clean help build-cli install setup-node build test lint verify
+.PHONY: generate generate-bindings check-bindings check-lint-pin install-abigen install-lint clean help build-cli install setup-node build test lint verify
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  verify            - Run the gating CI checks: lint + test + build + CLI --help + check-bindings"
+	@echo "  verify            - Run the gating CI checks: check-lint-pin + lint + test + build + CLI --help + check-bindings"
 	@echo "  build             - Build the seiload CLI (alias for build-cli)"
 	@echo "  test              - Run tests with coverage (race detector enabled)"
 	@echo "  lint              - Run linting and static analysis (golangci-lint $(GOLANGCI_VERSION))"
@@ -70,6 +70,7 @@ help:
 	@echo "  generate          - Generate Go bindings and scenario templates for all contracts"
 	@echo "  generate-bindings - Regenerate ONLY the Go bindings (no scenarios/factory)"
 	@echo "  check-bindings    - Fail if committed bindings are out of sync with contracts"
+	@echo "  check-lint-pin    - Fail if the golangci-lint version pin diverges across files"
 	@echo "  install-tools     - Install the full pinned toolchain (solc, abigen, golangci-lint)"
 	@echo "  install-abigen    - Install abigen pinned to the go.mod go-ethereum version"
 	@echo "  install-lint      - Install golangci-lint pinned to $(GOLANGCI_VERSION)"
@@ -198,6 +199,39 @@ check-bindings:
 		fi
 	@echo "✅ Bindings are in sync with contracts"
 
+# Drift check: GOLANGCI_VERSION (this Makefile) is the source of truth for the
+# pinned golangci-lint. The same version is duplicated, by convention, in the
+# workflow's golangci-lint-action `version:` and in .golangci.yml's header
+# comment. A bump that misses a file silently splits local from CI ("passes
+# locally, fails CI"). This target fails loudly, naming the diverging file.
+# Mind the `v` prefix: Makefile holds 2.12.2; the others hold v2.12.2.
+check-lint-pin:
+	@echo "🔍 Checking golangci-lint version pin is in sync..."
+	@expected="v$(GOLANGCI_VERSION)"; \
+		rc=0; \
+		wf=".github/workflows/build-and-test.yml"; \
+		gc=".golangci.yml"; \
+		wf_ver=$$(grep -E '^\s*version:\s*v[0-9]+\.[0-9]+\.[0-9]+' $$wf | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		if [ -z "$$wf_ver" ]; then \
+			echo "❌ $$wf: could not find a golangci-lint-action 'version: vX.Y.Z' line"; rc=1; \
+		elif [ "$$wf_ver" != "$$expected" ]; then \
+			echo "❌ $$wf: golangci-lint-action version $$wf_ver != Makefile $$expected"; rc=1; \
+		fi; \
+		gc_ver=$$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' $$gc | head -1); \
+		if [ -z "$$gc_ver" ]; then \
+			echo "❌ $$gc: could not find a 'vX.Y.Z' version reference in the header comment"; rc=1; \
+		elif [ "$$gc_ver" != "$$expected" ]; then \
+			echo "❌ $$gc: referenced version $$gc_ver != Makefile $$expected"; rc=1; \
+		fi; \
+		if [ $$rc -ne 0 ]; then \
+			echo ""; \
+			echo "   golangci-lint pin diverged. Source of truth is GOLANGCI_VERSION"; \
+			echo "   ($(GOLANGCI_VERSION)) in the Makefile. Bump all three together:"; \
+			echo "   Makefile, $$wf, $$gc."; \
+			exit 1; \
+		fi; \
+		echo "✅ golangci-lint pin in sync at $$expected (Makefile, $$wf, $$gc)"
+
 # Install golangci-lint pinned to GOLANGCI_VERSION for CI parity (CI pins the
 # same version via golangci-lint-action).
 install-lint:
@@ -261,7 +295,7 @@ lint:
 # safe (unlike a global `.NOTPARALLEL`). `&&` short-circuits on first failure
 # so a broken gate stops the chain with that gate's non-zero exit.
 verify:
-	@$(MAKE) lint && $(MAKE) test && $(MAKE) build && $(MAKE) check-bindings
+	@$(MAKE) check-lint-pin && $(MAKE) lint && $(MAKE) test && $(MAKE) build && $(MAKE) check-bindings
 	@echo "🔍 Smoke-testing CLI entrypoint (--help)..."
 	@$(BUILD_DIR)/$(BINARY_NAME) --help > /dev/null
-	@echo "✅ verify passed (lint + test + build + --help + check-bindings)"
+	@echo "✅ verify passed (check-lint-pin + lint + test + build + --help + check-bindings)"
