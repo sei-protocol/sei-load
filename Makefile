@@ -238,6 +238,7 @@ test:
 lint:
 	@echo "🔍 Running linting and static analysis..."
 	@have=$$(golangci-lint version --short 2>/dev/null || golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+		have=$${have#v}; \
 		if [ -n "$$have" ] && [ "$$have" != "$(GOLANGCI_VERSION)" ]; then \
 			echo "⚠️  golangci-lint $$have on PATH != pinned $(GOLANGCI_VERSION). Run 'make install-lint' for CI parity."; \
 		fi
@@ -250,7 +251,17 @@ lint:
 # backgrounded run killed after 5s and never asserts an exit code, so it's a weak,
 # non-deterministic signal that's not worth a 5s+ wall-time tax on every verify.
 # That step stays CI-only; see README "Before you push".
-verify: lint test build check-bindings
+#
+# The gates are invoked as ordered sub-makes (not prerequisites) so `verify`
+# runs them sequentially regardless of `-j`. As parallel prerequisites under
+# `make -j`, `build` and `check-bindings` would run concurrently and both write
+# the shared $(BUILD_DIR) tree (CLI binary vs. contract .abi/.bin from check-
+# bindings' `-B generate-bindings`), racing each other. Sub-makes scope the
+# serialization to `verify` alone, leaving the rest of the Makefile parallel-
+# safe (unlike a global `.NOTPARALLEL`). `&&` short-circuits on first failure
+# so a broken gate stops the chain with that gate's non-zero exit.
+verify:
+	@$(MAKE) lint && $(MAKE) test && $(MAKE) build && $(MAKE) check-bindings
 	@echo "🔍 Smoke-testing CLI entrypoint (--help)..."
 	@$(BUILD_DIR)/$(BINARY_NAME) --help > /dev/null
 	@echo "✅ verify passed (lint + test + build + --help + check-bindings)"
