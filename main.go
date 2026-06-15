@@ -27,7 +27,7 @@ import (
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 var (
@@ -203,7 +203,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	var ramper *sender.Ramper
 
-	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
 		gen, err := generator.NewConfigBasedGenerator(cfg)
 		if err != nil {

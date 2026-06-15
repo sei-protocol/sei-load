@@ -1,15 +1,17 @@
 package utils
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"math/big"
 	"math/rand"
 	"reflect"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 )
 
@@ -19,7 +21,7 @@ type ReadOnly struct{}
 
 // isReadOnly returns true if t embeds ReadOnly.
 func isReadOnly(t reflect.Type) bool {
-	want := reflect.TypeOf(ReadOnly{})
+	want := reflect.TypeFor[ReadOnly]()
 	if t.Kind() != reflect.Struct {
 		return false
 	}
@@ -45,6 +47,9 @@ var cmpOpts = []cmp.Option{
 	protocmp.Transform(),
 	cmp.Exporter(isReadOnly),
 	cmpopts.EquateEmpty(),
+	// Optimization for comparing slices of bytes.
+	// Applies iff any of the slices is non-empty to avoid collision with EquateEmpty.
+	cmp.FilterValues(func(x, y []byte) bool { return len(x) > 0 || len(y) > 0 }, cmp.Comparer(bytes.Equal)),
 	cmp.Comparer(cmpComparer[big.Int]),
 }
 
@@ -61,22 +66,85 @@ func TestEqual[T any](a, b T) bool {
 	return cmp.Equal(a, b, cmpOpts...)
 }
 
-// TestRngSplit returns a new random number splitted from the given one.
+// Thread-safe wrapper of rand.Rand.
+type Rng struct{ inner *Mutex[*rand.Rand] }
+
+func (rng Rng) Read(p []byte) (int, error) {
+	for inner := range rng.inner.Lock() {
+		return inner.Read(p)
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Int63() int64 {
+	for inner := range rng.inner.Lock() {
+		return inner.Int63()
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Uint64() uint64 {
+	for inner := range rng.inner.Lock() {
+		return inner.Uint64()
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Int() int {
+	for inner := range rng.inner.Lock() {
+		return inner.Int()
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Intn(n int) int {
+	for inner := range rng.inner.Lock() {
+		return inner.Intn(n)
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Int63n(n int64) int64 {
+	for inner := range rng.inner.Lock() {
+		return inner.Int63n(n)
+	}
+	panic("unreachable")
+}
+
+func (rng Rng) Shuffle(n int, swap func(i, j int)) {
+	for inner := range rng.inner.Lock() {
+		inner.Shuffle(n, swap)
+	}
+}
+
+// Split returns a new random number splitted from the given one.
+// It should be used to provide deterministic rngs to independent goroutines.
 // This is a very primitive splitting, known to result with dependent randomness.
 // If that ever causes a problem, we can switch to SplitMix.
-func TestRngSplit(rng *rand.Rand) *rand.Rand {
-	return rand.New(rand.NewSource(rng.Int63()))
+func (rng Rng) Split() Rng {
+	for inner := range rng.inner.Lock() {
+		return TestRngFromSeed(inner.Int63())
+	}
+	panic("unreachable")
 }
 
 // TestRng returns a deterministic random number generator.
-func TestRng() *rand.Rand {
-	return rand.New(rand.NewSource(789345342))
+func TestRng() Rng {
+	return TestRngFromSeed(789345342)
+}
+
+func TestRngFromSeed(seed int64) Rng {
+	return Rng{Alloc(NewMutex(rand.New(rand.NewSource(seed))))}
+}
+
+func GenBool(rng Rng) bool {
+	return rng.Intn(2) == 0
 }
 
 var alphanum = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 // GenString generates a random string of length n.
-func GenString(rng *rand.Rand, n int) string {
+func GenString(rng Rng, n int) string {
 	s := make([]rune, n)
 	for i := range n {
 		s[i] = alphanum[rand.Intn(len(alphanum))]
@@ -84,23 +152,33 @@ func GenString(rng *rand.Rand, n int) string {
 	return string(s)
 }
 
+// Shuffle reorders the elements of s uniformly at random.
+func Shuffle[T any](rng Rng, s []T) {
+	for i := 1; i < len(s); i += 1 {
+		j := rng.Intn(i)
+		s[i], s[j] = s[j], s[i]
+	}
+}
+
 // GenBytes generates a random byte slice.
-func GenBytes(rng *rand.Rand, n int) []byte {
+func GenBytes(rng Rng, n int) []byte {
 	s := make([]byte, n)
-	_, _ = rng.Read(s)
+	for inner := range rng.inner.Lock() {
+		_, _ = inner.Read(s)
+	}
 	return s
 }
 
 // GenF is a function which generates T.
-type GenF[T any] = func(rng *rand.Rand) T
+type GenF[T any] = func(rng Rng) T
 
 // GenSlice generates a slice of small random length.
-func GenSlice[T any](rng *rand.Rand, gen GenF[T]) []T {
+func GenSlice[T any](rng Rng, gen GenF[T]) []T {
 	return GenSliceN(rng, 2+rng.Intn(3), gen)
 }
 
 // GenSliceN generates a slice of n elements.
-func GenSliceN[T any](rng *rand.Rand, n int, gen GenF[T]) []T {
+func GenSliceN[T any](rng Rng, n int, gen GenF[T]) []T {
 	s := make([]T, n)
 	for i := range s {
 		s[i] = gen(rng)
@@ -109,12 +187,12 @@ func GenSliceN[T any](rng *rand.Rand, n int, gen GenF[T]) []T {
 }
 
 // GenMap generates a map of small random length.
-func GenMap[K comparable, V any](rng *rand.Rand, genK GenF[K], genV GenF[V]) map[K]V {
+func GenMap[K comparable, V any](rng Rng, genK GenF[K], genV GenF[V]) map[K]V {
 	return GenMapN(rng, 2+rng.Intn(3), genK, genV)
 }
 
 // GenMapN generates a map of n elements.
-func GenMapN[K comparable, V any](rng *rand.Rand, n int, genK GenF[K], genV GenF[V]) map[K]V {
+func GenMapN[K comparable, V any](rng Rng, n int, genK GenF[K], genV GenF[V]) map[K]V {
 	m := make(map[K]V, n)
 	for len(m) < n {
 		m[genK(rng)] = genV(rng)
@@ -123,19 +201,12 @@ func GenMapN[K comparable, V any](rng *rand.Rand, n int, genK GenF[K], genV GenF
 }
 
 // GenTimestamp generates a random timestamp.
-func GenTimestamp(rng *rand.Rand) time.Time {
+func GenTimestamp(rng Rng) time.Time {
 	return time.Unix(0, rng.Int63())
 }
 
-// GenHash generates a random Hash.
-func GenHash(rng *rand.Rand) Hash {
-	var h Hash
-	_, _ = rng.Read(h[:])
-	return h
-}
-
 // Test tests whether reencoding a value is an identity operation.
-func (c ProtoConv[T, P]) Test(want T) error {
+func (c *ProtoConv[T, P]) Test(want T) error {
 	p := c.Encode(want)
 	raw, err := proto.Marshal(p)
 	if err != nil {
@@ -149,4 +220,15 @@ func (c ProtoConv[T, P]) Test(want T) error {
 		return fmt.Errorf("Decode(Encode()): %w", err)
 	}
 	return TestDiff(want, got)
+}
+
+// IgnoreAfterCancel silently drops the error if the context is already canceled.
+// Should be used for background tasks in tests, which cannot be guaranteed to exit gracefully.
+// For example - if you have a tcp connection, then during cleanup one end will disconnect faster than the other,
+// causing a race condition between context cancellation and disconnection error.
+func IgnoreAfterCancel(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
 }

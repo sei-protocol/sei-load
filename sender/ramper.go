@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/sei-protocol/sei-load/stats"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 	"golang.org/x/time/rate"
 )
 
@@ -114,7 +114,7 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 
 // Start initializes and starts all workers
 func (r *Ramper) Run(ctx context.Context) error {
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// TODO: Implement ramping logic
 		r.startTime = time.Now()
 		sloChan := r.WatchSLO(ctx)

@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
@@ -46,7 +46,7 @@ type ethClient struct {
 }
 
 func (c *ethClient) Run(ctx context.Context) error {
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		u, err := url.Parse(c.cfg.Endpoint)
 		if err != nil {
 			return fmt.Errorf("parse endpoint %q: %w", c.cfg.Endpoint, err)

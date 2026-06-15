@@ -9,7 +9,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 // ShardedSender implements TxSender with multiple workers, one per endpoint
@@ -58,7 +58,7 @@ func NewShardedSender(ctx context.Context, cfg *config.LoadConfig, limiter *rate
 
 // Start initializes and starts all workers
 func (ss *ShardedSender) Run(ctx context.Context) error {
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		for _,client := range ss.clients {
 			s.Spawn(func() error { return client.Run(ctx) })
 		}

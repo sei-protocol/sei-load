@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/ethereum/go-ethereum v1.16.1
+	github.com/gogo/protobuf v1.3.2
 	github.com/google/go-cmp v0.7.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.22.0
