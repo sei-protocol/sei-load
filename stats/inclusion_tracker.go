@@ -60,8 +60,13 @@ type InclusionTracker struct {
 	seiChainID  string
 	reapAfter   time.Duration
 	maxInflight int
-	source      blockSource
-	state       utils.Mutex[*inclusionState]
+	// openLoop gates the inclusion_latency sample: only open-loop stamps a true
+	// arrival schedule on IntendedSendTime. In closed-loop IntendedSendTime is
+	// enqueue time, so arrival-IntendedSendTime would be an enqueue→inclusion
+	// latency that must not be mixed into the histogram.
+	openLoop bool
+	source   blockSource
+	state    utils.Mutex[*inclusionState]
 }
 
 // defaultMaxInflight bounds the registry when the caller passes a non-positive
@@ -70,9 +75,10 @@ type InclusionTracker struct {
 const defaultMaxInflight = 10_000
 
 // NewInclusionTracker builds a tracker bounded at maxInflight in-flight txs that
-// reaps un-included txs after reapAfter. The block source is the production
-// ethclient impl; tests inject via newInclusionTrackerWithSource.
-func NewInclusionTracker(seiChainID string, reapAfter time.Duration, maxInflight int) *InclusionTracker {
+// reaps un-included txs after reapAfter. openLoop gates the inclusion_latency
+// sample (included/expired counts are tracked in both models). The block source
+// is the production ethclient impl; tests inject via newInclusionTrackerWithSource.
+func NewInclusionTracker(seiChainID string, reapAfter time.Duration, maxInflight int, openLoop bool) *InclusionTracker {
 	if maxInflight <= 0 {
 		maxInflight = defaultMaxInflight
 	}
@@ -80,6 +86,7 @@ func NewInclusionTracker(seiChainID string, reapAfter time.Duration, maxInflight
 		seiChainID:  seiChainID,
 		reapAfter:   reapAfter,
 		maxInflight: maxInflight,
+		openLoop:    openLoop,
 		state: utils.NewMutex(&inclusionState{
 			inflight: make(map[common.Hash]*entry),
 		}),
@@ -195,10 +202,12 @@ func (t *InclusionTracker) matchBlock(ctx context.Context, num uint64, arrival t
 			e.tx.InclusionTime = arrival
 			delete(s.inflight, h)
 			s.included++
-			// Latency needs a submit reference; a zero IntendedSendTime means
-			// "not scheduled" (e.g. prewarm txs), so skip the sample rather than
-			// record a bogus epoch-based duration. See LoadTx contract.
-			if !e.tx.IntendedSendTime.IsZero() {
+			// Open-loop only: IntendedSendTime is a true arrival schedule there, so
+			// arrival-IntendedSendTime is a real inclusion latency. In closed-loop
+			// it is enqueue time and the sample is omitted. A zero IntendedSendTime
+			// means "not scheduled" (e.g. prewarm txs); skip rather than record a
+			// bogus epoch-based duration. See LoadTx contract.
+			if t.openLoop && !e.tx.IntendedSendTime.IsZero() {
 				inclusionLatency.Record(ctx, arrival.Sub(e.tx.IntendedSendTime).Seconds(),
 					metric.WithAttributes(attribute.String("chain_id", t.seiChainID)))
 			}

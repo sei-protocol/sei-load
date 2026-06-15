@@ -97,7 +97,7 @@ func inflightCount(tr *stats.InclusionTracker) uint64 {
 // a successful (DryRun) send registers the tx with the tracker, and Register
 // runs strictly AFTER OnComplete (the permit-release ordering in doc.go).
 func TestRunTxSender_RegistersSuccessfulSend(t *testing.T) {
-	tracker := stats.NewInclusionTracker("test-chain", time.Hour, 100)
+	tracker := stats.NewInclusionTracker("test-chain", time.Hour, 100, true /* openLoop */)
 	collector := stats.NewCollector()
 	w := NewWorker(&WorkerConfig{
 		ID: 0, Endpoint: "dryrun", BufferSize: 4, Tasks: 1, DryRun: true,

@@ -12,9 +12,14 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	TasksPerEndpoint      int      `json:"workers,omitempty"`
-	TPS                   float64  `json:"tps,omitempty"`
-	StatsInterval         Duration `json:"statsInterval,omitempty"`
+	TasksPerEndpoint int      `json:"workers,omitempty"`
+	TPS              float64  `json:"tps,omitempty"`
+	StatsInterval    Duration `json:"statsInterval,omitempty"`
+	// InclusionReapAfter bounds how long an un-included tx stays in the inclusion
+	// registry before it is reaped as expired. Tune to expected inclusion time on
+	// congested chains: too short reaps slow inclusions as expired (inflated
+	// un-included), too long inflates the in-flight map.
+	InclusionReapAfter    Duration `json:"inclusionReapAfter,omitempty"`
 	BufferSize            int      `json:"bufferSize,omitempty"`
 	DryRun                bool     `json:"dryRun,omitempty"`
 	Debug                 bool     `json:"debug,omitempty"`
@@ -74,6 +79,7 @@ func DefaultSettings() Settings {
 		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
+		InclusionReapAfter:    Duration(30 * time.Second),
 		BufferSize:            1000,
 		DryRun:                false,
 		Debug:                 false,
@@ -97,6 +103,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	// Bind flags to viper with error checking
 	flagBindings := map[string]string{
 		"statsInterval":         "stats-interval",
+		"inclusionReapAfter":    "inclusion-reap-after",
 		"bufferSize":            "buffer-size",
 		"tps":                   "tps",
 		"dryRun":                "dry-run",
@@ -125,6 +132,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	// Set defaults in Viper
 	defaults := DefaultSettings()
 	viper.SetDefault("statsInterval", defaults.StatsInterval.ToDuration())
+	viper.SetDefault("inclusionReapAfter", defaults.InclusionReapAfter.ToDuration())
 	viper.SetDefault("bufferSize", defaults.BufferSize)
 	viper.SetDefault("tps", defaults.TPS)
 	viper.SetDefault("dryRun", defaults.DryRun)
@@ -171,6 +179,7 @@ func ResolveSettings() *Settings {
 		TasksPerEndpoint:      viper.GetInt("workers"),
 		TPS:                   viper.GetFloat64("tps"),
 		StatsInterval:         Duration(viper.GetDuration("statsInterval")),
+		InclusionReapAfter:    Duration(viper.GetDuration("inclusionReapAfter")),
 		BufferSize:            viper.GetInt("bufferSize"),
 		DryRun:                viper.GetBool("dryRun"),
 		Debug:                 viper.GetBool("debug"),

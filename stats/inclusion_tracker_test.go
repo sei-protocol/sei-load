@@ -47,11 +47,18 @@ func (m *MockBlockSource) BlockTxHashes(_ context.Context, n uint64) ([]common.H
 
 func (m *MockBlockSource) FetchCount() int64 { return m.fetches.Load() }
 
-// newTestTracker builds a tracker wired to a mock source, skipping the live dial.
+// newTestTracker builds an open-loop tracker wired to a mock source, skipping
+// the live dial. Open-loop is the default so latency-bearing tests exercise the
+// inclusion_latency path; closed-loop is covered explicitly via newTestTrackerLoop.
 func newTestTracker(t *testing.T, reapAfter time.Duration, maxInflight int, src blockSource) *InclusionTracker {
 	t.Helper()
+	return newTestTrackerLoop(t, reapAfter, maxInflight, src, true)
+}
+
+func newTestTrackerLoop(t *testing.T, reapAfter time.Duration, maxInflight int, src blockSource, openLoop bool) *InclusionTracker {
+	t.Helper()
 	return newInclusionTrackerWithSource(
-		NewInclusionTracker("test-chain", reapAfter, maxInflight), src)
+		NewInclusionTracker("test-chain", reapAfter, maxInflight, openLoop), src)
 }
 
 // loadTx builds a LoadTx with a deterministic hash from nonce and an intended
@@ -97,6 +104,26 @@ func TestInclusion_MatchStamps(t *testing.T) {
 	require.Equal(t, arrival, tx.InclusionTime, "InclusionTime is the header-arrival time")
 	require.Equal(t, 0, inflightLen(t, tr), "matched tx leaves the registry")
 	require.Equal(t, uint64(1), tr.Summary().Included)
+}
+
+// Test 1b: closed-loop still counts inclusions and stamps InclusionTime; only
+// the inclusion_latency sample is gated off (IntendedSendTime is enqueue time
+// there, so arrival-IntendedSendTime is not a real inclusion latency). The
+// latency histogram is a global OTel instrument with no test-readable provider,
+// so this asserts the observable contract: counts and stamping are unaffected.
+func TestInclusion_ClosedLoopCountsNoLatency(t *testing.T) {
+	src := NewMockBlockSource()
+	tr := newTestTrackerLoop(t, time.Minute, 100, src, false /* closed-loop */)
+	require.False(t, tr.openLoop, "tracker built closed-loop: latency sample is gated")
+
+	tx := loadTx(1, time.Unix(1000, 0))
+	tr.Register(tx)
+	arrival := time.Unix(1002, 0)
+	src.SetBlock(5, tx.EthTx.Hash())
+	tr.matchBlock(context.Background(), 5, arrival)
+
+	require.Equal(t, arrival, tx.InclusionTime, "InclusionTime still stamped in closed-loop")
+	require.Equal(t, uint64(1), tr.Summary().Included, "included count tracked in closed-loop")
 }
 
 // Test 2: reaping evicts an un-included tx as expired and leaves no leak.

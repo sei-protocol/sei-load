@@ -92,7 +92,9 @@
 // send error). The tracker subscribes to new heads, fetches each arriving
 // block's body once (O(blocks), not O(txs)), and stamps InclusionTime on every
 // matched in-flight tx with the block's header-ARRIVAL time. Un-included txs are
-// reaped as expired after reapAfter.
+// reaped as expired after reapAfter. inclusion_latency (arrival minus
+// IntendedSendTime) is an open-loop-only measure; in closed-loop IntendedSendTime
+// is enqueue time, so the latency sample is omitted (counts are tracked in both).
 //
 // Conservation. registered == included + expired + inflight_at_shutdown, and
 // registered ⊆ succeeded (only successful sends are registered). The inclusion

@@ -56,9 +56,10 @@ var (
 		metric.WithDescription("Total open-loop transactions admitted and enqueued but whose send completed with an error (emitted once at run end)"),
 		metric.WithUnit("{transactions}")))
 
-	// Inclusion tracker. inclusion_latency._count IS the included count, so no
-	// standalone included counter. Denominator for inclusion rate is the
-	// existing succeeded/txs_accepted series, never a new "registered" series.
+	// Inclusion tracker. inclusion_latency is open-loop only (closed-loop
+	// IntendedSendTime is enqueue time, not a schedule); its _count is the
+	// included count only there. Denominator for inclusion rate is the existing
+	// succeeded/txs_accepted series, never a new "registered" series.
 	inclusionLatency = must(meter.Float64Histogram(
 		"inclusion_latency",
 		metric.WithDescription("Latency from intended send to observed on-chain inclusion in seconds"),

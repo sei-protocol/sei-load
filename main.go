@@ -34,11 +34,6 @@ var (
 	configFile string
 )
 
-// inclusionReapAfter bounds how long an un-included tx stays in the inclusion
-// registry before it is reaped as expired. A calibration knob: too short
-// undercounts slow inclusions, too long inflates the in-flight map.
-const inclusionReapAfter = 30 * time.Second
-
 var rootCmd = &cobra.Command{
 	Use:   "seiload",
 	Short: "Sei Chain Load Test v2",
@@ -58,6 +53,7 @@ without actually sending requests or deploying contracts.`,
 func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
+	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
 	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
@@ -275,8 +271,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			const maxInflightMultiple = 4
 			inclusionTracker = stats.NewInclusionTracker(
 				cfg.SeiChainID,
-				inclusionReapAfter,
+				cfg.Settings.InclusionReapAfter.ToDuration(),
 				cfg.Settings.MaxInFlight*maxInflightMultiple,
+				cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop,
 			)
 			inclusion = utils.Some(inclusionTracker)
 			s.SpawnBgNamed("inclusion tracker", func() error {
