@@ -28,7 +28,7 @@ var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type sendReq struct {
 	tx   *types.LoadTx
-	done chan struct{}
+	done chan error
 }
 
 type ethClientConfig struct {
@@ -115,11 +115,14 @@ func newEthClient(cfg *ethClientConfig) *ethClient {
 
 // Send queues a transaction for this worker to process
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) error {
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	if err := utils.Send(ctx, c.reqs, sendReq{tx, done}); err != nil {
 		return err
 	}
-	_, _, err := utils.RecvOrClosed(ctx, done)
+	err, recvErr := utils.Recv(ctx, done)
+	if recvErr != nil {
+		return recvErr
+	}
 	return err
 }
 
@@ -199,11 +202,8 @@ func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client) err
 		// so stamping the actual send-attempt time here is race-free (see LoadTx).
 		req.tx.AttemptedSendTime = startTime
 		err = c.sendTx(ctx, client, req.tx)
-		close(req.done)
+		req.done <- err
 		c.cfg.Collector.RecordTransaction(req.tx.Scenario.Name, c.cfg.Endpoint, time.Since(startTime), err == nil)
-		if err != nil {
-			log.Printf("%v", err)
-		}
 	}
 	return ctx.Err()
 }

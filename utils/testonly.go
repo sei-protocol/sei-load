@@ -147,7 +147,7 @@ var alphanum = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234
 func GenString(rng Rng, n int) string {
 	s := make([]rune, n)
 	for i := range n {
-		s[i] = alphanum[rand.Intn(len(alphanum))]
+		s[i] = alphanum[rng.Intn(len(alphanum))]
 	}
 	return string(s)
 }

@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"golang.org/x/time/rate"
 
@@ -25,6 +26,9 @@ type ShardedSender struct {
 func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector) (*ShardedSender, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, fmt.Errorf("no endpoints configured")
+	}
+	if cfg.GetNumShards() <= 0 {
+		return nil, fmt.Errorf("no shards configured")
 	}
 	var clients []*ethClient
 	for id, endpoint := range cfg.Endpoints {
@@ -79,7 +83,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 						return err
 					}
 					if err := client.Send(ctx, tx); err != nil {
-						return err
+						log.Printf("%v", err)
 					}
 				}
 				return ctx.Err()

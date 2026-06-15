@@ -2,8 +2,6 @@ package utils
 
 import (
 	"context"
-
-	"github.com/pkg/errors"
 )
 
 // Recv receives a value from a channel or returns an error if the context is canceled.
@@ -45,30 +43,9 @@ func Send[T any](ctx context.Context, ch chan<- T, v T) error {
 }
 
 // SendOrDrop send a value to channel if not full or drop the item if the channel is full.
-func SendOrDrop[T any](ch chan<- T, v T) error {
+func SendOrDrop[T any](ch chan<- T, v T) {
 	select {
 	case ch <- v:
-		return nil
-	default:
-		// drop the item
-		return nil
-	}
-}
-
-// ForEach is a helper function that reads from a channel and calls a handler for each item.
-// this avoids needing a lot of for/select boilerplate everywhere.
-func ForEach[T any](ctx context.Context, ch <-chan T, handler func(T) error) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.WithStack(ctx.Err())
-		case item, ok := <-ch:
-			if !ok {
-				return nil // Channel closed
-			}
-			if err := handler(item); err != nil {
-				return err // Stop on error
-			}
-		}
+	default: // drop the item
 	}
 }
