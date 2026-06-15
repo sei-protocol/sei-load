@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -261,18 +262,16 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 
 		// The --track-receipts flag now enables the block-indexed inclusion
-		// tracker (the lossy per-tx receipt path is retired). maxInflight is sized
-		// off the open-loop --max-in-flight so the registry comfortably holds the
-		// admitted in-flight set; the ×4 headroom absorbs inclusion lag.
+		// tracker (the lossy per-tx receipt path is retired).
 		// Not wired under --dry-run: simulated sends never hit the chain, so they
 		// would all reap as expired and pollute the inclusion stats.
 		inclusion := utils.None[*stats.InclusionTracker]()
 		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
-			const maxInflightMultiple = 4
+			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
 			inclusionTracker = stats.NewInclusionTracker(
 				cfg.SeiChainID,
-				cfg.Settings.InclusionReapAfter.ToDuration(),
-				cfg.Settings.MaxInFlight*maxInflightMultiple,
+				reapAfter,
+				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
 				cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop,
 			)
 			inclusion = utils.Some(inclusionTracker)
@@ -431,6 +430,27 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		err = nil
 	}
 	return err
+}
+
+// inclusionRegistryCap sizes the inclusion registry. A registry entry lives from
+// send-completion until block-match or reapAfter — far longer than a send is
+// in-flight — so MaxInFlight (which bounds concurrent SENDS) under-sizes it. By
+// Little's law the steady-state registry size ≈ sendRate × residency, so for a
+// fixed rate the cap must come from TPS × reapAfter (×1.5 headroom for jitter),
+// not send concurrency, or healthy high-TPS runs hit dropped_at_cap and
+// undercount inclusion. We take the MAX of that term and the legacy MaxInFlight×4
+// floor. For TPS<=0 (a ramped run with no fixed rate known at config time) the
+// Little's-law term is 0 and we fall back to the floor; if the ramp peak exceeds
+// it the run surfaces dropped_at_cap (un-defer: derive from the ramp peak then).
+func inclusionRegistryCap(maxInFlight int, tps float64, reapAfter time.Duration) int {
+	const maxInflightMultiple = 4
+	const headroom = 1.5
+	floor := maxInFlight * maxInflightMultiple
+	little := int(math.Ceil(tps * reapAfter.Seconds() * headroom))
+	if little > floor {
+		return little
+	}
+	return floor
 }
 
 // loadConfig reads and parses the configuration file

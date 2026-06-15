@@ -111,7 +111,10 @@
 // read load. (4) InclusionTime is the header-arrival wall clock, not fetch
 // completion and not header.Time. (5) A failed block-body fetch is counted
 // (block_fetch_errors) and not retried — that block's txs reap as expired, the
-// same conservative undercount as a WS gap.
+// same conservative undercount as a WS gap. (6) A tx registered after its
+// including block was already scanned is missed and reaps as expired — bounded
+// by the microsecond register window versus block time, a rare conservative
+// undercount, the same direction as a WS gap.
 //
 // Detection and baseline. schedule_lag (AttemptedSendTime minus IntendedSendTime)
 // is the primary coordinated-omission gate: it shows when sends fall behind the

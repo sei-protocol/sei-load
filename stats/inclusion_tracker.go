@@ -74,6 +74,11 @@ type InclusionTracker struct {
 // make len(inflight) >= cap always true and drop every registration.
 const defaultMaxInflight = 10_000
 
+// defaultInclusionReapAfter floors a non-positive reapAfter: time.NewTicker
+// panics on a <=0 period, so an explicit 0 (--inclusion-reap-after=0) would
+// crash reapLoop. Defense-in-depth; the config default is already 30s.
+const defaultInclusionReapAfter = 30 * time.Second
+
 // NewInclusionTracker builds a tracker bounded at maxInflight in-flight txs that
 // reaps un-included txs after reapAfter. openLoop gates the inclusion_latency
 // sample (included/expired counts are tracked in both models). The block source
@@ -81,6 +86,9 @@ const defaultMaxInflight = 10_000
 func NewInclusionTracker(seiChainID string, reapAfter time.Duration, maxInflight int, openLoop bool) *InclusionTracker {
 	if maxInflight <= 0 {
 		maxInflight = defaultMaxInflight
+	}
+	if reapAfter <= 0 {
+		reapAfter = defaultInclusionReapAfter
 	}
 	t := &InclusionTracker{
 		seiChainID:  seiChainID,

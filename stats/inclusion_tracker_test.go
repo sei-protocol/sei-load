@@ -201,6 +201,22 @@ func TestInclusion_NonPositiveCapFallsBack(t *testing.T) {
 	require.Equal(t, uint64(0), tr.Summary().DroppedAtCap)
 }
 
+// Test 4c: a non-positive reapAfter is floored to a positive default. A zero
+// period would otherwise panic time.NewTicker and crash reapLoop, so we also
+// confirm reapLoop starts and stops cleanly with the floored value.
+func TestInclusion_NonPositiveReapAfterFloored(t *testing.T) {
+	tr := newTestTracker(t, 0, 100, NewMockBlockSource())
+	require.Positive(t, tr.reapAfter, "non-positive reapAfter is floored to a positive default")
+	require.Equal(t, defaultInclusionReapAfter, tr.reapAfter)
+
+	// reapLoop must not panic on the floored period; cancel returns it promptly.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tr.reapLoop(ctx) }()
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
 // Test 5: conservation identity registered == included + expired +
 // inflightAtShutdown, table-driven over register/match/reap mixes.
 func TestInclusion_Conservation(t *testing.T) {
