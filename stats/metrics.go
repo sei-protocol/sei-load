@@ -75,6 +75,11 @@ var (
 		metric.WithDescription("Missed block heights observed by the inclusion tracker (no backfill)"),
 		metric.WithUnit("{blocks}")))
 
+	inclusionBlockFetchErrors = must(meter.Int64Counter(
+		"block_fetch_errors",
+		metric.WithDescription("Block-body fetches that failed; the block's txs go unmatched and reap as expired (no retry)"),
+		metric.WithUnit("{blocks}")))
+
 	// Run-summary: the only inclusion tally with no live series, since it is the
 	// terminal value of the inclusion_inflight gauge. Emitted once at run end.
 	runInflightAtShutdown = must(meter.Int64Gauge(

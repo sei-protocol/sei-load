@@ -107,7 +107,9 @@
 // by reorg_depth × block_time, with no canonical reconciliation. (3) A single
 // fetch endpoint (Endpoints[0], shared with the block collector) adds a small
 // read load. (4) InclusionTime is the header-arrival wall clock, not fetch
-// completion and not header.Time.
+// completion and not header.Time. (5) A failed block-body fetch is counted
+// (block_fetch_errors) and not retried — that block's txs reap as expired, the
+// same conservative undercount as a WS gap.
 //
 // Detection and baseline. schedule_lag (AttemptedSendTime minus IntendedSendTime)
 // is the primary coordinated-omission gate: it shows when sends fall behind the

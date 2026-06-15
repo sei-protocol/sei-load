@@ -177,7 +177,11 @@ func (t *InclusionTracker) matchBlock(ctx context.Context, num uint64, arrival t
 	hashes, err := t.source.BlockTxHashes(fetchCtx, num)
 	cancel()
 	if err != nil {
+		// No retry (avoids piling RPC onto a struggling SUT): the block's txs go
+		// unmatched and reap as expired. Surfaced so the undercount is visible.
 		log.Printf("inclusion tracker: fetch block %d: %v", num, err)
+		inclusionBlockFetchErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("chain_id", t.seiChainID)))
 		return
 	}
 	for s := range t.state.Lock() {
