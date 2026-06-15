@@ -4,8 +4,9 @@
 // the [Dispatcher] times their arrival and hands each off to a [TxSender]; the
 // [ShardedSender] routes each tx to one of N per-endpoint [Worker]s by shard;
 // the worker's send loop stamps the attempt and calls the go-ethereum client
-// (eth_sendRawTransaction). Receipts, when tracked, are
-// polled on a separate worker loop. A shared [golang.org/x/time/rate.Limiter] is
+// (eth_sendRawTransaction). Inclusion, when tracked, is observed by the
+// block-indexed [stats.InclusionTracker] (see Inclusion stage below), not by
+// per-tx receipt polling. A shared [golang.org/x/time/rate.Limiter] is
 // the single rate authority for the whole pipeline; the [Ramper] drives its
 // limit up or down via SetLimit.
 //
@@ -83,6 +84,30 @@
 // tx are byte-identical — so coordinated-omission safety is a property of the
 // run's arrival model, not of any per-tx field. Latency and schedule-lag consumers
 // must gate on the run-level arrival model.
+//
+// # Inclusion stage
+//
+// When enabled (--track-receipts), the worker hands each successful send to the
+// [stats.InclusionTracker] at send-completion (after OnComplete, only on a nil
+// send error). The tracker subscribes to new heads, fetches each arriving
+// block's body once (O(blocks), not O(txs)), and stamps InclusionTime on every
+// matched in-flight tx with the block's header-ARRIVAL time. Un-included txs are
+// reaped as expired after reapAfter.
+//
+// Conservation. registered == included + expired + inflight_at_shutdown, and
+// registered ⊆ succeeded (only successful sends are registered). The inclusion
+// denominator is succeeded (txs_accepted), never a minted "registered" series;
+// dropped_at_cap txs are excluded from it. inflight_at_shutdown is read only
+// after both the workers and the tracker have joined.
+//
+// Accepted boundaries. (1) WS gaps degrade conservatively: a missed head is
+// counted (block_gaps) but never backfilled, so its txs reap as expired —
+// an undercount of inclusions, never a miscount. (2) Reorgs use
+// first-observation-wins (stamp + delete); the inclusion-time error is bounded
+// by reorg_depth × block_time, with no canonical reconciliation. (3) A single
+// fetch endpoint (Endpoints[0], shared with the block collector) adds a small
+// read load. (4) InclusionTime is the header-arrival wall clock, not fetch
+// completion and not header.Time.
 //
 // Detection and baseline. schedule_lag (AttemptedSendTime minus IntendedSendTime)
 // is the primary coordinated-omission gate: it shows when sends fall behind the

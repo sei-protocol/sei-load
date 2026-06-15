@@ -13,7 +13,7 @@ import (
 // LoadTx is a wrapper that has pre-encoded json rpc payload and eth transaction.
 //
 // Lifecycle field concurrency contract: a *LoadTx is passed by pointer through
-// buffered channels (txChan, sentTxs). Each lifecycle field (the timestamps and
+// the buffered txChan. Each lifecycle field (the timestamps and
 // SequenceIndex) is written at most once, by whichever goroutine owns the tx at
 // that stage, and is immutable thereafter; ownership transfers with the pointer
 // across the channels, so the writes need no locking. The open-loop scheduler
@@ -46,7 +46,7 @@ type LoadTx struct {
 	// model (see IntendedSendTime); the run's arrival model is authoritative.
 	SequenceIndex uint64
 	// AttemptedSendTime is when the send was actually attempted, written by the
-	// worker goroutine that owns the tx between dequeue and the sentTxs hand-off.
+	// worker goroutine that owns the tx between dequeue and send completion.
 	AttemptedSendTime time.Time
 	// OnComplete, if set, is invoked exactly once when the network send attempt
 	// for this tx finishes (after sendTransaction returns), with the send error
@@ -59,7 +59,11 @@ type LoadTx struct {
 	// owning goroutine before hand-off, per the lifecycle concurrency contract.
 	OnComplete func(err error)
 	// InclusionTime is when the tx was observed included on-chain, written only
-	// by the inclusion tracker.
+	// by the inclusion tracker (single writer, under its registry lock). The
+	// clock is the wall-clock instant the including block's newHead header
+	// ARRIVES at the tracker (time.Now() at header receipt), cached per block
+	// number and applied to every tx matched in that block — NOT the body-fetch
+	// completion time and NOT header.Time.
 	InclusionTime time.Time
 }
 

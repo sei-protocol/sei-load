@@ -1,7 +1,11 @@
 package stats
 
 import (
+	"context"
+	"sync"
+
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -51,7 +55,64 @@ var (
 		"run_txs_failed_total",
 		metric.WithDescription("Total open-loop transactions admitted and enqueued but whose send completed with an error (emitted once at run end)"),
 		metric.WithUnit("{transactions}")))
+
+	// Inclusion tracker. inclusion_latency._count IS the included count, so no
+	// standalone included counter. Denominator for inclusion rate is the
+	// existing succeeded/txs_accepted series, never a new "registered" series.
+	inclusionLatency = must(meter.Float64Histogram(
+		"inclusion_latency",
+		metric.WithDescription("Latency from intended send to observed on-chain inclusion in seconds"),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.5, 1, 2, 5, 10, 30, 60, 120)))
+
+	inclusionOutcome = must(meter.Int64Counter(
+		"inclusion_outcome",
+		metric.WithDescription("In-flight txs that left the registry un-included, by outcome (expired, dropped_at_cap)"),
+		metric.WithUnit("{transactions}")))
+
+	inclusionBlockGaps = must(meter.Int64Counter(
+		"block_gaps",
+		metric.WithDescription("Missed block heights observed by the inclusion tracker (no backfill)"),
+		metric.WithUnit("{blocks}")))
+
+	// Run-summary: the only inclusion tally with no live series, since it is the
+	// terminal value of the inclusion_inflight gauge. Emitted once at run end.
+	runInflightAtShutdown = must(meter.Int64Gauge(
+		"run_inflight_at_shutdown",
+		metric.WithDescription("In-flight inclusion registry size at run end (emitted once at run end)"),
+		metric.WithUnit("{transactions}")))
 )
+
+// meteredInclusionTrackers backs the inclusion_inflight gauge: each tracker
+// registers so the callback can sample its in-flight map under lock.
+var meteredInclusionTrackers = struct {
+	lock     sync.RWMutex
+	trackers []*InclusionTracker
+}{}
+
+func meterInclusionInflight(t *InclusionTracker) {
+	meteredInclusionTrackers.lock.Lock()
+	defer meteredInclusionTrackers.lock.Unlock()
+	meteredInclusionTrackers.trackers = append(meteredInclusionTrackers.trackers, t)
+}
+
+func init() {
+	must(meter.Int64ObservableGauge(
+		"inclusion_inflight",
+		metric.WithDescription("Current size of the inclusion tracker's in-flight tx registry"),
+		metric.WithUnit("{transactions}"),
+		metric.WithInt64Callback(func(_ context.Context, observer metric.Int64Observer) error {
+			meteredInclusionTrackers.lock.RLock()
+			defer meteredInclusionTrackers.lock.RUnlock()
+			for _, t := range meteredInclusionTrackers.trackers {
+				for s := range t.state.Lock() {
+					observer.Observe(int64(len(s.inflight)),
+						metric.WithAttributes(attribute.String("chain_id", t.seiChainID)))
+				}
+			}
+			return nil
+		})))
+}
 
 func must[V any](v V, err error) V {
 	if err != nil {
