@@ -23,17 +23,7 @@ var (
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
 
-<<<<<<< HEAD
-	receiptLatency = utils.OrPanic1(meter.Float64Histogram(
-		"receipt_latency",
-		metric.WithDescription("Latency from transaction submission to receipt confirmation in seconds"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0)))
-
 	txsAccepted = utils.OrPanic1(meter.Int64Counter(
-=======
-	txsAccepted = must(meter.Int64Counter(
->>>>>>> origin/main
 		"txs_accepted",
 		metric.WithDescription("Transactions successfully submitted to an endpoint"),
 		metric.WithUnit("{transactions}")))
