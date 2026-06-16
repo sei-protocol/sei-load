@@ -79,11 +79,11 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 			s.Spawn(func() error {
 				client := ss.clients[i%len(ss.clients)]
 				for ctx.Err() == nil {
-					if err := ss.limiter.Wait(ctx); err != nil {
-						return err
-					}
 					tx, err := shard.Recv(ctx)
 					if err != nil {
+						return err
+					}
+					if err := ss.limiter.Wait(ctx); err != nil {
 						return err
 					}
 					if err := client.Send(ctx, tx); err != nil {
