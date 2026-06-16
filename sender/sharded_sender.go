@@ -78,16 +78,13 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 		for i, shard := range ss.shards {
 			s.Spawn(func() error {
 				client := ss.clients[i%len(ss.clients)]
-				skipRateLimit := ss.cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
 				for ctx.Err() == nil {
 					tx, err := shard.Recv(ctx)
 					if err != nil {
 						return err
 					}
-					if !skipRateLimit && ss.limiter != nil {
-						if err := ss.limiter.Wait(ctx); err != nil {
-							return err
-						}
+					if err := ss.limiter.Wait(ctx); err != nil {
+						return err
 					}
 					if err := client.Send(ctx, tx); err != nil {
 						log.Printf("%v", err)
