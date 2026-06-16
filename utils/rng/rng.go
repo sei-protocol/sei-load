@@ -43,7 +43,8 @@ import (
 //     streamID feeds fnv1a64, so renaming "gas:0:base" reseeds that stream.
 //     Additions are append-only and do not perturb existing streams (a new id
 //     hashes to its own sub-stream); PLT-460 added "dist:%d:key" and
-//     "dist:%d:size" for the per-scenario distribution index samplers.
+//     "dist:%d:size" for the per-scenario distribution index samplers, and
+//     PLT-465 added "dist:%d:op" for the per-scenario operation-mix selector.
 //  3. The per-stream draw order. Each stream is a sequence; drawing base before
 //     tip before feecap is part of the contract — reordering draws within a
 //     stream shifts every downstream value.

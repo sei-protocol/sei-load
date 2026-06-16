@@ -25,6 +25,25 @@ func TestSameSeedSameStreamReproduces(t *testing.T) {
 	}
 }
 
+// TestDistributionStreamsAreDistinct pins that scenario i's key, size, and op
+// distribution streams are mutually distinct ids. Sharing any two would couple
+// the axes — drawing a size or op would perturb the key sequence — which the
+// StorageRW independence tests rely on being impossible.
+func TestDistributionStreamsAreDistinct(t *testing.T) {
+	ids := map[string]string{
+		"key":  KeyDistributionStream(0),
+		"size": SizeDistributionStream(0),
+		"op":   OpDistributionStream(0),
+	}
+	seen := map[string]string{}
+	for name, id := range ids {
+		if prev, dup := seen[id]; dup {
+			t.Fatalf("stream id %q shared by %s and %s", id, prev, name)
+		}
+		seen[id] = name
+	}
+}
+
 func TestDifferentStreamsDiverge(t *testing.T) {
 	a := drawSeq(42, "gas:0:base", 64)
 	b := drawSeq(42, "gas:1:base", 64)

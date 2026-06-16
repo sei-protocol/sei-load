@@ -152,6 +152,9 @@ func (g *configBasedGenerator) bindDistributionStreams(i int, cfg config.Scenari
 	if cfg.SizeDistribution != nil {
 		cfg.SizeDistribution.SetStream(g.rng.Stream(rng.SizeDistributionStream(i)))
 	}
+	if cfg.Operations != nil {
+		cfg.Operations.SetStream(g.rng.Stream(rng.OpDistributionStream(i)))
+	}
 }
 
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).

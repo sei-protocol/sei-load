@@ -41,22 +41,28 @@
 // are emitted by `make generate` from the contract bindings — do not edit that
 // block by hand.
 //
-// # StorageRW scaffold
+// # StorageRW
 //
-// StorageRW issues a read-modify-write against StorageRWv1 to exercise the SLOAD
-// + SSTORE storage path under load. PLT-461 lands it as a scaffold: every
-// transaction targets one fixed slot with an empty calldata pad, which is enough
-// to prove the deploy/send path. The per-tx slot/value/pad distribution arrives
-// in PLT-465.
+// StorageRW exercises the SLOAD + SSTORE storage path under load against
+// StorageRWv1 along two customer-named axes: key contention and tx size. Per tx
+// the scenario draws a slot from the key distribution over the configured
+// RecordCount keyspace, an operation (read/write/rmw) from the configured mix,
+// and a calldata-pad length from the size distribution over the configured
+// SizeBuckets histogram. The three draws ride independent rng sub-streams
+// (dist:i:key, dist:i:op, dist:i:size) so tuning any one axis leaves the others'
+// sequences identical. Each field is nil-guarded exactly like the gas pickers:
+// with no distribution config the scenario degenerates to a single fixed slot 0,
+// an empty pad, and rmw — the 100%-conflict baseline.
 //
 // Gas sizing. The rmw is an SLOAD + SSTORE on a single slot: ~26k gas warm, but
 // ~44k on a cold first touch (the cold-SLOAD and the zero-to-nonzero SSTORE both
-// charge their higher rates). The scaffold pins GasLimit to 50k: it covers the
-// cold-first-touch case with headroom for the (currently empty) pad, and packs
+// charge their higher rates). The base GasLimit is pinned to 50k, which covers
+// the cold-first-touch case with headroom for the fixed calldata head and packs
 // roughly 4x denser than the 200k default in CreateTransactionOpts. Density
 // matters on a gas-limit-admission chain, where a block admits transactions up
 // to its gas limit regardless of gas actually used — an oversized limit reserves
-// block space the rmw never spends and throttles achievable throughput. PLT-465
-// revisits the limit once the calldata pad is distribution-driven, since pad size
-// changes calldata gas.
+// block space the rmw never spends and throttles achievable throughput. The
+// distribution-driven pad adds its own intrinsic calldata cost (4 gas per
+// zero pad byte, EIP-2028) on top of the base so a large pad cannot
+// underprovision the tx, without inflating the limit when the pad is empty.
 package scenarios

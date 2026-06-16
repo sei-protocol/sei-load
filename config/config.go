@@ -6,6 +6,8 @@ import (
 	"github.com/sei-protocol/sei-load/utils"
 	"math/big"
 	"time"
+
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // LoadConfig stores the configuration for load-related settings.
@@ -98,4 +100,61 @@ type Scenario struct {
 	GasTipCapPicker  *GasPicker     `json:"gasTipCapPicker,omitempty"`
 	KeyDistribution  *Distribution  `json:"keyDistribution,omitempty"`
 	SizeDistribution *Distribution  `json:"sizeDistribution,omitempty"`
+	// RecordCount is the keyspace size the KeyDistribution indexes into: the
+	// per-tx slot is a draw in [0, RecordCount). Zero (the default) is the
+	// single-slot, 100%-conflict behavior.
+	RecordCount uint64 `json:"recordCount,omitempty"`
+	// SizeBuckets is the calldata-pad-length histogram the SizeDistribution
+	// indexes into: the per-tx pad length is SizeBuckets[draw]. Empty (the
+	// default) is the empty-pad behavior.
+	SizeBuckets []int `json:"sizeBuckets,omitempty"`
+	// Operations is the read/write/rmw selection mix. Nil (the default) is the
+	// all-rmw behavior.
+	Operations *OperationMix `json:"operations,omitempty"`
+}
+
+// maxCalldataPadBytes caps each SizeBuckets entry. It is a generous guard
+// against a config typo (e.g. a stray extra digit OOMing the generator on the
+// make([]byte, n) hot path), not a security boundary: configs are
+// author-controlled today.
+const maxCalldataPadBytes = 1 << 20 // 1 MiB
+
+// Validate checks per-scenario invariants that a malformed config would
+// otherwise surface as a hot-path panic or OOM. Mirrors ZipfianDistribution's
+// parameter validation; call once after the config is loaded.
+func (s *Scenario) Validate() error {
+	for i, n := range s.SizeBuckets {
+		if n < 0 {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d] is negative (%d)", s.Name, i, n)
+		}
+		if n > maxCalldataPadBytes {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the %d-byte cap", s.Name, i, n, maxCalldataPadBytes)
+		}
+	}
+	return nil
+}
+
+// ValidateScenarios runs each scenario's Validate. It must be called after the
+// config is loaded.
+func (c *LoadConfig) ValidateScenarios() error {
+	for i := range c.Scenarios {
+		if err := c.Scenarios[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// OperationMix is the relative weighting of the StorageRW read/write/rmw
+// operations. The weights need not sum to anything in particular; a per-tx draw
+// selects an operation in proportion to its weight over the total. An all-zero
+// (or nil) mix falls back to rmw, the default.
+type OperationMix struct {
+	Read  uint64 `json:"read,omitempty"`
+	Write uint64 `json:"write,omitempty"`
+	Rmw   uint64 `json:"rmw,omitempty"`
+
+	// stream is set by SetStream; nil draws from the unseeded global RNG. The
+	// pointer aliases on copy, matching GasPicker/Distribution.
+	stream *rng.Stream
 }

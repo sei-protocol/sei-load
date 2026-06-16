@@ -36,3 +36,8 @@ func KeyDistributionStream(i int) string { return fmt.Sprintf("dist:%d:key", i) 
 // SizeDistributionStream is the stream id for scenario i's size-distribution
 // index sampler (PLT-460).
 func SizeDistributionStream(i int) string { return fmt.Sprintf("dist:%d:size", i) }
+
+// OpDistributionStream is the stream id for scenario i's operation-mix selector
+// (PLT-465). Distinct from the key and size streams so the op draw is
+// independent: changing the op mix must not perturb the key or size sequence.
+func OpDistributionStream(i int) string { return fmt.Sprintf("dist:%d:op", i) }
