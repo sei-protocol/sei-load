@@ -18,7 +18,7 @@ import (
 // that stage, and is immutable thereafter; ownership transfers with the pointer
 // across the channels, so the writes need no locking. The open-loop scheduler
 // writes IntendedSendTime and SequenceIndex while it solely owns the tx (before
-// the worker hand-off); the worker writes AttemptedSendTime; the inclusion
+// the sender hand-off); the sender writes AttemptedSendTime; the inclusion
 // tracker writes InclusionTime. A zero timestamp means "not recorded" (e.g.
 // prewarm txs, or a stage not yet reached) — consumers must treat it as
 // untracked, never as the zero epoch.
@@ -46,16 +46,16 @@ type LoadTx struct {
 	// model (see IntendedSendTime); the run's arrival model is authoritative.
 	SequenceIndex uint64
 	// AttemptedSendTime is when the send was actually attempted, written by the
-	// worker goroutine that owns the tx between dequeue and send completion.
+	// sender goroutine that owns the tx between dequeue and send completion.
 	AttemptedSendTime time.Time
 	// OnComplete, if set, is invoked exactly once when the network send attempt
 	// for this tx finishes (after sendTransaction returns), with the send error
 	// or nil. The open-loop scheduler sets it to release the in-flight permit so
 	// the bound covers true unacked sends (enqueue + send), not just queue depth;
-	// see the open-loop scheduler. The worker invokes it after sendTransaction
+	// see the open-loop scheduler. The sender invokes it after send completion
 	// and is the sole invoker on the happy path. Nil in the closed-loop and batch
-	// paths, where the worker simply skips it. The callback must be cheap and
-	// non-blocking — the worker holds the tx and calls it inline. Written by the
+	// paths, where the sender simply skips it. The callback must be cheap and
+	// non-blocking — the sender holds the tx and calls it inline. Written by the
 	// owning goroutine before hand-off, per the lifecycle concurrency contract.
 	OnComplete func(err error)
 	// InclusionTime is when the tx was observed included on-chain, written only

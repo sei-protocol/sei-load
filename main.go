@@ -28,7 +28,7 @@ import (
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 var (
@@ -212,21 +212,18 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	var dispatcher *sender.Dispatcher
 	var inclusionTracker *stats.InclusionTracker
 
-	err = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
 		gen, err := generator.NewConfigBasedGenerator(cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
 
-		// Create shared rate limiter for all workers if TPS is specified
-		var sharedLimiter *rate.Limiter
+		// Create the shared rate authority for the whole run.
+		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
 		if cfg.Settings.TPS > 0 {
 			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), 1)
 			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
-		} else {
-			// No rate limiting
-			sharedLimiter = rate.NewLimiter(rate.Inf, 1)
 		}
 
 		// Create and start block collector if endpoints are available
@@ -280,8 +277,16 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
+		// Open-loop owns the arrival clock in the scheduler, so the sender must
+		// not add a second finite gate. Prewarm and the scheduler still use the
+		// real shared limiter.
+		senderLimiter := sharedLimiter
+		if cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop && cfg.Settings.TxsDir == "" {
+			senderLimiter = rate.NewLimiter(rate.Inf, 1)
+		}
+
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
+		snd, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
@@ -344,7 +349,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		if cfg.Settings.TxsDir == "" {
 			// Start the sender (starts all workers)
 			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", snd.NumShards())
+			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if cfg.Settings.Prewarm {

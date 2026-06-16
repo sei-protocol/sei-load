@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sei-protocol/sei-load/utils"
 	"math/big"
 	"time"
 )
@@ -11,12 +12,19 @@ import (
 type LoadConfig struct {
 	ChainID int64 `json:"chainId,omitempty"`
 	// SeiChainID is the textual chain ID used for tagging metric collection.
-	SeiChainID string         `json:"seiChainID,omitempty"`
-	Endpoints  []string       `json:"endpoints"`
-	Accounts   *AccountConfig `json:"accounts,omitempty"`
-	Scenarios  []Scenario     `json:"scenarios,omitempty"`
-	MockDeploy bool           `json:"mockDeploy,omitempty"`
-	Settings   *Settings      `json:"settings,omitempty"`
+	SeiChainID string   `json:"seiChainID,omitempty"`
+	Endpoints  []string `json:"endpoints"`
+	// Number of shards to divide the senders into.
+	// Txs within each shard are sent sequentially.
+	// Defaults to Endpoints * Settings.TasksPerEndpoint.
+	// WARNING: this is unrelated to the server-side autobahn sharding
+	// (which assigns tx sender addrs to lanes). It is solely used to maximize
+	// txs/s throughput of the load generator.
+	NumShards  utils.Option[int] `json:"numShards,omitzero"`
+	Accounts   *AccountConfig    `json:"accounts,omitempty"`
+	Scenarios  []Scenario        `json:"scenarios,omitempty"`
+	MockDeploy bool              `json:"mockDeploy,omitempty"`
+	Settings   *Settings         `json:"settings,omitempty"`
 	// Funding, when set, funds the generated account pool from a root key at
 	// startup so the run works against a real chain. See funding.go.
 	Funding *FundingConfig `json:"funding,omitempty"`
@@ -31,6 +39,15 @@ type LoadConfig struct {
 	// regardless. A nil Seed means "unseeded": the generator resolves a random
 	// one and records it for after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
+}
+
+func (c *LoadConfig) GetNumShards() int {
+	return c.NumShards.Or(len(c.Endpoints) * c.Settings.TasksPerEndpoint)
+}
+
+func (c *LoadConfig) TotalQueueSize() int {
+	// Backward compatible formula, consider making it a config value.
+	return len(c.Endpoints) * c.Settings.BufferSize
 }
 
 // Duration wraps time.Duration to provide JSON unmarshaling support

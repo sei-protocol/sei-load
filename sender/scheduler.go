@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/generator"
@@ -24,7 +25,7 @@ type openLoopScheduler struct {
 	generator   generator.Generator
 	sender      TxSender
 	limiter     *rate.Limiter
-	inflight    *utils.Semaphore
+	inflight    *semaphore.Weighted
 	onSent      func(tx *types.LoadTx, err error)
 	maxInFlight int
 
@@ -54,11 +55,14 @@ func newOpenLoopScheduler(
 	maxInFlight int,
 	onSent func(tx *types.LoadTx, err error),
 ) *openLoopScheduler {
+	if maxInFlight < 1 {
+		maxInFlight = 1
+	}
 	return &openLoopScheduler{
 		generator:   gen,
 		sender:      snd,
 		limiter:     limiter,
-		inflight:    utils.NewSemaphore(maxInFlight),
+		inflight:    semaphore.NewWeighted(int64(maxInFlight)),
 		onSent:      onSent,
 		maxInFlight: maxInFlight,
 	}
@@ -102,7 +106,7 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 
 		// Admit before generating: a dropped tick must not consume a seeded
 		// generator draw (determinism). TryAcquire is non-blocking.
-		release, ok := s.inflight.TryAcquire()
+		ok := s.inflight.TryAcquire(1)
 		if !ok {
 			s.dropped.Add(1)
 			nextSend = nextSend.Add(gap)
@@ -113,7 +117,7 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 		tx, ok := s.generator.Generate()
 		if !ok {
 			// Generator drained: not an arrival — release the permit and stop.
-			release()
+			s.inflight.Release(1)
 			log.Print("Scheduler: generator returned no more transactions")
 			return nil
 		}
@@ -131,7 +135,7 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 		var once sync.Once
 		complete := func(err error) {
 			once.Do(func() {
-				release()
+				s.inflight.Release(1)
 				if s.onSent != nil {
 					s.onSent(tx, err)
 				}

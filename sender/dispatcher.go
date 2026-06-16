@@ -35,8 +35,8 @@ type Dispatcher struct {
 	prewarmGen utils.Option[generator.Generator] // Optional prewarm generator
 	sender     TxSender
 
-	// Open-loop arrival configuration. arrivalModel defaults to closed-loop;
-	// limiter and maxInFlight are only consulted in open-loop mode.
+	// Open-loop arrival configuration. arrivalModel defaults to closed-loop.
+	// limiter is always present; open-loop additionally consults maxInFlight.
 	arrivalModel ArrivalModel
 	limiter      *rate.Limiter
 	maxInFlight  int
@@ -56,6 +56,7 @@ func NewDispatcher(gen generator.Generator, sender TxSender) *Dispatcher {
 		generator:    gen,
 		sender:       sender,
 		arrivalModel: ArrivalClosedLoop,
+		limiter:      rate.NewLimiter(rate.Inf, 1),
 	}
 }
 
@@ -99,9 +100,8 @@ func (d *Dispatcher) SetPrewarmGenerator(prewarmGen generator.Generator) {
 func (d *Dispatcher) Prewarm(ctx context.Context) error {
 	d.mu.RLock()
 	prewarmGen := d.prewarmGen
-	// Prewarm runs over the workers before the scheduler paces anything, so in
-	// open-loop (ungated workers) it must self-pace off the shared limiter or it
-	// floods the SUT. Nil in closed-loop, where the worker gates instead.
+	// Prewarm runs before the scheduler paces anything, so it must self-pace off
+	// the shared limiter or it floods the SUT.
 	limiter := d.limiter
 	d.mu.RUnlock()
 
@@ -116,10 +116,8 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 
 	// Run prewarm generator until completion
 	for ctx.Err() == nil {
-		if limiter != nil {
-			if err := limiter.Wait(ctx); err != nil {
-				return err
-			}
+		if err := limiter.Wait(ctx); err != nil {
+			return err
 		}
 
 		tx, ok := gen.Generate()

@@ -24,13 +24,13 @@ import (
 // This file is the production-path safety net for the open-loop in-flight bound.
 //
 // Every other scheduler test drives a FAKE TxSender that invokes tx.OnComplete
-// itself, so the suite would stay green even if the real Worker forgot the
-// `if tx.OnComplete != nil { tx.OnComplete(err) }` line in runTxSender — the one
+// itself, so the suite would stay green even if the real ethClient forgot the
+// `if tx.OnComplete != nil { tx.OnComplete(err) }` line in runSender — the one
 // load-bearing line that makes the maxInFlight semaphore bound true unacked
 // sends rather than nothing (permits would never be released → leak/meaningless
-// bound). The tests here wire the REAL Worker (runTxSender → sendTransaction →
+// bound). The tests here wire the REAL ethClient (runSender → sendTx →
 // the real ethclient → OnComplete) behind the scheduler and assert the permit
-// is genuinely released by the worker on send completion.
+// is genuinely released by the sender on send completion.
 //
 // Harness: an httptest.Server speaking the minimal JSON-RPC the ethclient send
 // path touches. SendTransaction issues exactly one eth_sendRawTransaction call
@@ -215,34 +215,31 @@ func (g *signedTxGenerator) issuedCount() int {
 	return g.issued
 }
 
-// newRealWorker builds the production Worker against the given endpoint, in the
-// open-loop configuration (SkipRateLimit=true so the scheduler owns the clock,
-// no inclusion tracker so we exercise only the send path). It is the real
+// newRealSender builds the production ethClient against the given endpoint. It
+// is the real
 // TxSender the scheduler drives.
-func newRealWorker(endpoint string, tasks, buffer int) *Worker {
-	return NewWorker(&WorkerConfig{
-		ID:            0,
-		SeiChainID:    "test",
-		Endpoint:      endpoint,
-		BufferSize:    buffer,
-		Tasks:         tasks,
-		DryRun:        false,
-		Debug:         false,
-		Collector:     stats.NewCollector(),
-		SkipRateLimit: true,
+func newRealSender(endpoint string, tasks int) *ethClient {
+	return newEthClient(&ethClientConfig{
+		ChainID:   "test",
+		ID:        0,
+		Endpoint:  endpoint,
+		Tasks:     tasks,
+		DryRun:    false,
+		Debug:     false,
+		Collector: stats.NewCollector(),
 	})
 }
 
-// TestRealWorker_Conservation_OnRealSendPath asserts conservation
+// TestRealSender_Conservation_OnRealSendPath asserts conservation
 // (issued == completed + dropped) where `completed` is driven exclusively by the
-// REAL worker invoking tx.OnComplete after sendTransaction returns — not by a
-// fake. If runTxSender stopped calling OnComplete, completed would stall and
+// REAL sender invoking tx.OnComplete after sendTx returns — not by a fake. If
+// runSender stopped calling OnComplete, completed would stall and
 // this would fail.
-func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
+func TestRealSender_Conservation_OnRealSendPath(t *testing.T) {
 	const txCount = 200
 	srv := newRPCServer(t)
 	gen := newSignedTxGenerator(t, txCount)
-	worker := newRealWorker(srv.url(), 8, 256)
+	client := newRealSender(srv.url(), 8)
 
 	var completed, succeeded atomic.Uint64
 	onSent := func(_ *types.LoadTx, err error) {
@@ -253,26 +250,26 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	}
 
 	limiter := rate.NewLimiter(rate.Limit(2000), 1)
-	sched := newOpenLoopScheduler(gen, worker, limiter, 256, onSent)
+	sched := newOpenLoopScheduler(gen, client, limiter, 256, onSent)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	// Run the worker and scheduler in a scope whose teardown WE control via
+	// Run the sender and scheduler in a scope whose teardown WE control via
 	// runCancel — not the scheduler's return.
 	//
 	// service.Run cancels the scope's context as soon as every MAIN task returns.
 	// If the scheduler were a main task, the instant it exhausts the generator and
-	// returns, service.Run would cancel the worker's context — aborting any send
+	// returns, service.Run would cancel the sender's context — aborting any send
 	// still in flight. A send whose 200 OK the server already counted (handled++)
 	// but whose client.SendTransaction had not yet returned would then fail with
 	// context-canceled: OnComplete fires with err != nil, so completed++ but NOT
 	// succeeded++. That is exactly the observed flake (handled=200, succeeded=199):
 	// not a sampling artifact but a teardown that races the last in-flight send.
 	//
-	// So the scheduler and worker are BACKGROUND tasks, and the lone MAIN task is a
+	// So the scheduler and sender are BACKGROUND tasks, and the lone MAIN task is a
 	// gate that blocks until the test calls runCancel(). The scope therefore stays
-	// alive — the worker keeps draining txChan and firing OnComplete — until the
+	// alive — the sender keeps draining reqs and firing OnComplete — until the
 	// test has observed quiescence and torn down deliberately.
 	runCtx, runCancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -280,7 +277,7 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_ = service.Run(runCtx, func(ctx context.Context, scope service.Scope) error {
-			scope.SpawnBg(func() error { return worker.Run(ctx) })
+			scope.SpawnBg(func() error { return client.Run(ctx) })
 			scope.SpawnBg(func() error { return sched.Run(ctx, scope) })
 			// Main task: hold the scope open until the test signals teardown.
 			<-ctx.Done()
@@ -297,12 +294,12 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	//                 generator is drained and dropped ticks consumed no draw;
 	//                 the precondition that makes the fixpoint below stable)
 	//   conservation: completed == Admitted()       (every admitted tx reached a
-	//                 terminal state via the real worker's OnComplete)
+	//                 terminal state via the real sender's OnComplete)
 	//   equality:     succeeded == handled          (every server-handled send
 	//                 produced exactly one successful worker-driven completion)
 	//
 	// conservation and equality are transiently off WHILE a send is in flight: the
-	// server bumps `handled` when it RECEIVES eth_sendRawTransaction, but the worker
+	// server bumps `handled` when it RECEIVES eth_sendRawTransaction, but the sender
 	// bumps `succeeded` only AFTER SendTransaction returns and OnComplete fires — the
 	// instants differ by the server→worker-return window. Sampling any of them alone,
 	// or at different instants, can catch that window. Requiring all three together,
@@ -312,7 +309,7 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	// point. (The deeper hazard the gate above fixes is teardown racing that same
 	// window; here we additionally refuse to read until the window is empty.)
 	//
-	// Driven by the real worker's OnComplete — a missing invoke leaves completed
+	// Driven by the real sender's OnComplete — a missing invoke leaves completed
 	// (and succeeded) short forever, so convergence never happens and the test
 	// fails on the Eventually deadline. CI is slow, so the window is generous;
 	// correctness depends on convergence, not on the deadline firing.
@@ -336,39 +333,39 @@ func TestRealWorker_Conservation_OnRealSendPath(t *testing.T) {
 	require.Equal(t, total, uint64(gen.issuedCount()), "the generator must be fully drained")
 	require.Positive(t, srv.handled.Load(), "the real RPC server must have handled sends")
 	require.Equal(t, sched.Admitted(), completed.Load(),
-		"every admitted tx must reach a terminal state via the worker's OnComplete")
+		"every admitted tx must reach a terminal state via the sender's OnComplete")
 	require.Equal(t, succeeded.Load(), srv.handled.Load(),
 		"each successful completion must correspond to one eth_sendRawTransaction")
 }
 
-// TestRealWorker_PermitReleasedByWorker is the teeth: with maxInFlight=1 and a
-// single worker task, the RPC server blocks the first send. The real worker is
-// parked inside sendTransaction, so it has NOT yet called tx.OnComplete and the
+// TestRealSender_PermitReleasedBySender is the teeth: with maxInFlight=1 and a
+// single sender task, the RPC server blocks the first send. The real sender is
+// parked inside sendTx, so it has NOT yet called tx.OnComplete and the
 // single permit stays held — every subsequent arrival must drop. Releasing the
-// blocked send lets the worker return from sendTransaction, fire OnComplete, and
+// blocked send lets the sender return from sendTx, fire OnComplete, and
 // free the permit, so flow resumes.
 //
 // If someone deletes the `if tx.OnComplete != nil { tx.OnComplete(err) }` invoke
-// in runTxSender, the permit is never released even after the send completes:
-// the worker would never accept a second tx, so handled stays at 1 and the
+// in runSender, the permit is never released even after the send completes: the
+// sender would never accept a second tx, so handled stays at 1 and the
 // resume assertion fails. That is the falsification this test exists for.
-func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
+func TestRealSender_PermitReleasedBySender(t *testing.T) {
 	srv := newRPCServer(t)
 	srv.setBlocking(true)
 
 	// Plenty of arrivals so the scheduler keeps offering txs while the first is
 	// parked; the surplus must drop because the lone permit is held.
 	gen := newSignedTxGenerator(t, 1000)
-	// One task: a single runTxSender owns the only permit's lifecycle, so the
-	// permit can only be freed by that worker calling OnComplete.
-	worker := newRealWorker(srv.url(), 1, 1)
+	// One task: a single runSender owns the only permit's lifecycle, so the
+	// permit can only be freed by that sender calling OnComplete.
+	client := newRealSender(srv.url(), 1)
 
 	var completed atomic.Uint64
 	onSent := func(_ *types.LoadTx, _ error) { completed.Add(1) }
 
 	// Fast arrival clock so many txs are offered during the blocked window.
 	limiter := rate.NewLimiter(rate.Limit(5000), 1) // 0.2ms gap
-	sched := newOpenLoopScheduler(gen, worker, limiter, 1, onSent)
+	sched := newOpenLoopScheduler(gen, client, limiter, 1, onSent)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -378,7 +375,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
-			scope.SpawnBg(func() error { return worker.Run(ctx) })
+			scope.SpawnBg(func() error { return client.Run(ctx) })
 			return sched.Run(ctx, scope)
 		})
 	}()
@@ -386,7 +383,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	// Wait until exactly one send is genuinely in flight (parked in the handler).
 	<-srv.arrived
 
-	// While that send is parked, the worker has not fired OnComplete, so the lone
+	// While that send is parked, the sender has not fired OnComplete, so the lone
 	// permit is held. Give the fast scheduler time to offer (and drop) a slew of
 	// arrivals, then assert the bound held: exactly one send in flight, none
 	// completed yet, and the rest dropped.
@@ -402,7 +399,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	require.Equal(t, uint64(0), srv.handled.Load(),
 		"the parked send has not returned a result yet, so the permit is still held")
 
-	// Release the blocked send. The real worker now returns from sendTransaction
+	// Release the blocked send. The real sender now returns from sendTx
 	// and MUST invoke tx.OnComplete to free the permit. If it does not (the bug),
 	// no further send is ever admitted and handled stays at 1 forever.
 	require.True(t, srv.releaseOne(), "one send must be parked and releasable")
@@ -427,7 +424,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return srv.handled.Load() > 1 && completed.Load() > 1
 	}, 3*time.Second, 2*time.Millisecond,
-		"flow must resume after the worker releases the permit via OnComplete "+
+		"flow must resume after the sender releases the permit via OnComplete "+
 			"(handled=%d completed=%d)", srv.handled.Load(), completed.Load())
 
 	// Flow resumed: at least one further send completed after the release, so the
@@ -447,7 +444,7 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 	require.Equal(t, admitted, uint64(gen.issuedCount()),
 		"every generator draw must be an admitted tx; dropped ticks consume no draw")
 
-	// Each admitted tx completes exactly once via the worker's OnComplete, so
+	// Each admitted tx completes exactly once via the sender's OnComplete, so
 	// completed must equal Admitted() — minus at most the single tx left mid-flight
 	// when cancel raced its in-flight send.
 	require.LessOrEqual(t, completed.Load(), admitted, "no admitted tx may complete more than once")
@@ -457,9 +454,9 @@ func TestRealWorker_PermitReleasedByWorker(t *testing.T) {
 }
 
 // TestDispatcher_PrewarmRateLimitedInOpenLoop guards the prewarm-flood
-// regression: in open-loop the workers are constructed SkipRateLimit=true, but
+// regression: in open-loop the sender loop is ungated, but
 // the scheduler paces only the MAIN load. Prewarm runs first over those same
-// ungated workers, so it must pace itself off the shared limiter or it floods
+// ungated senders, so it must pace itself off the shared limiter or it floods
 // the SUT. With workers wired exactly as in open-loop, a low limit, and many
 // more prewarm txs than the worker pool could absorb instantly, an unpaced
 // prewarm would drain in well under the limiter's minimum span. We assert the
@@ -470,7 +467,7 @@ func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
 	const prewarmTxs = 40
 	const rps = 200.0 // limiter: 200 tx/s → unpaced 40 txs is near-instant
 
-	worker := newRealWorker(srv.url(), 8, 256) // SkipRateLimit=true, open-loop shape
+	client := newRealSender(srv.url(), 8)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
@@ -479,14 +476,14 @@ func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
-			scope.SpawnBg(func() error { return worker.Run(ctx) })
+			scope.SpawnBg(func() error { return client.Run(ctx) })
 			<-ctx.Done()
 			return nil
 		})
 	}()
 
 	limiter := rate.NewLimiter(rate.Limit(rps), 1)
-	d := NewDispatcher(newSignedTxGenerator(t, 0), worker)
+	d := NewDispatcher(newSignedTxGenerator(t, 0), client)
 	d.SetOpenLoop(limiter, 256) // sets d.limiter so Prewarm self-paces
 	d.SetPrewarmGenerator(newSignedTxGenerator(t, prewarmTxs))
 
