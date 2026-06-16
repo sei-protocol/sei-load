@@ -56,7 +56,8 @@ Edit `my-config.json`:
 | `--buffer-size, -b` | 1000 | Buffer size per worker |
 | `--dry-run` | false | Simulate without sending |
 | `--debug` | false | Log each transaction |
-| `--track-receipts` | false | Track transaction receipts |
+| `--track-receipts` | false | Enable the block-indexed tx→inclusion tracker (stamps InclusionTime; reports included/expired/inflight-at-shutdown) |
+| `--inclusion-reap-after` | 30s | How long an un-included tx waits before reaping as expired (tune to expected inclusion time on congested chains) |
 | `--track-blocks` | false | Track block statistics |
 | `--track-user-latency` | false | Track user latency metrics |
 | `--prewarm` | false | Prewarm accounts before test |
@@ -170,6 +171,32 @@ blocks height=5191 time(p50=2s p99=5s max=8s) gas(p50=21000 p99=50000 max=100000
 
 ## Development
 
+### Before you push
+
+Run the full local CI gate in one command:
+
+```bash
+make verify   # check-lint-pin + lint + test + build + CLI --help + check-bindings
+```
+
+`make verify` mirrors the gating CI jobs (`build-and-test`, `bindings-check`):
+the golangci-lint version-pin check, lint, test, compile the CLI, and a `--help` smoke. The only gating step it does
+*not* run is CI's dry-run smoke (a backgrounded `seiload --dry-run` killed after
+5s) — that asserts no exit code and stays CI-only, so a green `verify` is a strong
+signal but not a literal guarantee of that one step. Install the pinned toolchain
+once first so your local results match CI:
+
+```bash
+make install-tools   # full toolchain: Node (via nvm), solc, abigen, golangci-lint (pinned to v2.12.2)
+# or, for the linter only:
+make install-lint    # golangci-lint pinned to v2.12.2
+```
+
+`golangci-lint` is pinned to a specific version (Makefile `GOLANGCI_VERSION`,
+the workflow's `golangci-lint-action` `version:`, and `.golangci.yml`); `make lint`
+warns if the binary on your PATH differs. A drifting/unpinned linter is the usual
+"passes locally, fails CI" trap — `make install-lint` gives you the exact CI version.
+
 ### Build
 ```bash
 make build
@@ -177,7 +204,7 @@ make build
 
 ### Test
 ```bash
-make test
+make test   # runs with -race
 ```
 
 ### Lint

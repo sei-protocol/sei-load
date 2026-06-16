@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -86,6 +88,37 @@ func TestEthClientSendTx_WS(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{tx.Payload}, api.RawTransactions())
+}
+
+func TestEthClientRunSender_RegistersSuccessfulSendAfterOnComplete(t *testing.T) {
+	tracker := stats.NewInclusionTracker("test-chain", time.Hour, 100, true)
+	client := newEthClient(&ethClientConfig{
+		ChainID:   "test-chain",
+		ID:        9,
+		Endpoint:  "dryrun",
+		Tasks:     1,
+		DryRun:    true,
+		Collector: stats.NewCollector(),
+		Inclusion: utils.Some(tracker),
+	})
+
+	tx := testLoadTx(t)
+	var inflightAtComplete atomic.Uint64
+	tx.OnComplete = func(error) {
+		inflightAtComplete.Store(tracker.Summary().InflightAtShutdown)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.runSender(ctx, nil) }()
+
+	require.NoError(t, client.Send(ctx, tx))
+	cancel()
+	require.ErrorIs(t, <-errCh, context.Canceled)
+	require.Zero(t, inflightAtComplete.Load(), "inclusion must register after OnComplete")
+	require.Equal(t, uint64(1), tracker.Summary().InflightAtShutdown, "successful send must register exactly once")
 }
 
 type mockEthAPI struct {

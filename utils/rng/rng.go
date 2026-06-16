@@ -41,6 +41,9 @@ import (
 //  1. The derivation formula above (hash, diffusion, PCG argument order).
 //  2. The set of stream-id strings (defined as constants in streams.go). The
 //     streamID feeds fnv1a64, so renaming "gas:0:base" reseeds that stream.
+//     Additions are append-only and do not perturb existing streams (a new id
+//     hashes to its own sub-stream); PLT-460 added "dist:%d:key" and
+//     "dist:%d:size" for the per-scenario distribution index samplers.
 //  3. The per-stream draw order. Each stream is a sequence; drawing base before
 //     tip before feecap is part of the contract — reordering draws within a
 //     stream shifts every downstream value.

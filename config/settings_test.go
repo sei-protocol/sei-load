@@ -82,6 +82,7 @@ func TestArgumentPrecedence(t *testing.T) {
 
 			// Add flags (with zero defaults to avoid precedence issues)
 			cmd.Flags().Duration("stats-interval", 0, "Stats interval")
+			cmd.Flags().Duration("inclusion-reap-after", 0, "Inclusion reap after")
 			cmd.Flags().Int("workers", 0, "Number of workers")
 			cmd.Flags().Float64("tps", 0, "TPS")
 			cmd.Flags().Bool("dry-run", false, "Dry run")
@@ -97,6 +98,8 @@ func TestArgumentPrecedence(t *testing.T) {
 			cmd.Flags().Uint64("target-gas", 0, "Target gas")
 			cmd.Flags().Int("num-blocks-to-write", 0, "Number of blocks to write")
 			cmd.Flags().Duration("post-summary-flush-delay", 0, "Post-summary flush delay")
+			cmd.Flags().String("arrival-model", "", "Arrival model")
+			cmd.Flags().Int("max-in-flight", 0, "Max in-flight")
 
 			// Parse CLI args
 			if len(tt.cliArgs) > 0 {
@@ -128,6 +131,7 @@ func TestDefaultSettings(t *testing.T) {
 		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
+		InclusionReapAfter:    Duration(30 * time.Second),
 		BufferSize:            1000,
 		DryRun:                false,
 		Debug:                 false,
@@ -141,9 +145,65 @@ func TestDefaultSettings(t *testing.T) {
 		TargetGas:             10_000_000,
 		NumBlocksToWrite:      100,
 		PostSummaryFlushDelay: Duration(25 * time.Second),
+		ArrivalModel:          ArrivalModelClosedLoop,
+		MaxInFlight:           10_000,
 	}
 
 	if defaults != expected {
 		t.Errorf("DefaultSettings mismatch.\nExpected: %+v\nGot: %+v", expected, defaults)
+	}
+}
+
+func TestSettingsValidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings Settings
+		wantErr  string
+	}{
+		{
+			name:     "closed-loop with no rate is fine",
+			settings: Settings{ArrivalModel: ArrivalModelClosedLoop, TPS: 0},
+		},
+		{
+			name:     "open-loop with finite TPS is fine",
+			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 100},
+		},
+		{
+			name:     "open-loop with ramp-up is fine (finite ramp curve λ)",
+			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 0, RampUp: true},
+		},
+		{
+			// B1: open-loop with TPS=0 and no ramp ⇒ λ=Inf ⇒ degenerate anchor.
+			name:     "open-loop with zero TPS and no ramp is rejected",
+			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 0},
+			wantErr:  "finite positive arrival rate",
+		},
+		{
+			name:     "open-loop with negative TPS is rejected",
+			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: -1},
+			wantErr:  "finite positive arrival rate",
+		},
+		{
+			name:     "unrecognized arrival-model is rejected",
+			settings: Settings{ArrivalModel: "burst", TPS: 100},
+			wantErr:  "invalid arrival-model",
+		},
+		{
+			name:     "empty arrival-model is rejected",
+			settings: Settings{ArrivalModel: "", TPS: 100},
+			wantErr:  "invalid arrival-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.settings.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
 }

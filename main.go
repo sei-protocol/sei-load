@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -53,6 +54,7 @@ without actually sending requests or deploying contracts.`,
 func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
+	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
 	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
@@ -71,6 +73,8 @@ func init() {
 	rootCmd.Flags().Int("num-blocks-to-write", 100, "Number of blocks to write")
 	rootCmd.Flags().Duration("post-summary-flush-delay", 25*time.Second, "In-process delay after run-summary metrics are recorded, allowing Prometheus to scrape them before exit")
 	rootCmd.Flags().Duration("duration", 0, "Run duration (0 = until SIGTERM/SIGINT)")
+	rootCmd.Flags().String("arrival-model", config.ArrivalModelClosedLoop, "Transaction arrival model: open_loop (schedule t0+i/lambda, drop on overrun) or closed_loop (legacy generate-then-send)")
+	rootCmd.Flags().Int("max-in-flight", 10_000, "Open-loop only: max concurrent in-flight sends before overdue txs are dropped")
 
 	// Initialize Viper with proper error handling
 	if err := config.InitializeViper(rootCmd); err != nil {
@@ -106,6 +110,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 	// Get resolved settings from the config package
 	cfg.Settings = config.ResolveSettings()
+	if err := cfg.Settings.Validate(); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")
@@ -202,6 +209,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	var ramper *sender.Ramper
+	var dispatcher *sender.Dispatcher
+	var inclusionTracker *stats.InclusionTracker
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
@@ -252,8 +261,27 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
+		// The --track-receipts flag now enables the block-indexed inclusion
+		// tracker (the lossy per-tx receipt path is retired).
+		// Not wired under --dry-run: simulated sends never hit the chain, so they
+		// would all reap as expired and pollute the inclusion stats.
+		inclusion := utils.None[*stats.InclusionTracker]()
+		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
+			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
+			inclusionTracker = stats.NewInclusionTracker(
+				cfg.SeiChainID,
+				reapAfter,
+				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
+				cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop,
+			)
+			inclusion = utils.Some(inclusionTracker)
+			s.SpawnBgNamed("inclusion tracker", func() error {
+				return inclusionTracker.Run(ctx, cfg.Endpoints[0])
+			})
+		}
+
 		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector)
+		snd, err := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
 		if err != nil {
 			return fmt.Errorf("failed to create sender: %w", err)
 		}
@@ -267,7 +295,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 
 		// Create dispatcher
-		var dispatcher *sender.Dispatcher
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
@@ -289,6 +316,21 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 		// Set statistics collector for dispatcher
 		dispatcher.SetStatsCollector(collector)
+
+		// Open-loop drives arrivals from the scheduler (see sender doc); the
+		// txs-writer path has no arrival clock, so it stays closed-loop.
+		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
+		switch {
+		case openLoop && cfg.Settings.TxsDir == "":
+			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
+			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
+		case openLoop:
+			// open_loop was requested but the txs-writer path has no arrival clock,
+			// so the run falls back to closed_loop. Surface the downgrade.
+			log.Printf("📤 Arrival model: closed_loop (txs-writer path; --arrival-model open_loop ignored)")
+		default:
+			log.Printf("📤 Arrival model: closed_loop")
+		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
@@ -353,7 +395,32 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	if cfg.Settings.RampUp && ramper != nil {
 		ramper.LogFinalStats()
 	}
-	collector.EmitRunSummary(ctx)
+	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
+	if dispatcher != nil {
+		summary.ArrivalModel = string(dispatcher.ArrivalModel())
+		dstats := dispatcher.GetStats()
+		summary.Dropped = dstats.Dropped
+		summary.Failed = dstats.Failed
+		if summary.Dropped > 0 {
+			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
+		}
+		if summary.Failed > 0 {
+			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
+		}
+	}
+	// Read AFTER service.Run returns: both workers and the tracker have joined,
+	// so inflightAtShutdown is final and the conservation identity holds.
+	if inclusionTracker != nil {
+		incl := inclusionTracker.Summary()
+		summary.InclusionTracked = true
+		summary.Included = incl.Included
+		summary.Expired = incl.Expired
+		summary.DroppedAtCap = incl.DroppedAtCap
+		summary.InflightAtShutdown = incl.InflightAtShutdown
+		log.Printf("📦 Inclusion: included=%d expired=%d dropped_at_cap=%d inflight_at_shutdown=%d",
+			incl.Included, incl.Expired, incl.DroppedAtCap, incl.InflightAtShutdown)
+	}
+	collector.EmitRunSummary(ctx, summary)
 	if d := cfg.Settings.PostSummaryFlushDelay.ToDuration(); d > 0 {
 		log.Printf("⏳ Holding pod for post-summary scrape window (%s)...", d)
 		time.Sleep(d)
@@ -363,6 +430,27 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		err = nil
 	}
 	return err
+}
+
+// inclusionRegistryCap sizes the inclusion registry. A registry entry lives from
+// send-completion until block-match or reapAfter — far longer than a send is
+// in-flight — so MaxInFlight (which bounds concurrent SENDS) under-sizes it. By
+// Little's law the steady-state registry size ≈ sendRate × residency, so for a
+// fixed rate the cap must come from TPS × reapAfter (×1.5 headroom for jitter),
+// not send concurrency, or healthy high-TPS runs hit dropped_at_cap and
+// undercount inclusion. We take the MAX of that term and the legacy MaxInFlight×4
+// floor. For TPS<=0 (a ramped run with no fixed rate known at config time) the
+// Little's-law term is 0 and we fall back to the floor; if the ramp peak exceeds
+// it the run surfaces dropped_at_cap (un-defer: derive from the ramp peak then).
+func inclusionRegistryCap(maxInFlight int, tps float64, reapAfter time.Duration) int {
+	const maxInflightMultiple = 4
+	const headroom = 1.5
+	floor := maxInFlight * maxInflightMultiple
+	little := int(math.Ceil(tps * reapAfter.Seconds() * headroom))
+	if little > floor {
+		return little
+	}
+	return floor
 }
 
 // loadConfig reads and parses the configuration file

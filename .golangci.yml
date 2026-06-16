@@ -1,0 +1,17 @@
+# golangci-lint configuration (schema v2).
+#
+# DETERMINISM, not stricter-than-today: this is exactly golangci-lint v2.12.2's
+# enabled-by-default linter set, encoded explicitly so a binary bump can't
+# silently shift it. Keep in sync with GOLANGCI_VERSION in the Makefile.
+# See README "Before you push" for the full pinning/parity rationale.
+version: "2"
+
+linters:
+  # `default: none` + the explicit list below pins the enabled set.
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
