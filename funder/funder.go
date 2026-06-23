@@ -27,7 +27,7 @@ const balanceCheckConcurrency = 16
 // per-account amount from cfg.Funding's root key, or is a no-op when
 // cfg.Funding is nil. See the package doc for the funding flow, the EVM
 // auto-association precondition, and the restart/idempotency semantics.
-func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.AccountPool) error {
+func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []*types.AccountPool) error {
 	fc := cfg.Funding
 	if fc == nil {
 		return nil
@@ -135,7 +135,7 @@ func resolveRootKey(fc *config.FundingConfig) (string, error) {
 	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
-func uniqueAddresses(pools []types.AccountPool) []common.Address {
+func uniqueAddresses(pools []*types.AccountPool) []common.Address {
 	seen := make(map[common.Address]struct{})
 	var out []common.Address
 	for _, p := range pools {

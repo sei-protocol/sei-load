@@ -87,11 +87,11 @@ func (w *weightedGenerator) Generate() (*types.LoadTx, bool) {
 }
 
 // GetAccountPools returns all account pools from underlying generators
-func (w *weightedGenerator) GetAccountPools() []types.AccountPool {
+func (w *weightedGenerator) GetAccountPools() []*types.AccountPool {
 	w.mx.RLock()
 	defer w.mx.RUnlock()
 
-	var allPools []types.AccountPool
+	var allPools []*types.AccountPool
 
 	// Collect pools from all underlying generators
 	for _, gen := range w.generators {

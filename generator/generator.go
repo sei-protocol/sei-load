@@ -18,7 +18,7 @@ import (
 type Generator interface {
 	Generate() (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
 	GenerateN(n int) []*types.LoadTx
-	GetAccountPools() []types.AccountPool
+	GetAccountPools() []*types.AccountPool
 }
 
 // scenarioInstance represents a scenario instance with its configuration
@@ -26,7 +26,7 @@ type scenarioInstance struct {
 	Name     string
 	Weight   int
 	Scenario scenarios.TxGenerator
-	Accounts types.AccountPool
+	Accounts *types.AccountPool
 	Deployed bool
 }
 
@@ -36,8 +36,8 @@ type configBasedGenerator struct {
 	rng            *rng.Source
 	instances      []*scenarioInstance
 	deployer       *types.Account
-	sharedAccounts types.AccountPool   // Shared account pool when using top-level config
-	accountPools   []types.AccountPool // All account pools (shared + scenario-specific)
+	sharedAccounts *types.AccountPool   // Shared account pool when using top-level config
+	accountPools   []*types.AccountPool // All account pools (shared + scenario-specific)
 	mu             sync.RWMutex
 }
 
@@ -65,7 +65,7 @@ func (g *configBasedGenerator) createScenarios() error {
 		g.bindDistributionStreams(i, scenarioCfg)
 
 		// Determine account pool to use
-		var accountPool types.AccountPool
+		var accountPool *types.AccountPool
 		if scenarioCfg.Accounts != nil {
 			// Scenario defines its own account settings - create separate pool
 			accountCount := scenarioCfg.Accounts.Accounts
@@ -228,12 +228,12 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 }
 
 // GetAccountPools returns all account pools managed by this generator
-func (g *configBasedGenerator) GetAccountPools() []types.AccountPool {
+func (g *configBasedGenerator) GetAccountPools() []*types.AccountPool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	// Return a copy of the slice to prevent external modification
-	pools := make([]types.AccountPool, len(g.accountPools))
+	pools := make([]*types.AccountPool, len(g.accountPools))
 	copy(pools, g.accountPools)
 	return pools
 }

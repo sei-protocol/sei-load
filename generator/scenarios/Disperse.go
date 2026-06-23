@@ -17,7 +17,7 @@ const Disperse = "disperse"
 type DisperseScenario struct {
 	*ContractScenarioBase[bindings.Disperse]
 	contract *bindings.Disperse
-	pool     types.AccountPool
+	pool     *types.AccountPool
 }
 
 // NewDisperseScenario creates a new Disperse scenario

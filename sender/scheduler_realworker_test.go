@@ -206,8 +206,8 @@ func (g *signedTxGenerator) Generate() (*types.LoadTx, bool) {
 	return types.CreateTxFromEthTx(signed, scenario), true
 }
 
-func (g *signedTxGenerator) GenerateN(int) []*types.LoadTx        { panic("unused") }
-func (g *signedTxGenerator) GetAccountPools() []types.AccountPool { return nil }
+func (g *signedTxGenerator) GenerateN(int) []*types.LoadTx         { panic("unused") }
+func (g *signedTxGenerator) GetAccountPools() []*types.AccountPool { return nil }
 
 func (g *signedTxGenerator) issuedCount() int {
 	g.mu.Lock()

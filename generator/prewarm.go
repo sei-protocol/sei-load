@@ -10,7 +10,7 @@ import (
 
 // PrewarmGenerator generates self-transfer transactions to prewarm account nonces
 type PrewarmGenerator struct {
-	accountPools   []types.AccountPool
+	accountPools   []*types.AccountPool
 	evmScenario    scenarios.TxGenerator
 	currentPoolIdx int
 	finished       bool
@@ -99,12 +99,12 @@ func (pg *PrewarmGenerator) GenerateN(n int) []*types.LoadTx {
 }
 
 // GetAccountPools returns all account pools used by this prewarm generator
-func (pg *PrewarmGenerator) GetAccountPools() []types.AccountPool {
+func (pg *PrewarmGenerator) GetAccountPools() []*types.AccountPool {
 	pg.mu.RLock()
 	defer pg.mu.RUnlock()
 
 	// Return a copy to prevent external modification
-	pools := make([]types.AccountPool, len(pg.accountPools))
+	pools := make([]*types.AccountPool, len(pg.accountPools))
 	copy(pools, pg.accountPools)
 	return pools
 }

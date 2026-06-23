@@ -9,11 +9,11 @@ import (
 
 type scenarioGenerator struct {
 	scenario    scenarios.TxGenerator
-	accountPool types.AccountPool
+	accountPool *types.AccountPool
 	mu          sync.RWMutex
 }
 
-func NewScenarioGenerator(accounts types.AccountPool, txg scenarios.TxGenerator) Generator {
+func NewScenarioGenerator(accounts *types.AccountPool, txg scenarios.TxGenerator) Generator {
 	return &scenarioGenerator{
 		scenario:    txg,
 		accountPool: accounts,
@@ -42,8 +42,8 @@ func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
 	}), true
 }
 
-func (sg *scenarioGenerator) GetAccountPools() []types.AccountPool {
+func (sg *scenarioGenerator) GetAccountPools() []*types.AccountPool {
 	sg.mu.RLock()
 	defer sg.mu.RUnlock()
-	return []types.AccountPool{sg.accountPool}
+	return []*types.AccountPool{sg.accountPool}
 }

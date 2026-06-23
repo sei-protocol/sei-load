@@ -8,12 +8,12 @@ import (
 )
 
 // AccountPool returns a next account for load generation.
-type AccountPool interface {
-	NextAccount() *Account
-	// GetAccounts returns the fixed accounts backing the pool (excludes any
-	// on-demand accounts minted via NewAccountRate). Used to enumerate the pool
-	// for one-time funding.
-	GetAccounts() []*Account
+type AccountPool struct {
+	Accounts []*Account
+	cfg      *AccountConfig
+
+	mx  sync.Mutex
+	idx int
 }
 
 // AccountConfig stores the configuration for account generation.
@@ -25,15 +25,7 @@ type AccountConfig struct {
 	Stream *rng.Stream
 }
 
-type accountPool struct {
-	Accounts []*Account
-	cfg      *AccountConfig
-
-	mx  sync.Mutex
-	idx int
-}
-
-func (a *accountPool) nextIndex() int {
+func (a *AccountPool) nextIndex() int {
 	a.mx.Lock()
 	defer a.mx.Unlock()
 	a.idx++
@@ -42,7 +34,7 @@ func (a *accountPool) nextIndex() int {
 }
 
 // NextAccount returns the next account.
-func (a *accountPool) NextAccount() *Account {
+func (a *AccountPool) NextAccount() *Account {
 	if a.cfg.NewAccountRate > 0 {
 		var randomNumber float64
 		if a.cfg.Stream != nil {
@@ -58,13 +50,13 @@ func (a *accountPool) NextAccount() *Account {
 }
 
 // GetAccounts returns the fixed accounts backing the pool.
-func (a *accountPool) GetAccounts() []*Account {
+func (a *AccountPool) GetAccounts() []*Account {
 	return a.Accounts
 }
 
 // NewAccountPool creates a new account generator from a config.
-func NewAccountPool(cfg *AccountConfig) AccountPool {
-	return &accountPool{
+func NewAccountPool(cfg *AccountConfig) *AccountPool {
+	return &AccountPool{
 		Accounts: cfg.Accounts,
 		cfg:      cfg,
 	}

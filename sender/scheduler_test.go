@@ -40,7 +40,7 @@ func (g *fakeGenerator) Generate() (*types.LoadTx, bool) {
 }
 
 func (g *fakeGenerator) GenerateN(int) []*types.LoadTx { panic("unused") }
-func (g *fakeGenerator) GetAccountPools() []types.AccountPool {
+func (g *fakeGenerator) GetAccountPools() []*types.AccountPool {
 	return nil
 }
 
@@ -91,8 +91,8 @@ func (g *seededGenerator) draw(tx *types.LoadTx) uint64 {
 	return g.drawIndex[tx]
 }
 
-func (g *seededGenerator) GenerateN(int) []*types.LoadTx        { panic("unused") }
-func (g *seededGenerator) GetAccountPools() []types.AccountPool { return nil }
+func (g *seededGenerator) GenerateN(int) []*types.LoadTx         { panic("unused") }
+func (g *seededGenerator) GetAccountPools() []*types.AccountPool { return nil }
 
 // asyncFakeSender models the production ShardedSender's send semantics: Send
 // returns when the tx lands in a buffered channel (enqueue-and-return), NOT when
