@@ -30,9 +30,9 @@ func TestTxsWriter_Flush(t *testing.T) {
 	})
 	evmScenario.Deploy(loadConfig, sharedAccounts.NextAccount())
 
-	generator := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
+	gen := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
 
-	txs := generator.GenerateN(3)
+	txs := generator.GenerateN(gen, 3)
 
 	err := writer.Send(context.Background(), txs[0])
 	require.NoError(t, err)

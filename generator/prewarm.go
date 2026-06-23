@@ -85,19 +85,6 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 	return pg.evmScenario.Generate(scenario), true
 }
 
-// GenerateN generates n prewarming transactions
-func (pg *PrewarmGenerator) GenerateN(n int) []*types.LoadTx {
-	result := make([]*types.LoadTx, 0, n)
-	for i := 0; i < n; i++ {
-		if tx, ok := pg.Generate(); ok {
-			result = append(result, tx)
-		} else {
-			break // Generator is done
-		}
-	}
-	return result
-}
-
 // GetAccountPools returns all account pools used by this prewarm generator
 func (pg *PrewarmGenerator) GetAccountPools() []*types.AccountPool {
 	pg.mu.RLock()

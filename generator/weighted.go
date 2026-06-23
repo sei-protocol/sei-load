@@ -68,19 +68,6 @@ func (w *weightedGenerator) nextGenerator() Generator {
 	return w.generators[w.nextIndex()]
 }
 
-// GenerateN generates n transactions.
-func (w *weightedGenerator) GenerateN(n int) []*types.LoadTx {
-	txs := make([]*types.LoadTx, 0, n)
-	for range n {
-		if tx, ok := w.Generate(); ok {
-			txs = append(txs, tx)
-		} else {
-			break // Generator is done
-		}
-	}
-	return txs
-}
-
 // Generate generates 1 transaction.
 func (w *weightedGenerator) Generate() (*types.LoadTx, bool) {
 	return w.nextGenerator().Generate()

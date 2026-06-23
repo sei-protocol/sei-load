@@ -40,7 +40,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	require.NotNil(t, gen)
 
 	totalTxs := 100
-	txs := gen.GenerateN(totalTxs)
+	txs := generator.GenerateN(gen, totalTxs)
 	require.Len(t, txs, totalTxs)
 
 	// Count occurrences per scenario

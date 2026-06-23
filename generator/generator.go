@@ -17,8 +17,20 @@ import (
 // Generator interface defines the contract for transaction generators
 type Generator interface {
 	Generate() (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
-	GenerateN(n int) []*types.LoadTx
 	GetAccountPools() []*types.AccountPool
+}
+
+// GenerateN drains up to n transactions from g by repeated Generate calls.
+func GenerateN(g Generator, n int) []*types.LoadTx {
+	txs := make([]*types.LoadTx, 0, n)
+	for i := 0; i < n; i++ {
+		if tx, ok := g.Generate(); ok {
+			txs = append(txs, tx)
+		} else {
+			break
+		}
+	}
+	return txs
 }
 
 // scenarioInstance represents a scenario instance with its configuration

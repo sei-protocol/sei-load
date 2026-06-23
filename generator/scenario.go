@@ -20,18 +20,6 @@ func NewScenarioGenerator(accounts *types.AccountPool, txg scenarios.TxGenerator
 	}
 }
 
-func (g *scenarioGenerator) GenerateN(n int) []*types.LoadTx {
-	result := make([]*types.LoadTx, 0, n)
-	for range n {
-		if tx, ok := g.Generate(); ok {
-			result = append(result, tx)
-		} else {
-			break // Generator is done
-		}
-	}
-	return result
-}
-
 func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
 	sender := g.accountPool.NextAccount()
 	receiver := g.accountPool.NextAccount()
