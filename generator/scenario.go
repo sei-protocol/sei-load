@@ -26,7 +26,3 @@ func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
 		Receiver: receiver.Address,
 	}), true
 }
-
-func (sg *scenarioGenerator) GetAccountPools() []*types.AccountPool {
-	return []*types.AccountPool{sg.accountPool}
-}

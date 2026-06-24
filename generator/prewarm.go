@@ -1,8 +1,6 @@
 package generator
 
 import (
-	"slices"
-
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
@@ -10,17 +8,14 @@ import (
 
 // PrewarmGenerator generates self-transfer transactions to prewarm account nonces
 type PrewarmGenerator struct {
-	accountPools   []*types.AccountPool
+	registry       *types.AccountRegistry
 	evmScenario    scenarios.TxGenerator
-	currentPoolIdx int
+	currentAccount int
 	finished       bool
 }
 
-// NewPrewarmGenerator creates a new prewarm generator using all account pools from the main generator
-func NewPrewarmGenerator(cfg *config.LoadConfig, mainGenerator Generator) *PrewarmGenerator {
-	// Get all account pools from the main generator
-	accountPools := mainGenerator.GetAccountPools()
-
+// NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
+func NewPrewarmGenerator(cfg *config.LoadConfig, registry *types.AccountRegistry) *PrewarmGenerator {
 	// Create EVMTransfer scenario for prewarming
 	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
 
@@ -30,45 +25,28 @@ func NewPrewarmGenerator(cfg *config.LoadConfig, mainGenerator Generator) *Prewa
 	evmScenario.Deploy(cfg, deployer)
 
 	return &PrewarmGenerator{
-		accountPools:   accountPools,
+		registry:       registry,
 		evmScenario:    evmScenario,
-		currentPoolIdx: 0,
+		currentAccount: 0,
 		finished:       false,
 	}
 }
 
-// Generate generates self-transfer transactions until all accounts are prewarmed
+// Generate generates self-transfer transactions until all known accounts are prewarmed.
 func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
+	accounts := pg.registry.Accounts()
+
 	// Check if we're already finished
-	if pg.finished || pg.currentPoolIdx >= len(pg.accountPools) {
+	if pg.finished || pg.currentAccount >= len(accounts) {
 		return nil, false
 	}
 
-	// Get current pool
-	currentPool := pg.accountPools[pg.currentPoolIdx]
-	account := currentPool.NextAccount()
-
-	// If this account has nonce > 0, we've already prewarmed it (round-robin means we're done with this pool)
+	account := accounts[pg.currentAccount]
 	if account.Nonce > 0 {
-		// Move to next pool
-		pg.currentPoolIdx++
-
-		// Check if we've finished all pools
-		if pg.currentPoolIdx >= len(pg.accountPools) {
-			pg.finished = true
-			return nil, false
-		}
-
-		// Get account from next pool
-		currentPool = pg.accountPools[pg.currentPoolIdx]
-		account = currentPool.NextAccount()
-
-		// If this account also has nonce > 0, we're completely done
-		if account.Nonce > 0 {
-			pg.finished = true
-			return nil, false
-		}
+		pg.currentAccount++
+		return pg.Generate()
 	}
+	pg.currentAccount++
 
 	// Create self-transfer transaction
 	scenario := &types.TxScenario{
@@ -79,10 +57,4 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 
 	// Generate the transaction using EVMTransfer scenario
 	return pg.evmScenario.Generate(scenario), true
-}
-
-// GetAccountPools returns all account pools used by this prewarm generator
-func (pg *PrewarmGenerator) GetAccountPools() []*types.AccountPool {
-	// Return a copy to prevent external modification
-	return slices.Clone(pg.accountPools)
 }

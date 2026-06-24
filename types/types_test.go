@@ -120,12 +120,13 @@ func TestGenerateAccounts(t *testing.T) {
 }
 
 func TestAccountPoolRoundRobin(t *testing.T) {
+	registry := NewAccountRegistry()
 	config := &AccountConfig{
 		InitialSize:    3,
 		NewAccountRate: 0.0, // No new accounts, pure round-robin
 	}
 
-	pool := NewAccountPool(config)
+	pool := registry.NewPool(config)
 	accounts := pool.GetAccounts()
 
 	// The account pool starts from index 1 (due to nextIndex() incrementing first)
@@ -145,12 +146,13 @@ func TestAccountPoolRoundRobin(t *testing.T) {
 }
 
 func TestAccountPoolNewAccountRate(t *testing.T) {
+	registry := NewAccountRegistry()
 	config := &AccountConfig{
 		InitialSize:    2,
 		NewAccountRate: 1.0, // Always generate new accounts
 	}
 
-	pool := NewAccountPool(config)
+	pool := registry.NewPool(config)
 	accounts := pool.GetAccounts()
 
 	// With 100% new account rate, should never get original accounts
@@ -168,13 +170,14 @@ func TestAccountPoolNewAccountRate(t *testing.T) {
 }
 
 func TestAccountPoolMixedRate(t *testing.T) {
+	registry := NewAccountRegistry()
 	config := &AccountConfig{
 		InitialSize:    5,
 		NewAccountRate: 0.5, // 50% new accounts
 		Stream:         rng.NewSource(1).Stream("accounts:test"),
 	}
 
-	pool := NewAccountPool(config)
+	pool := registry.NewPool(config)
 	accounts := pool.GetAccounts()
 
 	originalAddresses := make(map[common.Address]bool)
@@ -204,12 +207,13 @@ func TestAccountPoolMixedRate(t *testing.T) {
 }
 
 func TestAccountPoolConcurrency(t *testing.T) {
+	registry := NewAccountRegistry()
 	config := &AccountConfig{
 		InitialSize:    5,
 		NewAccountRate: 0.0, // Pure round-robin for predictable testing
 	}
 
-	pool := NewAccountPool(config)
+	pool := registry.NewPool(config)
 	accounts := pool.GetAccounts()
 
 	const numGoroutines = 50
@@ -437,11 +441,12 @@ func BenchmarkAccountGeneration(b *testing.B) {
 }
 
 func BenchmarkAccountPoolNextAccount(b *testing.B) {
+	registry := NewAccountRegistry()
 	config := &AccountConfig{
 		InitialSize:    100,
 		NewAccountRate: 0.0,
 	}
-	pool := NewAccountPool(config)
+	pool := registry.NewPool(config)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

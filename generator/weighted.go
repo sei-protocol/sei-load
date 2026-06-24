@@ -67,19 +67,6 @@ func (w *weightedGenerator) Generate() (*types.LoadTx, bool) {
 	return w.nextGenerator().Generate()
 }
 
-// GetAccountPools returns all account pools from underlying generators
-func (w *weightedGenerator) GetAccountPools() []*types.AccountPool {
-	var allPools []*types.AccountPool
-
-	// Collect pools from all underlying generators
-	for _, gen := range w.generators {
-		pools := gen.GetAccountPools()
-		allPools = append(allPools, pools...)
-	}
-
-	return allPools
-}
-
 // NewWeightedGenerator creates a new scenarioGenerator that will randomly select
 // from the provided generators. A nil stream leaves the startup shuffle on the
 // unseeded global RNG.

@@ -7,6 +7,25 @@ import (
 	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
+// AccountRegistry owns account pools created for a run.
+type AccountRegistry struct {
+	pools []*AccountPool
+}
+
+// NewAccountRegistry creates an empty account registry.
+func NewAccountRegistry() *AccountRegistry {
+	return &AccountRegistry{}
+}
+
+// Accounts returns a flat copy of all accounts across all pools.
+func (r *AccountRegistry) Accounts() []*Account {
+	var accounts []*Account
+	for _, pool := range r.pools {
+		accounts = append(accounts, pool.GetAccounts()...)
+	}
+	return accounts
+}
+
 // AccountPool returns a next account for load generation.
 type AccountPool struct {
 	Accounts []*Account
@@ -54,10 +73,12 @@ func (a *AccountPool) GetAccounts() []*Account {
 	return a.Accounts
 }
 
-// NewAccountPool creates a new account generator from a config.
-func NewAccountPool(cfg *AccountConfig) *AccountPool {
-	return &AccountPool{
+// NewPool creates a new account generator from a config, records it, and returns it.
+func (r *AccountRegistry) NewPool(cfg *AccountConfig) *AccountPool {
+	pool := &AccountPool{
 		Accounts: GenerateAccounts(cfg.InitialSize),
 		cfg:      cfg,
 	}
+	r.pools = append(r.pools, pool)
+	return pool
 }

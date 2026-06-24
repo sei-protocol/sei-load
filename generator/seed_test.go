@@ -67,7 +67,7 @@ func draw(tx *types.LoadTx) gasDraw {
 // seed-determined gas draw — the RNG-driven output we replay against.
 func gasSeq(t *testing.T, seed uint64, n int) []gasDraw {
 	t.Helper()
-	gen, err := generator.NewConfigBasedGenerator(seededConfig(t, seed))
+	gen, err := generator.NewConfigBasedGenerator(seededConfig(t, seed), types.NewAccountRegistry())
 	require.NoError(t, err)
 	txs := generator.GenerateN(gen, n)
 	require.Len(t, txs, n)

@@ -39,10 +39,6 @@ func (g *fakeGenerator) Generate() (*types.LoadTx, bool) {
 	return tx, true
 }
 
-func (g *fakeGenerator) GetAccountPools() []*types.AccountPool {
-	return nil
-}
-
 func (g *fakeGenerator) issuedTxs() []*types.LoadTx {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -89,8 +85,6 @@ func (g *seededGenerator) draw(tx *types.LoadTx) uint64 {
 	defer g.mu.Unlock()
 	return g.drawIndex[tx]
 }
-
-func (g *seededGenerator) GetAccountPools() []*types.AccountPool { return nil }
 
 // asyncFakeSender models the production ShardedSender's send semantics: Send
 // returns when the tx lands in a buffered channel (enqueue-and-return), NOT when

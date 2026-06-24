@@ -214,7 +214,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
-		gen, err := generator.NewConfigBasedGenerator(cfg)
+		registry := types.NewAccountRegistry()
+		gen, err := generator.NewConfigBasedGenerator(cfg, registry)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
@@ -294,7 +295,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Fund the pool before prewarm/dispatch — both spend gas the accounts
 		// don't have until funded.
 		if cfg.Funding != nil && !cfg.Settings.DryRun {
-			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
+			if err := funder.FundAccounts(ctx, cfg, registry.Accounts()); err != nil {
 				return fmt.Errorf("failed to fund accounts: %w", err)
 			}
 		}
@@ -340,7 +341,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
+			prewarmGen := generator.NewPrewarmGenerator(cfg, registry)
 			dispatcher.SetPrewarmGenerator(prewarmGen)
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")

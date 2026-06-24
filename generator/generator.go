@@ -16,10 +16,9 @@ import (
 // Generator defines the contract for transaction generators.
 //
 // Generators are not thread-safe. Callers must serialize all access to a given
-// Generator instance, including Generate and GetAccountPools.
+// Generator instance.
 type Generator interface {
 	Generate() (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
-	GetAccountPools() []*types.AccountPool
 }
 
 // GenerateN drains up to n transactions from g by repeated Generate calls.
@@ -48,10 +47,10 @@ type scenarioInstance struct {
 type configBasedGenerator struct {
 	config         *config.LoadConfig
 	rng            *rng.Source
+	registry       *types.AccountRegistry
 	instances      []*scenarioInstance
 	deployer       *types.Account
 	sharedAccounts *types.AccountPool   // Shared account pool when using top-level config
-	accountPools   []*types.AccountPool // All account pools (shared + scenario-specific)
 }
 
 // CreateScenarios creates scenario instances based on the configuration
@@ -59,12 +58,11 @@ type configBasedGenerator struct {
 func (g *configBasedGenerator) createScenarios() error {
 	// Create shared account pool if top-level account config exists
 	if g.config.Accounts != nil {
-		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
+		g.sharedAccounts = g.registry.NewPool(&types.AccountConfig{
 			InitialSize:    g.config.Accounts.Accounts,
 			NewAccountRate: g.config.Accounts.NewAccountRate,
 			Stream:         g.rng.Stream(rng.StreamAccountsShared),
 		})
-		g.accountPools = append(g.accountPools, g.sharedAccounts)
 	}
 
 	for i, scenarioCfg := range g.config.Scenarios {
@@ -77,12 +75,11 @@ func (g *configBasedGenerator) createScenarios() error {
 		var accountPool *types.AccountPool
 		if accounts := scenarioCfg.Accounts; accounts != nil {
 			// Scenario defines its own account settings - create separate pool
-			accountPool = types.NewAccountPool(&types.AccountConfig{
+			accountPool = g.registry.NewPool(&types.AccountConfig{
 				InitialSize:    accounts.Accounts,
 				NewAccountRate: accounts.NewAccountRate,
 				Stream:         g.rng.Stream(rng.AccountsScenarioStream(i)),
 			})
-			g.accountPools = append(g.accountPools, accountPool)
 		} else if g.sharedAccounts != nil {
 			// Use shared account pool from top-level config
 			accountPool = g.sharedAccounts
@@ -227,14 +224,6 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 	return NewWeightedGenerator(g.rng.Stream(rng.StreamWeightedShuffle), weightedConfigs...), nil
 }
 
-// GetAccountPools returns all account pools managed by this generator
-func (g *configBasedGenerator) GetAccountPools() []*types.AccountPool {
-	// Return a copy of the slice to prevent external modification
-	pools := make([]*types.AccountPool, len(g.accountPools))
-	copy(pools, g.accountPools)
-	return pools
-}
-
 // resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
 // random seed. The resolved seed is written back to cfg.Seed and logged so any
 // run is replayable after the fact; the run summary (PLT-467) reads it there.
@@ -248,11 +237,12 @@ func resolveSeed(cfg *config.LoadConfig) *rng.Source {
 	return src
 }
 
-// NewConfigBasedGenerator is a convenience method that combines all steps
-func NewConfigBasedGenerator(cfg *config.LoadConfig) (Generator, error) {
+// NewConfigBasedGenerator is a convenience method that combines all steps.
+func NewConfigBasedGenerator(cfg *config.LoadConfig, registry *types.AccountRegistry) (Generator, error) {
 	generator := &configBasedGenerator{
 		config:    cfg,
 		rng:       resolveSeed(cfg),
+		registry:  registry,
 		instances: make([]*scenarioInstance, 0),
 		deployer:  types.GenerateAccounts(1)[0],
 	}

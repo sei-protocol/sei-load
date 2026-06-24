@@ -8,6 +8,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
@@ -35,7 +36,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 		},
 	}
 
-	gen, err := generator.NewConfigBasedGenerator(cfg)
+	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 

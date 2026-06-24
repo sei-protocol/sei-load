@@ -149,7 +149,7 @@ func TestShardDistribution(t *testing.T) {
 	}
 
 	// Create generator
-	gen, err := generator.NewConfigBasedGenerator(cfg)
+	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
 
 	// Test shard calculation without creating actual sender

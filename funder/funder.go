@@ -23,11 +23,11 @@ import (
 
 const balanceCheckConcurrency = 16
 
-// FundAccounts funds every account across the pools to at least the configured
+// FundAccounts funds every account to at least the configured
 // per-account amount from cfg.Funding's root key, or is a no-op when
 // cfg.Funding is nil. See the package doc for the funding flow, the EVM
 // auto-association precondition, and the restart/idempotency semantics.
-func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []*types.AccountPool) error {
+func FundAccounts(ctx context.Context, cfg *config.LoadConfig, accounts []*types.Account) error {
 	fc := cfg.Funding
 	if fc == nil {
 		return nil
@@ -51,7 +51,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []*types.Ac
 	}
 	defer client.Close()
 
-	recipients := uniqueAddresses(pools)
+	recipients := uniqueAddresses(accounts)
 	if len(recipients) == 0 {
 		log.Printf("💰 funder: no accounts to fund")
 		return nil
@@ -135,17 +135,15 @@ func resolveRootKey(fc *config.FundingConfig) (string, error) {
 	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
-func uniqueAddresses(pools []*types.AccountPool) []common.Address {
+func uniqueAddresses(accounts []*types.Account) []common.Address {
 	seen := make(map[common.Address]struct{})
 	var out []common.Address
-	for _, p := range pools {
-		for _, a := range p.GetAccounts() {
-			if _, ok := seen[a.Address]; ok {
-				continue
-			}
-			seen[a.Address] = struct{}{}
-			out = append(out, a.Address)
+	for _, a := range accounts {
+		if _, ok := seen[a.Address]; ok {
+			continue
 		}
+		seen[a.Address] = struct{}{}
+		out = append(out, a.Address)
 	}
 	return out
 }

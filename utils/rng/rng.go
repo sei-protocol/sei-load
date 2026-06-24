@@ -96,9 +96,7 @@ func NewSource(seed uint64) *Source {
 // replayed after the fact by re-running with the returned seed.
 func NewRandomSource() (*Source, uint64) {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("rng: crypto/rand failed: " + err.Error())
-	}
+	rand.Read(b[:]) // documented to never return an error
 	seed := binary.LittleEndian.Uint64(b[:])
 	return NewSource(seed), seed
 }

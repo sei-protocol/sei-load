@@ -19,7 +19,7 @@ func TestTxsWriter_Flush(t *testing.T) {
 		ChainID: 7777,
 	}
 
-	sharedAccounts := types.NewAccountPool(&types.AccountConfig{
+	sharedAccounts := types.NewAccountRegistry().NewPool(&types.AccountConfig{
 		InitialSize:    10,
 		NewAccountRate: 0.0,
 	})
