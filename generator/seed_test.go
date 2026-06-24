@@ -99,4 +99,3 @@ func TestSingleWorkerOrderedReplay(t *testing.T) {
 func TestDifferentSeedsDiverge(t *testing.T) {
 	require.NotEqual(t, gasSeq(t, 1, 200), gasSeq(t, 2, 200))
 }
-

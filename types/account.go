@@ -27,7 +27,7 @@ func NewAccount() *Account {
 
 // GetAndIncrementNonce increments the nonce.
 func (s *Account) GetAndIncrementNonce() uint64 {
-	return atomic.AddUint64(&s.Nonce, 1)-1
+	return atomic.AddUint64(&s.Nonce, 1) - 1
 }
 
 // GenerateAccounts generates random accounts.

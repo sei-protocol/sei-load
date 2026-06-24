@@ -18,7 +18,7 @@ type AccountPool struct {
 
 // AccountConfig stores the configuration for account generation.
 type AccountConfig struct {
-	Accounts       []*Account
+	InitialSize    int
 	NewAccountRate float64
 	// Stream, when non-nil, makes the new-account roll deterministic. A nil
 	// Stream leaves the pool on the unseeded global RNG.
@@ -57,7 +57,7 @@ func (a *AccountPool) GetAccounts() []*Account {
 // NewAccountPool creates a new account generator from a config.
 func NewAccountPool(cfg *AccountConfig) *AccountPool {
 	return &AccountPool{
-		Accounts: cfg.Accounts,
+		Accounts: GenerateAccounts(cfg.InitialSize),
 		cfg:      cfg,
 	}
 }

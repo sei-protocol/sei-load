@@ -59,9 +59,8 @@ type configBasedGenerator struct {
 func (g *configBasedGenerator) createScenarios() error {
 	// Create shared account pool if top-level account config exists
 	if g.config.Accounts != nil {
-		accounts := types.GenerateAccounts(g.config.Accounts.Accounts)
 		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
-			Accounts:       accounts,
+			InitialSize:    g.config.Accounts.Accounts,
 			NewAccountRate: g.config.Accounts.NewAccountRate,
 			Stream:         g.rng.Stream(rng.StreamAccountsShared),
 		})
@@ -76,15 +75,11 @@ func (g *configBasedGenerator) createScenarios() error {
 
 		// Determine account pool to use
 		var accountPool *types.AccountPool
-		if scenarioCfg.Accounts != nil {
+		if accounts := scenarioCfg.Accounts; accounts != nil {
 			// Scenario defines its own account settings - create separate pool
-			accountCount := scenarioCfg.Accounts.Accounts
-			newAccountRate := scenarioCfg.Accounts.NewAccountRate
-
-			accounts := types.GenerateAccounts(accountCount)
 			accountPool = types.NewAccountPool(&types.AccountConfig{
-				Accounts:       accounts,
-				NewAccountRate: newAccountRate,
+				InitialSize:    accounts.Accounts,
+				NewAccountRate: accounts.NewAccountRate,
 				Stream:         g.rng.Stream(rng.AccountsScenarioStream(i)),
 			})
 			g.accountPools = append(g.accountPools, accountPool)

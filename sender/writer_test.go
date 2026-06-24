@@ -20,7 +20,7 @@ func TestTxsWriter_Flush(t *testing.T) {
 	}
 
 	sharedAccounts := types.NewAccountPool(&types.AccountConfig{
-		Accounts:       types.GenerateAccounts(10),
+		InitialSize:    10,
 		NewAccountRate: 0.0,
 	})
 

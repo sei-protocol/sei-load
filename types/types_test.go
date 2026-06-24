@@ -120,13 +120,13 @@ func TestGenerateAccounts(t *testing.T) {
 }
 
 func TestAccountPoolRoundRobin(t *testing.T) {
-	accounts := GenerateAccounts(3)
 	config := &AccountConfig{
-		Accounts:       accounts,
+		InitialSize:    3,
 		NewAccountRate: 0.0, // No new accounts, pure round-robin
 	}
 
 	pool := NewAccountPool(config)
+	accounts := pool.GetAccounts()
 
 	// The account pool starts from index 1 (due to nextIndex() incrementing first)
 	// So the first call returns accounts[1], second returns accounts[2], third returns accounts[0]
@@ -145,13 +145,13 @@ func TestAccountPoolRoundRobin(t *testing.T) {
 }
 
 func TestAccountPoolNewAccountRate(t *testing.T) {
-	accounts := GenerateAccounts(2)
 	config := &AccountConfig{
-		Accounts:       accounts,
+		InitialSize:    2,
 		NewAccountRate: 1.0, // Always generate new accounts
 	}
 
 	pool := NewAccountPool(config)
+	accounts := pool.GetAccounts()
 
 	// With 100% new account rate, should never get original accounts
 	originalAddresses := make(map[common.Address]bool)
@@ -168,14 +168,14 @@ func TestAccountPoolNewAccountRate(t *testing.T) {
 }
 
 func TestAccountPoolMixedRate(t *testing.T) {
-	accounts := GenerateAccounts(5)
 	config := &AccountConfig{
-		Accounts:       accounts,
+		InitialSize:    5,
 		NewAccountRate: 0.5, // 50% new accounts
 		Stream:         rng.NewSource(1).Stream("accounts:test"),
 	}
 
 	pool := NewAccountPool(config)
+	accounts := pool.GetAccounts()
 
 	originalAddresses := make(map[common.Address]bool)
 	for _, account := range accounts {
@@ -204,13 +204,13 @@ func TestAccountPoolMixedRate(t *testing.T) {
 }
 
 func TestAccountPoolConcurrency(t *testing.T) {
-	accounts := GenerateAccounts(5)
 	config := &AccountConfig{
-		Accounts:       accounts,
+		InitialSize:    5,
 		NewAccountRate: 0.0, // Pure round-robin for predictable testing
 	}
 
 	pool := NewAccountPool(config)
+	accounts := pool.GetAccounts()
 
 	const numGoroutines = 50
 	const selectionsPerGoroutine = 20
@@ -437,9 +437,8 @@ func BenchmarkAccountGeneration(b *testing.B) {
 }
 
 func BenchmarkAccountPoolNextAccount(b *testing.B) {
-	accounts := GenerateAccounts(100)
 	config := &AccountConfig{
-		Accounts:       accounts,
+		InitialSize:    100,
 		NewAccountRate: 0.0,
 	}
 	pool := NewAccountPool(config)
