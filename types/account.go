@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // Account wraps address and private key.
@@ -16,32 +17,24 @@ type Account struct {
 }
 
 // NewAccount generates new account.
-func NewAccount() (*Account, error) {
-	privateKey, err := crypto.GenerateKey()
-	if err != nil {
-		return nil, err
-	}
+func NewAccount() *Account {
+	privateKey := utils.OrPanic1(crypto.GenerateKey())
 	return &Account{
 		Address: crypto.PubkeyToAddress(privateKey.PublicKey),
 		PrivKey: privateKey,
-	}, nil
+	}
 }
 
 // GetAndIncrementNonce increments the nonce.
 func (s *Account) GetAndIncrementNonce() uint64 {
-	next := atomic.AddUint64(&s.Nonce, 1)
-	return next - 1
+	return atomic.AddUint64(&s.Nonce, 1)-1
 }
 
 // GenerateAccounts generates random accounts.
 func GenerateAccounts(n int) []*Account {
-	result := make([]*Account, 0, n)
-	for range n {
-		newAcc, err := NewAccount()
-		if err != nil {
-			panic(err)
-		}
-		result = append(result, newAcc)
+	result := make([]*Account, n)
+	for i := range result {
+		result[i] = NewAccount()
 	}
 	return result
 }

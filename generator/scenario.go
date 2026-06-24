@@ -1,8 +1,6 @@
 package generator
 
 import (
-	"sync"
-
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
 )
@@ -10,7 +8,6 @@ import (
 type scenarioGenerator struct {
 	scenario    scenarios.TxGenerator
 	accountPool *types.AccountPool
-	mu          sync.RWMutex
 }
 
 func NewScenarioGenerator(accounts *types.AccountPool, txg scenarios.TxGenerator) Generator {
@@ -31,7 +28,5 @@ func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
 }
 
 func (sg *scenarioGenerator) GetAccountPools() []*types.AccountPool {
-	sg.mu.RLock()
-	defer sg.mu.RUnlock()
 	return []*types.AccountPool{sg.accountPool}
 }

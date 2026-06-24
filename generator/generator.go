@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -14,7 +13,10 @@ import (
 	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
-// Generator interface defines the contract for transaction generators
+// Generator defines the contract for transaction generators.
+//
+// Generators are not thread-safe. Callers must serialize all access to a given
+// Generator instance, including Generate and GetAccountPools.
 type Generator interface {
 	Generate() (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
 	GetAccountPools() []*types.AccountPool
@@ -23,7 +25,7 @@ type Generator interface {
 // GenerateN drains up to n transactions from g by repeated Generate calls.
 func GenerateN(g Generator, n int) []*types.LoadTx {
 	txs := make([]*types.LoadTx, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		if tx, ok := g.Generate(); ok {
 			txs = append(txs, tx)
 		} else {
@@ -50,15 +52,11 @@ type configBasedGenerator struct {
 	deployer       *types.Account
 	sharedAccounts *types.AccountPool   // Shared account pool when using top-level config
 	accountPools   []*types.AccountPool // All account pools (shared + scenario-specific)
-	mu             sync.RWMutex
 }
 
 // CreateScenarios creates scenario instances based on the configuration
 // Each scenario entry in config creates a separate instance, even if same name
 func (g *configBasedGenerator) createScenarios() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	// Create shared account pool if top-level account config exists
 	if g.config.Accounts != nil {
 		accounts := types.GenerateAccounts(g.config.Accounts.Accounts)
@@ -183,8 +181,6 @@ func (g *configBasedGenerator) deployAll() error {
 	if g.config.MockDeploy {
 		return g.mockDeployAll()
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
 
 	// Deploy sequentially to ensure proper nonce management
 	for _, instance := range g.instances {
@@ -203,9 +199,6 @@ func (g *configBasedGenerator) deployAll() error {
 
 // createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
 func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
 	if len(g.instances) == 0 {
 		return nil, fmt.Errorf("no scenario instances created")
 	}
@@ -241,9 +234,6 @@ func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
 
 // GetAccountPools returns all account pools managed by this generator
 func (g *configBasedGenerator) GetAccountPools() []*types.AccountPool {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
 	// Return a copy of the slice to prevent external modification
 	pools := make([]*types.AccountPool, len(g.accountPools))
 	copy(pools, g.accountPools)

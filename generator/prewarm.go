@@ -1,7 +1,7 @@
 package generator
 
 import (
-	"sync"
+	"slices"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
@@ -14,7 +14,6 @@ type PrewarmGenerator struct {
 	evmScenario    scenarios.TxGenerator
 	currentPoolIdx int
 	finished       bool
-	mu             sync.RWMutex
 }
 
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the main generator
@@ -40,9 +39,6 @@ func NewPrewarmGenerator(cfg *config.LoadConfig, mainGenerator Generator) *Prewa
 
 // Generate generates self-transfer transactions until all accounts are prewarmed
 func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
-	pg.mu.Lock()
-	defer pg.mu.Unlock()
-
 	// Check if we're already finished
 	if pg.finished || pg.currentPoolIdx >= len(pg.accountPools) {
 		return nil, false
@@ -87,11 +83,6 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 
 // GetAccountPools returns all account pools used by this prewarm generator
 func (pg *PrewarmGenerator) GetAccountPools() []*types.AccountPool {
-	pg.mu.RLock()
-	defer pg.mu.RUnlock()
-
 	// Return a copy to prevent external modification
-	pools := make([]*types.AccountPool, len(pg.accountPools))
-	copy(pools, pg.accountPools)
-	return pools
+	return slices.Clone(pg.accountPools)
 }

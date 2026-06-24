@@ -167,8 +167,7 @@ type signedTxGenerator struct {
 
 func newSignedTxGenerator(t *testing.T, n int) *signedTxGenerator {
 	t.Helper()
-	acct, err := types.NewAccount()
-	require.NoError(t, err)
+	acct := types.NewAccount()
 	chainID := big.NewInt(1)
 	return &signedTxGenerator{
 		remaining: n,

@@ -16,8 +16,7 @@ import (
 )
 
 func TestNewAccount(t *testing.T) {
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 	require.NotNil(t, account)
 
 	// Verify account has valid address and private key
@@ -34,8 +33,7 @@ func TestNewAccount(t *testing.T) {
 }
 
 func TestAccountNonceManagement(t *testing.T) {
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 
 	// Test sequential nonce increments
 	for i := uint64(0); i < 10; i++ {
@@ -48,8 +46,7 @@ func TestAccountNonceManagement(t *testing.T) {
 }
 
 func TestAccountNonceConcurrency(t *testing.T) {
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 
 	const numGoroutines = 100
 	const noncesPerGoroutine = 10
@@ -249,8 +246,7 @@ func TestAccountPoolConcurrency(t *testing.T) {
 
 func TestCreateTxFromEthTx(t *testing.T) {
 	// Create a test account and scenario
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 
 	account.Nonce = 42
 	receiver := common.HexToAddress("0x1234567890123456789012345678901234567890")
@@ -371,8 +367,7 @@ func TestLoadTxShardID(t *testing.T) {
 
 func TestLoadTxShardIDConsistency(t *testing.T) {
 	// Test that the same sender always maps to the same shard
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 
 	scenario := &TxScenario{
 		Name:     "TestScenario",
@@ -404,8 +399,7 @@ func TestLoadTxShardIDConsistency(t *testing.T) {
 }
 
 func TestTxScenario(t *testing.T) {
-	account, err := NewAccount()
-	require.NoError(t, err)
+	account := NewAccount()
 
 	receiver := common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
 
@@ -438,10 +432,7 @@ func TestJSONRPCPayloadFormat(t *testing.T) {
 func BenchmarkAccountGeneration(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := NewAccount()
-		if err != nil {
-			b.Fatal(err)
-		}
+		_ = NewAccount()
 	}
 }
 
@@ -460,10 +451,7 @@ func BenchmarkAccountPoolNextAccount(b *testing.B) {
 }
 
 func BenchmarkNonceIncrement(b *testing.B) {
-	account, err := NewAccount()
-	if err != nil {
-		b.Fatal(err)
-	}
+	account := NewAccount()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -472,10 +460,7 @@ func BenchmarkNonceIncrement(b *testing.B) {
 }
 
 func BenchmarkCreateTxFromEthTx(b *testing.B) {
-	account, err := NewAccount()
-	if err != nil {
-		b.Fatal(err)
-	}
+	account := NewAccount()
 
 	scenario := &TxScenario{
 		Name:     "BenchmarkScenario",

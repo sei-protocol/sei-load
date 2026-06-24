@@ -148,8 +148,7 @@ func (m *mockEthAPI) RawTransactions() [][]byte {
 func testLoadTx(t *testing.T) *types.LoadTx {
 	t.Helper()
 
-	account, err := types.NewAccount()
-	require.NoError(t, err)
+	account := types.NewAccount()
 
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	tx := ethtypes.NewTx(&ethtypes.LegacyTx{

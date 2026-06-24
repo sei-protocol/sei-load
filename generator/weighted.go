@@ -3,7 +3,6 @@ package generator
 import (
 	"context"
 	"math/rand/v2"
-	"sync"
 
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils/rng"
@@ -25,8 +24,7 @@ func WeightedConfig(weight int, generator Generator) *WeightedCfg {
 
 type weightedGenerator struct {
 	generators []Generator
-	mx         sync.RWMutex
-	counter    int64
+	counter    uint64
 }
 
 // GenerateInfinite generates transactions indefinitely.
@@ -53,14 +51,10 @@ func (w *weightedGenerator) GenerateInfinite(ctx context.Context) <-chan *types.
 	return output
 }
 
-func (w *weightedGenerator) nextIndex() int64 {
-	w.mx.Lock()
-	defer w.mx.Unlock()
+func (w *weightedGenerator) nextIndex() int {
+	idx := int(w.counter) % len(w.generators)
 	w.counter++
-	if w.counter >= int64(len(w.generators)) {
-		w.counter = 0
-	}
-	return w.counter
+	return idx
 }
 
 // generators are randomized at startup.
@@ -75,9 +69,6 @@ func (w *weightedGenerator) Generate() (*types.LoadTx, bool) {
 
 // GetAccountPools returns all account pools from underlying generators
 func (w *weightedGenerator) GetAccountPools() []*types.AccountPool {
-	w.mx.RLock()
-	defer w.mx.RUnlock()
-
 	var allPools []*types.AccountPool
 
 	// Collect pools from all underlying generators
