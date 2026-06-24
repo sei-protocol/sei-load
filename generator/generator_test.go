@@ -38,7 +38,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 
 	rngSource := generator.ResolveSeed(cfg)
-	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry(), rngSource.Rand(testrng.StreamWeightedShuffle))
+	gen, err := generator.NewConfigBasedGenerator(rngSource.Rand(testrng.StreamWeightedShuffle), cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 

@@ -196,10 +196,7 @@ func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
 }
 
 // NewConfigBasedGenerator is a convenience method that combines all steps.
-func NewConfigBasedGenerator(cfg *config.LoadConfig, registry *types.AccountRegistry, rng *mrand.Rand) (Generator, error) {
-	if rng == nil {
-		panic("NewConfigBasedGenerator: rng must not be nil")
-	}
+func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig, registry *types.AccountRegistry) (Generator, error) {
 	generator := &configBasedGenerator{
 		config:    cfg,
 		registry:  registry,

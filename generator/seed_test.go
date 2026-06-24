@@ -70,7 +70,7 @@ func gasSeq(t *testing.T, seed uint64, n int) []gasDraw {
 	t.Helper()
 	cfg := seededConfig(t, seed)
 	rngSource := generator.ResolveSeed(cfg)
-	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry(), rngSource.Rand(rng.StreamWeightedShuffle))
+	gen, err := generator.NewConfigBasedGenerator(rngSource.Rand(rng.StreamWeightedShuffle), cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
 	txs := generator.GenerateN(rngSource.Rand("generator:seed:draws"), gen, n)
 	require.Len(t, txs, n)
