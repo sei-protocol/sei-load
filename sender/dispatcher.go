@@ -2,9 +2,9 @@ package sender
 
 import (
 	"context"
+	"github.com/sei-protocol/sei-load/generator"
 	mrand "math/rand/v2"
 	"time"
-	"github.com/sei-protocol/sei-load/generator"
 )
 
 // Run begins the dispatcher's transaction generation and sending loop, using
@@ -26,5 +26,5 @@ func Run(ctx context.Context, rng *mrand.Rand, gen generator.Generator, snd TxSe
 			return err
 		}
 	}
-	return nil 
+	return nil
 }

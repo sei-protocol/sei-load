@@ -10,8 +10,8 @@ import (
 
 // PrewarmGenerator generates self-transfer transactions to prewarm account nonces
 type PrewarmGenerator struct {
-	accounts       []*types.Account
-	evmScenario    scenarios.TxGenerator
+	accounts    []*types.Account
+	evmScenario scenarios.TxGenerator
 }
 
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
@@ -23,14 +23,14 @@ func NewPrewarmGenerator(cfg *config.LoadConfig, accounts []*types.Account) *Pre
 	deployer := types.NewAccount()
 	evmScenario.Deploy(cfg, deployer)
 	return &PrewarmGenerator{
-		accounts:       accounts,
-		evmScenario:    evmScenario,
+		accounts:    accounts,
+		evmScenario: evmScenario,
 	}
 }
 
 // Generate generates self-transfer transactions until all known accounts are prewarmed.
 func (pg *PrewarmGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
-	if len(pg.accounts)==0 {
+	if len(pg.accounts) == 0 {
 		return nil, false
 	}
 	account := pg.accounts[0]

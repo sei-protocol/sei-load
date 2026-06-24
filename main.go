@@ -310,7 +310,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
 			snd = sharedSender
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
-			
+
 		}
 
 		// Set up prewarming if enabled
@@ -371,7 +371,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
 	// Read AFTER service.Run returns: both workers and the tracker have joined,
 	// so inflightAtShutdown is final and the conservation identity holds.
-	if inclusionTracker,ok := inclusion.Get(); ok {
+	if inclusionTracker, ok := inclusion.Get(); ok {
 		incl := inclusionTracker.Summary()
 		summary.InclusionTracked = true
 		summary.Included = incl.Included
