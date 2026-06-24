@@ -88,10 +88,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, accounts []*types
 	// batch keeps nonces ordered. Do not parallelize or set auth.Nonce.
 	batch := fc.Batch()
 	for start := 0; start < len(underfunded); start += batch {
-		end := start + batch
-		if end > len(underfunded) {
-			end = len(underfunded)
-		}
+		end := min(start + batch, len(underfunded))
 		chunk := underfunded[start:end]
 		values := make([]*big.Int, len(chunk))
 		total := new(big.Int)

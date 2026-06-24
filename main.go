@@ -27,6 +27,7 @@ import (
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
