@@ -286,77 +286,52 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		senderLimiter := sharedLimiter
 		if cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop && cfg.Settings.TxsDir == "" {
 			senderLimiter = rate.NewLimiter(rate.Inf, 1)
-		}
+		}	
 
-		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
-		if err != nil {
-			return fmt.Errorf("failed to create sender: %w", err)
-		}
-
-		// Fund the pool before prewarm/dispatch — both spend gas the accounts
-		// don't have until funded.
-		if cfg.Funding != nil && !cfg.Settings.DryRun {
-			if err := funder.FundAccounts(ctx, cfg, registry.Accounts()); err != nil {
-				return fmt.Errorf("failed to fund accounts: %w", err)
-			}
-		}
-
+		var snd sender.TxSender
 		// Create dispatcher
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
-			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
+			eth, err := ethclient.Dial(cfg.Endpoints[0])
 			if err != nil {
 				return fmt.Errorf("failed to create ethclient: %w", err)
 			}
-			latestHeight, err := ethclient.BlockNumber(ctx)
+			latestHeight, err := eth.BlockNumber(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get latest height: %w", err)
 			}
 			numBlocksToWrite := cfg.Settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
-			dispatcher = sender.NewDispatcher(gen, writer)
+			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 		} else {
-			dispatcher = sender.NewDispatcher(gen, snd)
+			// Fund the pool before prewarm/dispatch — both spend gas the accounts
+			// don't have until funded.
+			if cfg.Funding != nil && !cfg.Settings.DryRun {
+				if err := funder.FundAccounts(ctx, cfg, registry.Accounts()); err != nil {
+					return fmt.Errorf("failed to fund accounts: %w", err)
+				}
+			}
+			// Create the sender from the config struct
+			sharedSender, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
+			if err != nil {
+				return fmt.Errorf("failed to create sender: %w", err)
+			}
+			// Start the sender (starts all workers)
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
+			snd = sharedSender
+			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
+			
 		}
-
-		// Set statistics collector for dispatcher
-		dispatcher.SetStatsCollector(collector)
-
-		// Open-loop drives arrivals from the scheduler (see sender doc); the
-		// txs-writer path has no arrival clock, so it stays closed-loop.
-		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
-		switch {
-		case openLoop && cfg.Settings.TxsDir == "":
-			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
-			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
-		case openLoop:
-			// open_loop was requested but the txs-writer path has no arrival clock,
-			// so the run falls back to closed_loop. Surface the downgrade.
-			log.Printf("📤 Arrival model: closed_loop (txs-writer path; --arrival-model open_loop ignored)")
-		default:
-			log.Printf("📤 Arrival model: closed_loop")
-		}
+		dispatcher := sender.NewDispatcher(gen, snd, collector, cfg.MaxInFlight)
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			prewarmGen := generator.NewPrewarmGenerator(cfg, registry)
-			dispatcher.SetPrewarmGenerator(prewarmGen)
+			prewarmGen := generator.NewPrewarmGenerator(cfg, registry.Accounts())
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-		}
-
-		if cfg.Settings.TxsDir == "" {
-			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
-		}
-		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
-		if cfg.Settings.Prewarm {
-			if err := dispatcher.Prewarm(ctx, rng); err != nil {
+			if err := dispatcher.RunPrewarm(ctx, rng, prewarmGen); err != nil {
 				return fmt.Errorf("failed to prewarm accounts: %w", err)
 			}
 		}
@@ -366,7 +341,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx, rng) })
+		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx, rng, gen) })
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown

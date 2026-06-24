@@ -179,7 +179,7 @@ func (g *configBasedGenerator) createWeightedGenerator(rng *mrand.Rand) (Generat
 	}
 
 	// Create and return the weighted scenarioGenerator
-	return NewWeightedGenerator(rng, weightedConfigs...), nil
+	return NewWeightedGenerator(rng, weightedConfigs), nil
 }
 
 // resolveSeed returns the run's PRNG source, defaulting an unseeded config to a

@@ -13,7 +13,7 @@ import (
 type Account struct {
 	Address common.Address
 	PrivKey *ecdsa.PrivateKey
-	Nonce   uint64
+	Nonce   atomic.Uint64
 }
 
 // NewAccount generates new account.
@@ -27,7 +27,7 @@ func NewAccount() *Account {
 
 // GetAndIncrementNonce increments the nonce.
 func (s *Account) GetAndIncrementNonce() uint64 {
-	return atomic.AddUint64(&s.Nonce, 1) - 1
+	return s.Nonce.Add(1) - 1
 }
 
 // GenerateAccounts generates random accounts.

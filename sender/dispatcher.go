@@ -2,7 +2,6 @@ package sender
 
 import (
 	"context"
-	"fmt"
 	"log"
 	mrand "math/rand/v2"
 	"sync"
@@ -12,33 +11,11 @@ import (
 
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/stats"
-	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
-)
-
-// ArrivalModel selects how the dispatcher times transaction arrival.
-type ArrivalModel string
-
-const (
-	// ArrivalClosedLoop is the legacy model: a tx is generated and sent only
-	// when a sender is free, so a slow SUT slows the generator (coordinated
-	// omission). Kept reachable as the regression baseline.
-	ArrivalClosedLoop ArrivalModel = "closed_loop"
-	// ArrivalOpenLoop schedules tx i at t₀ + i/λ independent of sender
-	// availability; overdue txs are dropped and counted. See scheduler.go.
-	ArrivalOpenLoop ArrivalModel = "open_loop"
 )
 
 // Dispatcher continuously generates transactions and dispatches them to the sender
 type Dispatcher struct {
-	generator  generator.Generator
-	prewarmGen utils.Option[generator.Generator] // Optional prewarm generator
 	sender     TxSender
-
-	// Open-loop arrival configuration. arrivalModel defaults to closed-loop.
-	// limiter is always present; open-loop additionally consults maxInFlight.
-	arrivalModel ArrivalModel
 	limiter      *rate.Limiter
 	maxInFlight  int
 
@@ -52,66 +29,20 @@ type Dispatcher struct {
 }
 
 // NewDispatcher creates a new dispatcher in the legacy closed-loop arrival model.
-func NewDispatcher(gen generator.Generator, sender TxSender) *Dispatcher {
+func NewDispatcher(sender TxSender, collector *stats.Collector, maxInFlight int) *Dispatcher {
 	return &Dispatcher{
-		generator:    gen,
 		sender:       sender,
-		arrivalModel: ArrivalClosedLoop,
 		limiter:      rate.NewLimiter(rate.Inf, 1),
+		maxInFlight: maxInFlight,
 	}
-}
-
-// SetOpenLoop switches the dispatcher to the open-loop arrival model, driven by
-// the shared limiter (the one rate authority, also driven by the ramper) and
-// bounded by maxInFlight concurrent sends. A non-positive maxInFlight is treated
-// as 1 so admission control is always live.
-func (d *Dispatcher) SetOpenLoop(limiter *rate.Limiter, maxInFlight int) {
-	if maxInFlight < 1 {
-		maxInFlight = 1
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.arrivalModel = ArrivalOpenLoop
-	d.limiter = limiter
-	d.maxInFlight = maxInFlight
-}
-
-// ArrivalModel reports the configured arrival model (for recording/reporting).
-func (d *Dispatcher) ArrivalModel() ArrivalModel {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.arrivalModel
-}
-
-// SetStatsCollector sets the statistics collector for this dispatcher
-func (d *Dispatcher) SetStatsCollector(collector *stats.Collector) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.collector = collector
-}
-
-// SetPrewarmGenerator sets the prewarm generator for this dispatcher
-func (d *Dispatcher) SetPrewarmGenerator(prewarmGen generator.Generator) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.prewarmGen = utils.Some(prewarmGen)
 }
 
 // Prewarm runs the prewarm generator to completion before starting the main load test
-func (d *Dispatcher) Prewarm(ctx context.Context, rng *mrand.Rand) error {
-	d.mu.RLock()
-	prewarmGen := d.prewarmGen
+func (d *Dispatcher) RunPrewarm(ctx context.Context, rng *mrand.Rand, gen generator.Generator) error {
 	// Prewarm runs before the scheduler paces anything, so it must self-pace off
 	// the shared limiter or it floods the SUT.
 	limiter := d.limiter
-	d.mu.RUnlock()
 
-	gen, ok := prewarmGen.Get()
-	if !ok {
-		return nil
-	} // No prewarming configured
-
-	log.Print("🔥 Starting account prewarming...")
 	processedAccounts := 0
 	logInterval := 100
 
@@ -146,19 +77,10 @@ func (d *Dispatcher) Prewarm(ctx context.Context, rng *mrand.Rand) error {
 
 // Run begins the dispatcher's transaction generation and sending loop, using
 // the configured arrival model.
-func (d *Dispatcher) Run(ctx context.Context, rng *mrand.Rand) error {
-	if d.ArrivalModel() == ArrivalOpenLoop {
-		return d.runOpenLoop(ctx, rng)
-	}
-	return d.runClosedLoop(ctx, rng)
-}
-
-// runClosedLoop is the legacy model: generate-then-send in lockstep, so a slow
-// SUT back-pressures the generator. Kept as the regression baseline.
-func (d *Dispatcher) runClosedLoop(ctx context.Context, rng *mrand.Rand) error {
+func (d *Dispatcher) Run(ctx context.Context, rng *mrand.Rand, gen generator.Generator) error {
 	for ctx.Err() == nil {
 		// Generate a transaction from main generator
-		tx, ok := d.generator.Generate(rng)
+		tx, ok := gen.Generate(rng)
 		if !ok {
 			log.Print("Dispatcher: Generator returned no more transactions")
 			return nil
@@ -175,68 +97,6 @@ func (d *Dispatcher) runClosedLoop(ctx context.Context, rng *mrand.Rand) error {
 		d.mu.Lock()
 		d.totalSent++
 		d.mu.Unlock()
-	}
-	return ctx.Err()
-}
-
-// runOpenLoop drives the open-loop scheduler (see scheduler.go), which owns the
-// arrival clock (t₀, sequence index i) and the in-flight bound. Send tasks are
-// spawned into a scope so they all complete on shutdown.
-func (d *Dispatcher) runOpenLoop(ctx context.Context, rng *mrand.Rand) error {
-	d.mu.RLock()
-	limiter, maxInFlight := d.limiter, d.maxInFlight
-	d.mu.RUnlock()
-
-	sched := newOpenLoopScheduler(d.generator, d.sender, limiter, maxInFlight, d.onSent)
-	err := service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		return sched.Run(ctx, rng, s)
-	})
-	// Fold the scheduler's drop count into the summary accounting.
-	d.mu.Lock()
-	d.dropped = sched.Dropped()
-	d.mu.Unlock()
-	return err
-}
-
-// onSent records a completed open-loop send: nil err advances totalSent
-// (succeeded), non-nil advances failed. Each admitted tx is counted exactly
-// once, never lost (doc.go: admitted == succeeded + failed).
-func (d *Dispatcher) onSent(tx *types.LoadTx, err error) {
-	if err != nil {
-		log.Printf("Scheduler: send failed (seq %d): %v", tx.SequenceIndex, err)
-		d.mu.Lock()
-		d.failed++
-		d.mu.Unlock()
-		return
-	}
-	d.mu.Lock()
-	d.totalSent++
-	d.mu.Unlock()
-}
-
-// StartBatch generates and sends a specific number of transactions then stops
-func (d *Dispatcher) RunBatch(ctx context.Context, rng *mrand.Rand, count int) error {
-	if count <= 0 {
-		return fmt.Errorf("count must be positive")
-	}
-	for i := range count {
-		// Generate a transaction
-		tx, ok := d.generator.Generate(rng)
-		if !ok {
-			return fmt.Errorf("dispatcher: generator returned nil transaction (batch %d/%d)", i+1, count)
-		}
-		// Stamp before hand-off (see Run).
-		tx.IntendedSendTime = time.Now()
-
-		// Send the transaction
-		if err := d.sender.Send(ctx, tx); err != nil {
-			log.Printf("Dispatcher: Failed to send transaction %d/%d: %v", i+1, count, err)
-			// Continue despite errors
-		} else {
-			d.mu.Lock()
-			d.totalSent++
-			d.mu.Unlock()
-		}
 	}
 	return ctx.Err()
 }
