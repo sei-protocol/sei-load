@@ -254,7 +254,7 @@ func TestCreateTxFromEthTx(t *testing.T) {
 	// Create a test account and scenario
 	account := NewAccount()
 
-	account.Nonce = 42
+	account.Nonce.Store(42)
 	receiver := common.HexToAddress("0x1234567890123456789012345678901234567890")
 	scenario := &TxScenario{
 		Name:     "TestScenario",
@@ -265,7 +265,7 @@ func TestCreateTxFromEthTx(t *testing.T) {
 	// Create a test transaction using DynamicFeeTx (EIP-1559)
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID:   big.NewInt(713714), // Sei testnet chain ID
-		Nonce:     scenario.Sender.Nonce,
+		Nonce:     scenario.Sender.Nonce.Load(),
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit
@@ -322,11 +322,11 @@ func TestLoadTxShardID(t *testing.T) {
 					Receiver: common.Address{},
 				}
 
-				scenario.Sender.Nonce = uint64(i)
+				scenario.Sender.Nonce.Store(uint64(i))
 				// Create a simple transaction
 				tx := types.NewTx(&types.DynamicFeeTx{
 					ChainID:   big.NewInt(713714), // Sei testnet chain ID
-					Nonce:     scenario.Sender.Nonce,
+					Nonce:     scenario.Sender.Nonce.Load(),
 					GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 					GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 					Gas:       21000,                   // Gas limit
@@ -383,7 +383,7 @@ func TestLoadTxShardIDConsistency(t *testing.T) {
 
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID:   big.NewInt(713714), // Sei testnet chain ID
-		Nonce:     scenario.Sender.Nonce,
+		Nonce:     scenario.Sender.Nonce.Load(),
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit
@@ -409,7 +409,7 @@ func TestTxScenario(t *testing.T) {
 
 	receiver := common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
 
-	account.Nonce = 123
+	account.Nonce.Store(123)
 
 	scenario := &TxScenario{
 		Name:     "TestScenario",
@@ -476,7 +476,7 @@ func BenchmarkCreateTxFromEthTx(b *testing.B) {
 
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID:   big.NewInt(713714), // Sei testnet chain ID
-		Nonce:     scenario.Sender.Nonce,
+		Nonce:     scenario.Sender.Nonce.Load(),
 		GasTipCap: big.NewInt(2000000000),  // 2 Gwei tip
 		GasFeeCap: big.NewInt(20000000000), // 20 Gwei max fee
 		Gas:       21000,                   // Gas limit

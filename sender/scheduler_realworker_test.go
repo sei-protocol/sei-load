@@ -20,7 +20,7 @@ import (
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	testrng "github.com/sei-protocol/sei-load/utils/rng"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 // This file is the production-path safety net for the open-loop in-flight bound.
@@ -271,17 +271,15 @@ func TestRealSender_Conservation_OnRealSendPath(t *testing.T) {
 	// test has observed quiescence and torn down deliberately.
 	runCtx, runCancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = service.Run(runCtx, func(ctx context.Context, scope service.Scope) error {
+	wg.Go(func() {
+		_ = scope.Run(runCtx, func(ctx context.Context, scope scope.Scope) error {
 			scope.SpawnBg(func() error { return client.Run(ctx) })
 			scope.SpawnBg(func() error { return sched.Run(ctx, testrng.NewSource(1).Rand("sender:realworker:test"), scope) })
 			// Main task: hold the scope open until the test signals teardown.
 			<-ctx.Done()
 			return nil
 		})
-	}()
+	})
 
 	// Assert ONLY at quiescence. All invariants are sampled together in one
 	// predicate so we never read them mid-flight. Post-reorder, the generator is
@@ -369,14 +367,12 @@ func TestRealSender_PermitReleasedBySender(t *testing.T) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
+	wg.Go(func() {
+		_ = scope.Run(ctx, func(ctx context.Context, scope scope.Scope) error {
 			scope.SpawnBg(func() error { return client.Run(ctx) })
 			return sched.Run(ctx, testrng.NewSource(1).Rand("sender:realworker:test"), scope)
 		})
-	}()
+	})
 
 	// Wait until exactly one send is genuinely in flight (parked in the handler).
 	<-srv.arrived
@@ -470,23 +466,18 @@ func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
+	wg.Go(func() {
+		_ = scope.Run(ctx, func(ctx context.Context, scope scope.Scope) error {
 			scope.SpawnBg(func() error { return client.Run(ctx) })
 			<-ctx.Done()
 			return nil
 		})
-	}()
+	})
 
-	limiter := rate.NewLimiter(rate.Limit(rps), 1)
-	d := NewDispatcher(newSignedTxGenerator(t, 0), client)
-	d.SetOpenLoop(limiter, 256) // sets d.limiter so Prewarm self-paces
-	d.SetPrewarmGenerator(newSignedTxGenerator(t, prewarmTxs))
-
+	prewarmGen := newSignedTxGenerator(t, prewarmTxs)
+	rng := testrng.NewSource(1).Rand("sender:realworker:test")
 	start := time.Now()
-	require.NoError(t, d.Prewarm(ctx, testrng.NewSource(1).Rand("sender:realworker:test")))
+	require.NoError(t, Run(ctx, rng, prewarmGen, client))
 	elapsed := time.Since(start)
 
 	// Paced floor: (N-1) gaps at the limiter rate (burst=1 lets the first through
