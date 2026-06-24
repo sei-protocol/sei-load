@@ -29,6 +29,7 @@ import (
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
+	runrng "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
@@ -209,6 +210,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
+	rngSource := generator.ResolveSeed(cfg)
 	var ramper *sender.Ramper
 	var dispatcher *sender.Dispatcher
 	var inclusionTracker *stats.InclusionTracker
@@ -216,10 +218,12 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
 		registry := types.NewAccountRegistry()
-		gen, err := generator.NewConfigBasedGenerator(cfg, registry)
+		gen, err := generator.NewConfigBasedGenerator(cfg, registry, rngSource.Rand(runrng.StreamWeightedShuffle))
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
+		loadRNG := rngSource.Rand(runrng.StreamLoadGeneration)
+		prewarmRNG := rngSource.Rand(runrng.StreamPrewarmGeneration)
 
 		// Create the shared rate authority for the whole run.
 		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
@@ -355,7 +359,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
 		if cfg.Settings.Prewarm {
-			if err := dispatcher.Prewarm(ctx); err != nil {
+			if err := dispatcher.Prewarm(ctx, prewarmRNG); err != nil {
 				return fmt.Errorf("failed to prewarm accounts: %w", err)
 			}
 		}
@@ -365,7 +369,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx) })
+		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx, loadRNG) })
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown

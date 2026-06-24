@@ -18,6 +18,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // JSONRPCRequest represents a captured JSON-RPC request
@@ -149,12 +150,14 @@ func TestShardDistribution(t *testing.T) {
 	}
 
 	// Create generator
-	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry())
+	rngSource := generator.ResolveSeed(cfg)
+	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry(), rngSource.Rand(testrng.StreamWeightedShuffle))
 	require.NoError(t, err)
+	rng := testrng.NewSource(1).Rand("sender:shards:test")
 
 	// Test shard calculation without creating actual sender
 	for i := 0; i < 10; i++ {
-		tx, ok := gen.Generate()
+		tx, ok := gen.Generate(rng)
 		require.True(t, ok)
 		require.NotNil(t, tx)
 

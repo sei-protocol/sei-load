@@ -134,9 +134,10 @@ func TestAccountPoolRoundRobin(t *testing.T) {
 	expectedOrder := []int{1, 2, 0} // The actual order the pool returns accounts
 
 	// Test multiple rounds of round-robin selection
+	rng := rng.NewSource(1).Rand("types:test")
 	for round := 0; round < 3; round++ {
 		for i, expectedIndex := range expectedOrder {
-			selectedAccount := pool.NextAccount()
+			selectedAccount := pool.NextAccount(rng)
 			expectedAccount := accounts[expectedIndex]
 			assert.Equal(t, expectedAccount.Address, selectedAccount.Address,
 				"Round %d, position %d: expected %s, got %s",
@@ -162,7 +163,7 @@ func TestAccountPoolNewAccountRate(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		selectedAccount := pool.NextAccount()
+		selectedAccount := pool.NextAccount(rng.NewSource(1).Rand("types:test"))
 		assert.False(t, originalAddresses[selectedAccount.Address],
 			"Iteration %d: got original account %s when expecting new account",
 			i, selectedAccount.Address.Hex())
@@ -174,7 +175,6 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	config := &AccountConfig{
 		InitialSize:    5,
 		NewAccountRate: 0.5, // 50% new accounts
-		Stream:         rng.NewSource(1).Stream("accounts:test"),
 	}
 
 	pool := registry.NewPool(config)
@@ -188,9 +188,10 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	const iterations = 100
 	originalCount := 0
 	newCount := 0
+	rng := rng.NewSource(1).Rand("accounts:test")
 
 	for i := 0; i < iterations; i++ {
-		selectedAccount := pool.NextAccount()
+		selectedAccount := pool.NextAccount(rng)
 		if originalAddresses[selectedAccount.Address] {
 			originalCount++
 		} else {
@@ -227,8 +228,9 @@ func TestAccountPoolConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
+			rng := rng.NewSource(1).Rand("types:test")
 			for j := 0; j < selectionsPerGoroutine; j++ {
-				account := pool.NextAccount()
+				account := pool.NextAccount(rng)
 				selectedAccounts[goroutineID*selectionsPerGoroutine+j] = account.Address
 			}
 		}(i)
@@ -450,7 +452,7 @@ func BenchmarkAccountPoolNextAccount(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		pool.NextAccount()
+		pool.NextAccount(rng.NewSource(1).Rand("types:test"))
 	}
 }
 

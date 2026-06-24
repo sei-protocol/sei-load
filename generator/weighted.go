@@ -2,10 +2,9 @@ package generator
 
 import (
 	"context"
-	"math/rand/v2"
+	mrand "math/rand/v2"
 
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // WeightedCfg is a configuration for a weighted scenarioGenerator.
@@ -28,7 +27,7 @@ type weightedGenerator struct {
 }
 
 // GenerateInfinite generates transactions indefinitely.
-func (w *weightedGenerator) GenerateInfinite(ctx context.Context) <-chan *types.LoadTx {
+func (w *weightedGenerator) GenerateInfinite(ctx context.Context, rng *mrand.Rand) <-chan *types.LoadTx {
 	output := make(chan *types.LoadTx, 10000)
 	go func() {
 		defer close(output)
@@ -41,7 +40,7 @@ func (w *weightedGenerator) GenerateInfinite(ctx context.Context) <-chan *types.
 				case <-ctx.Done():
 					return
 				case output <- func() *types.LoadTx {
-					tx, _ := w.nextGenerator().Generate()
+					tx, _ := w.nextGenerator().Generate(rng)
 					return tx
 				}():
 				}
@@ -63,14 +62,13 @@ func (w *weightedGenerator) nextGenerator() Generator {
 }
 
 // Generate generates 1 transaction.
-func (w *weightedGenerator) Generate() (*types.LoadTx, bool) {
-	return w.nextGenerator().Generate()
+func (w *weightedGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
+	return w.nextGenerator().Generate(rng)
 }
 
 // NewWeightedGenerator creates a new scenarioGenerator that will randomly select
-// from the provided generators. A nil stream leaves the startup shuffle on the
-// unseeded global RNG.
-func NewWeightedGenerator(stream *rng.Stream, cfgs ...*WeightedCfg) Generator {
+// from the provided generators.
+func NewWeightedGenerator(rng *mrand.Rand, cfgs ...*WeightedCfg) Generator {
 	// no need for clever weighting logic if we just have 1 scenarioGenerator anyway.
 	if len(cfgs) == 1 {
 		return cfgs[0].Generator
@@ -82,11 +80,7 @@ func NewWeightedGenerator(stream *rng.Stream, cfgs ...*WeightedCfg) Generator {
 		}
 	}
 
-	shuffle := rand.Shuffle
-	if stream != nil {
-		shuffle = stream.Shuffle
-	}
-	shuffle(len(weighted), func(i, j int) {
+	rng.Shuffle(len(weighted), func(i, j int) {
 		weighted[i], weighted[j] = weighted[j], weighted[i]
 	})
 

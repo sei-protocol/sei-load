@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/big"
+	mrand "math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
 
@@ -177,7 +179,7 @@ func newSignedTxGenerator(t *testing.T, n int) *signedTxGenerator {
 	}
 }
 
-func (g *signedTxGenerator) Generate() (*types.LoadTx, bool) {
+func (g *signedTxGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.remaining == 0 {
@@ -274,7 +276,7 @@ func TestRealSender_Conservation_OnRealSendPath(t *testing.T) {
 		defer wg.Done()
 		_ = service.Run(runCtx, func(ctx context.Context, scope service.Scope) error {
 			scope.SpawnBg(func() error { return client.Run(ctx) })
-			scope.SpawnBg(func() error { return sched.Run(ctx, scope) })
+			scope.SpawnBg(func() error { return sched.Run(ctx, testrng.NewSource(1).Rand("sender:realworker:test"), scope) })
 			// Main task: hold the scope open until the test signals teardown.
 			<-ctx.Done()
 			return nil
@@ -372,7 +374,7 @@ func TestRealSender_PermitReleasedBySender(t *testing.T) {
 		defer wg.Done()
 		_ = service.Run(ctx, func(ctx context.Context, scope service.Scope) error {
 			scope.SpawnBg(func() error { return client.Run(ctx) })
-			return sched.Run(ctx, scope)
+			return sched.Run(ctx, testrng.NewSource(1).Rand("sender:realworker:test"), scope)
 		})
 	}()
 
@@ -484,7 +486,7 @@ func TestDispatcher_PrewarmRateLimitedInOpenLoop(t *testing.T) {
 	d.SetPrewarmGenerator(newSignedTxGenerator(t, prewarmTxs))
 
 	start := time.Now()
-	require.NoError(t, d.Prewarm(ctx))
+	require.NoError(t, d.Prewarm(ctx, testrng.NewSource(1).Rand("sender:realworker:test")))
 	elapsed := time.Since(start)
 
 	// Paced floor: (N-1) gaps at the limiter rate (burst=1 lets the first through

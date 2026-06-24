@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	mrand "math/rand/v2"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -23,7 +24,7 @@ var bigOne = big.NewInt(1)
 // TxGenerator defines the interface for generating transactions.
 type TxGenerator interface {
 	Name() string
-	Generate(scenario *types.TxScenario) *types.LoadTx
+	Generate(rng *mrand.Rand, scenario *types.TxScenario) *types.LoadTx
 	Attach(config *config.LoadConfig, address common.Address) error
 	Deploy(config *config.LoadConfig, deployer *types.Account) common.Address
 }
@@ -40,7 +41,7 @@ type ScenarioDeployer interface {
 	AttachScenario(config *config.LoadConfig, address common.Address) common.Address
 
 	// CreateTransaction creates a transaction for this scenario
-	CreateTransaction(config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error)
+	CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 }
 
 // ContractBindFunc defines a function that creates a contract instance from an address
@@ -61,7 +62,7 @@ type ContractDeployer[T any] interface {
 	SetContract(contract *T)
 
 	// CreateContractTransaction creates a contract interaction transaction
-	CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error)
+	CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 }
 
 // ScenarioBase provides common functionality for all scenarios
@@ -99,13 +100,13 @@ func (s *ScenarioBase) Attach(config *config.LoadConfig, address common.Address)
 }
 
 // Generate handles the common transaction generation flow
-func (s *ScenarioBase) Generate(scenario *types.TxScenario) *types.LoadTx {
+func (s *ScenarioBase) Generate(rng *mrand.Rand, scenario *types.TxScenario) *types.LoadTx {
 	if !s.deployed {
 		panic("Scenario not deployed/initialized")
 	}
 
 	// Create transaction using scenario-specific logic
-	tx, err := s.deployer.CreateTransaction(s.config, scenario)
+	tx, err := s.deployer.CreateTransaction(rng, s.config, scenario)
 	if err != nil {
 		panic("Failed to create transaction: " + err.Error())
 	}
@@ -214,7 +215,7 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 }
 
 // CreateTransaction implements ScenarioDeployer interface for contract scenarios
-func (c *ContractScenarioBase[T]) CreateTransaction(config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (c *ContractScenarioBase[T]) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	auth := utils.CreateTransactionOpts(config.GetChainID(), scenario)
-	return c.deployer.CreateContractTransaction(auth, scenario)
+	return c.deployer.CreateContractTransaction(rng, auth, scenario)
 }

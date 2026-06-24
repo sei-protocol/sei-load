@@ -1,10 +1,8 @@
 package types
 
 import (
-	"math/rand/v2"
+	mrand "math/rand/v2"
 	"sync"
-
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // AccountRegistry owns account pools created for a run.
@@ -39,9 +37,6 @@ type AccountPool struct {
 type AccountConfig struct {
 	InitialSize    int
 	NewAccountRate float64
-	// Stream, when non-nil, makes the new-account roll deterministic. A nil
-	// Stream leaves the pool on the unseeded global RNG.
-	Stream *rng.Stream
 }
 
 func (a *AccountPool) nextIndex() int {
@@ -52,16 +47,11 @@ func (a *AccountPool) nextIndex() int {
 	return a.idx
 }
 
-// NextAccount returns the next account.
-func (a *AccountPool) NextAccount() *Account {
+// NextAccount returns the next account, using rng for the new-account roll when
+// NewAccountRate > 0.
+func (a *AccountPool) NextAccount(rng *mrand.Rand) *Account {
 	if a.cfg.NewAccountRate > 0 {
-		var randomNumber float64
-		if a.cfg.Stream != nil {
-			randomNumber = a.cfg.Stream.Float64()
-		} else {
-			randomNumber = rand.Float64()
-		}
-		if randomNumber <= a.cfg.NewAccountRate {
+		if rng.Float64() <= a.cfg.NewAccountRate {
 			return GenerateAccounts(1)[0]
 		}
 	}

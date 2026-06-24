@@ -1,6 +1,8 @@
 package generator
 
 import (
+	mrand "math/rand/v2"
+
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
 )
@@ -17,10 +19,10 @@ func NewScenarioGenerator(accounts *types.AccountPool, txg scenarios.TxGenerator
 	}
 }
 
-func (g *scenarioGenerator) Generate() (*types.LoadTx, bool) {
-	sender := g.accountPool.NextAccount()
-	receiver := g.accountPool.NextAccount()
-	return g.scenario.Generate(&types.TxScenario{
+func (g *scenarioGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
+	sender := g.accountPool.NextAccount(rng)
+	receiver := g.accountPool.NextAccount(rng)
+	return g.scenario.Generate(rng, &types.TxScenario{
 		Name:     g.scenario.Name(),
 		Sender:   sender,
 		Receiver: receiver.Address,

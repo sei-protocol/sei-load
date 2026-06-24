@@ -10,6 +10,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 func seededConfig(t *testing.T, seed uint64) *config.LoadConfig {
@@ -67,9 +68,11 @@ func draw(tx *types.LoadTx) gasDraw {
 // seed-determined gas draw — the RNG-driven output we replay against.
 func gasSeq(t *testing.T, seed uint64, n int) []gasDraw {
 	t.Helper()
-	gen, err := generator.NewConfigBasedGenerator(seededConfig(t, seed), types.NewAccountRegistry())
+	cfg := seededConfig(t, seed)
+	rngSource := generator.ResolveSeed(cfg)
+	gen, err := generator.NewConfigBasedGenerator(cfg, types.NewAccountRegistry(), rngSource.Rand(rng.StreamWeightedShuffle))
 	require.NoError(t, err)
-	txs := generator.GenerateN(gen, n)
+	txs := generator.GenerateN(rngSource.Rand("generator:seed:draws"), gen, n)
 	require.Len(t, txs, n)
 	out := make([]gasDraw, n)
 	for i, tx := range txs {

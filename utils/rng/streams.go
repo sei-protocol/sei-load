@@ -13,6 +13,10 @@ const (
 	StreamAccountsShared = "accounts:shared"
 	// StreamWeightedShuffle seeds the weighted scenario selector's shuffle.
 	StreamWeightedShuffle = "weighted:shuffle"
+	// StreamLoadGeneration seeds the main load-generation draw stream.
+	StreamLoadGeneration = "load:generation"
+	// StreamPrewarmGeneration seeds the prewarm draw stream.
+	StreamPrewarmGeneration = "prewarm:generation"
 )
 
 // AccountsScenarioStream is the stream id for scenario i's own account pool.

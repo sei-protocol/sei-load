@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -45,7 +46,7 @@ func (s *EVMTransferFastScenario) AttachScenario(config *config.LoadConfig, addr
 }
 
 // CreateTransaction EVMTransferFastScenario ScenarioDeployer interface - creates ETH transfer transaction
-func (s *EVMTransferFastScenario) CreateTransaction(config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
+func (s *EVMTransferFastScenario) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
 	// Create transaction with value transfer
 	tx := &ethtypes.DynamicFeeTx{
 		Nonce:     scenario.Sender.GetAndIncrementNonce(),
@@ -59,20 +60,20 @@ func (s *EVMTransferFastScenario) CreateTransaction(config *config.LoadConfig, s
 
 	if s.scenarioConfig.GasPicker != nil {
 		var err error
-		tx.Gas, err = s.scenarioConfig.GasPicker.GenerateGas()
+		tx.Gas, err = s.scenarioConfig.GasPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if s.scenarioConfig.GasTipCapPicker != nil {
-		gasTipCap, err := s.scenarioConfig.GasTipCapPicker.GenerateGas()
+		gasTipCap, err := s.scenarioConfig.GasTipCapPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}
 		tx.GasTipCap = big.NewInt(int64(gasTipCap))
 	}
 	if s.scenarioConfig.GasFeeCapPicker != nil {
-		gasFeeCap, err := s.scenarioConfig.GasFeeCapPicker.GenerateGas()
+		gasFeeCap, err := s.scenarioConfig.GasFeeCapPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}

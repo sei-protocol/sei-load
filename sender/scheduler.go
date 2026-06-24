@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"log"
+	mrand "math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,7 +79,7 @@ func (s *openLoopScheduler) Admitted() uint64 { return s.admitted.Load() }
 // Run drives the arrival clock until ctx is canceled or the generator is
 // exhausted, spawning each accepted tx as a send task bounded by the in-flight
 // semaphore. See the package doc for the arrival model.
-func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error {
+func (s *openLoopScheduler) Run(ctx context.Context, rng *mrand.Rand, scope service.Scope) error {
 	t0 := time.Now()
 	nextSend := t0
 	var i uint64
@@ -114,7 +115,7 @@ func (s *openLoopScheduler) Run(ctx context.Context, scope service.Scope) error 
 			continue
 		}
 
-		tx, ok := s.generator.Generate()
+		tx, ok := s.generator.Generate(rng)
 		if !ok {
 			// Generator drained: not an arrival — release the permit and stop.
 			s.inflight.Release(1)

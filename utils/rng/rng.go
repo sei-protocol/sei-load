@@ -113,6 +113,12 @@ func (s *Source) Stream(streamID string) *Stream {
 	return &Stream{rand: mrand.New(substream(s.seed, streamID))}
 }
 
+// Rand returns the sub-stream for a logical consumer named streamID as a
+// plain math/rand/v2 Rand. Callers are responsible for serializing access.
+func (s *Source) Rand(streamID string) *mrand.Rand {
+	return mrand.New(substream(s.seed, streamID))
+}
+
 // Stream is a single consumer's reproducible sub-stream. It is safe for
 // concurrent use: draws are serialized so the per-stream sequence depends only
 // on call order into this stream, not on the goroutine that made the call.

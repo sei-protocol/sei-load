@@ -1,6 +1,8 @@
 package generator
 
 import (
+	mrand "math/rand/v2"
+
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
@@ -33,7 +35,7 @@ func NewPrewarmGenerator(cfg *config.LoadConfig, registry *types.AccountRegistry
 }
 
 // Generate generates self-transfer transactions until all known accounts are prewarmed.
-func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
+func (pg *PrewarmGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
 	accounts := pg.registry.Accounts()
 
 	// Check if we're already finished
@@ -44,7 +46,7 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 	account := accounts[pg.currentAccount]
 	if account.Nonce > 0 {
 		pg.currentAccount++
-		return pg.Generate()
+		return pg.Generate(rng)
 	}
 	pg.currentAccount++
 
@@ -56,5 +58,5 @@ func (pg *PrewarmGenerator) Generate() (*types.LoadTx, bool) {
 	}
 
 	// Generate the transaction using EVMTransfer scenario
-	return pg.evmScenario.Generate(scenario), true
+	return pg.evmScenario.Generate(rng, scenario), true
 }

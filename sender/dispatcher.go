@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	mrand "math/rand/v2"
 	"sync"
 	"time"
 
@@ -97,7 +98,7 @@ func (d *Dispatcher) SetPrewarmGenerator(prewarmGen generator.Generator) {
 }
 
 // Prewarm runs the prewarm generator to completion before starting the main load test
-func (d *Dispatcher) Prewarm(ctx context.Context) error {
+func (d *Dispatcher) Prewarm(ctx context.Context, rng *mrand.Rand) error {
 	d.mu.RLock()
 	prewarmGen := d.prewarmGen
 	// Prewarm runs before the scheduler paces anything, so it must self-pace off
@@ -120,7 +121,7 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 			return err
 		}
 
-		tx, ok := gen.Generate()
+		tx, ok := gen.Generate(rng)
 		if !ok {
 			break // Prewarming is complete
 		}
@@ -145,19 +146,19 @@ func (d *Dispatcher) Prewarm(ctx context.Context) error {
 
 // Run begins the dispatcher's transaction generation and sending loop, using
 // the configured arrival model.
-func (d *Dispatcher) Run(ctx context.Context) error {
+func (d *Dispatcher) Run(ctx context.Context, rng *mrand.Rand) error {
 	if d.ArrivalModel() == ArrivalOpenLoop {
-		return d.runOpenLoop(ctx)
+		return d.runOpenLoop(ctx, rng)
 	}
-	return d.runClosedLoop(ctx)
+	return d.runClosedLoop(ctx, rng)
 }
 
 // runClosedLoop is the legacy model: generate-then-send in lockstep, so a slow
 // SUT back-pressures the generator. Kept as the regression baseline.
-func (d *Dispatcher) runClosedLoop(ctx context.Context) error {
+func (d *Dispatcher) runClosedLoop(ctx context.Context, rng *mrand.Rand) error {
 	for ctx.Err() == nil {
 		// Generate a transaction from main generator
-		tx, ok := d.generator.Generate()
+		tx, ok := d.generator.Generate(rng)
 		if !ok {
 			log.Print("Dispatcher: Generator returned no more transactions")
 			return nil
@@ -181,14 +182,14 @@ func (d *Dispatcher) runClosedLoop(ctx context.Context) error {
 // runOpenLoop drives the open-loop scheduler (see scheduler.go), which owns the
 // arrival clock (t₀, sequence index i) and the in-flight bound. Send tasks are
 // spawned into a scope so they all complete on shutdown.
-func (d *Dispatcher) runOpenLoop(ctx context.Context) error {
+func (d *Dispatcher) runOpenLoop(ctx context.Context, rng *mrand.Rand) error {
 	d.mu.RLock()
 	limiter, maxInFlight := d.limiter, d.maxInFlight
 	d.mu.RUnlock()
 
 	sched := newOpenLoopScheduler(d.generator, d.sender, limiter, maxInFlight, d.onSent)
 	err := service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		return sched.Run(ctx, s)
+		return sched.Run(ctx, rng, s)
 	})
 	// Fold the scheduler's drop count into the summary accounting.
 	d.mu.Lock()
@@ -214,13 +215,13 @@ func (d *Dispatcher) onSent(tx *types.LoadTx, err error) {
 }
 
 // StartBatch generates and sends a specific number of transactions then stops
-func (d *Dispatcher) RunBatch(ctx context.Context, count int) error {
+func (d *Dispatcher) RunBatch(ctx context.Context, rng *mrand.Rand, count int) error {
 	if count <= 0 {
 		return fmt.Errorf("count must be positive")
 	}
 	for i := range count {
 		// Generate a transaction
-		tx, ok := d.generator.Generate()
+		tx, ok := d.generator.Generate(rng)
 		if !ok {
 			return fmt.Errorf("dispatcher: generator returned nil transaction (batch %d/%d)", i+1, count)
 		}

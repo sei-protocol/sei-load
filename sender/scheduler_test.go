@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"errors"
+	mrand "math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/service"
 )
 
@@ -27,7 +29,7 @@ type fakeGenerator struct {
 
 func newFakeGenerator(n int) *fakeGenerator { return &fakeGenerator{remaining: n} }
 
-func (g *fakeGenerator) Generate() (*types.LoadTx, bool) {
+func (g *fakeGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.remaining == 0 {
@@ -66,7 +68,7 @@ func newSeededGenerator(n int) *seededGenerator {
 	return &seededGenerator{remaining: n, drawIndex: map[*types.LoadTx]uint64{}}
 }
 
-func (g *seededGenerator) Generate() (*types.LoadTx, bool) {
+func (g *seededGenerator) Generate(rng *mrand.Rand) (*types.LoadTx, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.remaining == 0 {
@@ -149,9 +151,9 @@ func (s *asyncFakeSender) Send(ctx context.Context, tx *types.LoadTx) error {
 
 // runScheduler drives the scheduler in its own scope until the context expires,
 // returning the scheduler so the caller can read Dropped().
-func runScheduler(ctx context.Context, sched *openLoopScheduler) {
+func runScheduler(ctx context.Context, rng *mrand.Rand, sched *openLoopScheduler) {
 	_ = service.Run(ctx, func(ctx context.Context, s service.Scope) error {
-		return sched.Run(ctx, s)
+		return sched.Run(ctx, rng, s)
 	})
 }
 
@@ -169,7 +171,7 @@ func TestOpenLoopSchedule_TracksT0PlusIOverLambda(t *testing.T) {
 	sched := newOpenLoopScheduler(gen, snd, limiter, 1024, nil)
 
 	start := time.Now()
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	issued := gen.issuedTxs()
 	require.GreaterOrEqual(t, len(issued), 30, "scheduler should issue most txs within the window")
@@ -214,7 +216,7 @@ func TestOpenLoopSchedule_NotThrottledBySlowSender(t *testing.T) {
 	sched := newOpenLoopScheduler(gen, snd, limiter, maxInFlight, nil)
 
 	start := time.Now()
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	admittedTxs := gen.issuedTxs()
 	gap := time.Second / time.Duration(lambda)
@@ -296,7 +298,7 @@ func TestOpenLoopSchedule_PermitHeldUntilCompletion(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Millisecond)
 	defer cancel()
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	// Exactly one tx held the single permit through the whole run (never
 	// completed), so the sender saw exactly one enqueue and everything else
@@ -389,7 +391,7 @@ func TestOpenLoopSchedule_Conservation(t *testing.T) {
 	// Fail every 5th send so failed > 0 and the invariant must absorb it.
 	snd := newFlakyAsyncSender(ctx, 256, 16, 5)
 	sched := newOpenLoopScheduler(gen, snd, limiter, 256, onSent)
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	admitted := sched.Admitted()
 	require.Positive(t, admitted)
@@ -445,7 +447,7 @@ func TestOpenLoopSchedule_DroppedSlotsConsumeNoDraws(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runScheduler(ctx, sched)
+		runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 	}()
 
 	// Periodically release the single held permit so flow inches forward one
@@ -505,7 +507,7 @@ func TestOpenLoopSchedule_HonorsRampedLambda(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runScheduler(ctx, sched)
+		runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 	}()
 
 	// Let it run at 50 tps, then ramp to 500 tps and let it run more.
@@ -542,7 +544,7 @@ func TestOpenLoopSchedule_ClampsRunawayLambda(t *testing.T) {
 	limiter := rate.NewLimiter(rate.Inf, 1) // runaway λ from the start
 	sched := newOpenLoopScheduler(gen, snd, limiter, 4096, nil)
 
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	issued := gen.issuedTxs()
 	require.GreaterOrEqual(t, len(issued), 2, "scheduler must keep issuing under Inf λ")
@@ -570,7 +572,7 @@ func TestOpenLoopSchedule_StampsBeforeHandoff(t *testing.T) {
 	}
 	sched := newOpenLoopScheduler(gen, snd, limiter, 64, onSent)
 
-	runScheduler(ctx, sched)
+	runScheduler(ctx, testrng.NewSource(1).Rand("sender:scheduler:test"), sched)
 
 	require.Positive(t, checked.Load(), "onSent must observe stamped txs")
 }
