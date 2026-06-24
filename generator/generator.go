@@ -44,8 +44,8 @@ type scenarioInstance struct {
 	Deployed bool
 }
 
-// configBasedGenerator manages scenario creation and deployment from config
-type configBasedGenerator struct {
+// generatorBuilder manages scenario creation and deployment from config
+type generatorBuilder struct {
 	config         *config.LoadConfig
 	registry       *types.AccountRegistry
 	instances      []*scenarioInstance
@@ -55,7 +55,7 @@ type configBasedGenerator struct {
 
 // CreateScenarios creates scenario instances based on the configuration
 // Each scenario entry in config creates a separate instance, even if same name
-func (g *configBasedGenerator) createScenarios() error {
+func (g *generatorBuilder) createScenarios() error {
 	if g.config.Accounts != nil {
 		g.sharedAccounts = g.registry.NewPool(&types.AccountConfig{
 			InitialSize:    g.config.Accounts.Accounts,
@@ -115,9 +115,9 @@ func (g *configBasedGenerator) createScenarios() error {
 }
 
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).
-func (g *configBasedGenerator) mockDeployAll() error {
+func (g *generatorBuilder) mockDeployAll() error {
 	for _, instance := range g.instances {
-		addr := types.GenerateAccounts(1)[0].Address
+		addr := types.NewAccount().Address
 		if err := instance.Scenario.Attach(g.config, addr); err != nil {
 			return err
 		}
@@ -127,7 +127,7 @@ func (g *configBasedGenerator) mockDeployAll() error {
 }
 
 // DeployAll deploys all scenario instances that require deployment
-func (g *configBasedGenerator) deployAll() error {
+func (g *generatorBuilder) deployAll() error {
 	if g.config.MockDeploy {
 		return g.mockDeployAll()
 	}
@@ -148,7 +148,7 @@ func (g *configBasedGenerator) deployAll() error {
 }
 
 // createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
-func (g *configBasedGenerator) createWeightedGenerator(rng *mrand.Rand) (Generator, error) {
+func (g *generatorBuilder) createWeightedGenerator(rng *mrand.Rand) (Generator, error) {
 	if len(g.instances) == 0 {
 		return nil, fmt.Errorf("no scenario instances created")
 	}
@@ -197,25 +197,25 @@ func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
 
 // NewConfigBasedGenerator is a convenience method that combines all steps.
 func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig, registry *types.AccountRegistry) (Generator, error) {
-	generator := &configBasedGenerator{
+	b := &generatorBuilder{
 		config:    cfg,
 		registry:  registry,
 		instances: make([]*scenarioInstance, 0),
-		deployer:  types.GenerateAccounts(1)[0],
+		deployer:  types.NewAccount(),
 	}
 
 	// Step 1: Create scenarios
-	if err := generator.createScenarios(); err != nil {
+	if err := b.createScenarios(); err != nil {
 		return nil, fmt.Errorf("failed to create scenarios: %w", err)
 	}
 
 	// Step 2: Deploy all scenarios
-	if err := generator.deployAll(); err != nil {
+	if err := b.deployAll(); err != nil {
 		return nil, fmt.Errorf("failed to deploy scenarios: %w", err)
 	}
 
 	// Step 3: Create weighted scenarioGenerator
-	weightedGen, err := generator.createWeightedGenerator(rng)
+	weightedGen, err := b.createWeightedGenerator(rng)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create weighted scenarioGenerator: %w", err)
 	}
