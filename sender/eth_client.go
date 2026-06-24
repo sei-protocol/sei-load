@@ -123,9 +123,6 @@ func (c *ethClient) runSender(ctx context.Context, client *ethclient.Client) err
 		// so stamping the actual send-attempt time here is race-free (see LoadTx).
 		req.tx.AttemptedSendTime = startTime
 		err = c.sendTx(ctx, client, req.tx)
-		if req.tx.OnComplete != nil {
-			req.tx.OnComplete(err)
-		}
 		req.done <- err
 		c.cfg.Collector.RecordTransaction(req.tx.Scenario.Name, c.cfg.Endpoint, time.Since(startTime), err == nil)
 		if err == nil {

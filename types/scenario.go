@@ -48,16 +48,6 @@ type LoadTx struct {
 	// AttemptedSendTime is when the send was actually attempted, written by the
 	// sender goroutine that owns the tx between dequeue and send completion.
 	AttemptedSendTime time.Time
-	// OnComplete, if set, is invoked exactly once when the network send attempt
-	// for this tx finishes (after sendTransaction returns), with the send error
-	// or nil. The open-loop scheduler sets it to release the in-flight permit so
-	// the bound covers true unacked sends (enqueue + send), not just queue depth;
-	// see the open-loop scheduler. The sender invokes it after send completion
-	// and is the sole invoker on the happy path. Nil in the closed-loop and batch
-	// paths, where the sender simply skips it. The callback must be cheap and
-	// non-blocking — the sender holds the tx and calls it inline. Written by the
-	// owning goroutine before hand-off, per the lifecycle concurrency contract.
-	OnComplete func(err error)
 	// InclusionTime is when the tx was observed included on-chain, written only
 	// by the inclusion tracker (single writer, under its registry lock). The
 	// clock is the wall-clock instant the including block's newHead header

@@ -19,20 +19,7 @@ import (
 // Generators are not thread-safe. Callers must serialize all access to a given
 // Generator instance.
 type Generator interface {
-	Generate(rng *mrand.Rand) (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
-}
-
-// GenerateN drains up to n transactions from g by repeated Generate calls.
-func GenerateN(rng *mrand.Rand, g Generator, n int) []*types.LoadTx {
-	txs := make([]*types.LoadTx, 0, n)
-	for range n {
-		if tx, ok := g.Generate(rng); ok {
-			txs = append(txs, tx)
-		} else {
-			break
-		}
-	}
-	return txs
+	Generate(rng *mrand.Rand) // Returns transaction and true if more available, nil/false when done
 }
 
 // scenarioInstance represents a scenario instance with its configuration
@@ -41,7 +28,6 @@ type scenarioInstance struct {
 	Weight   int
 	Scenario scenarios.TxGenerator
 	Accounts *types.AccountPool
-	Deployed bool
 }
 
 // generatorBuilder manages scenario creation and deployment from config
@@ -105,7 +91,6 @@ func (g *generatorBuilder) createScenarios() error {
 			Weight:   scenarioCfg.Weight,
 			Scenario: scenario,
 			Accounts: accountPool,
-			Deployed: false,
 		}
 
 		g.instances = append(g.instances, instance)
@@ -121,7 +106,6 @@ func (g *generatorBuilder) mockDeployAll() error {
 		if err := instance.Scenario.Attach(g.config, addr); err != nil {
 			return err
 		}
-		instance.Deployed = true
 	}
 	return nil
 }
@@ -137,9 +121,7 @@ func (g *generatorBuilder) deployAll() error {
 		// Deploy the scenario
 		log.Printf("Deploying scenario %s", instance.Name)
 		address := instance.Scenario.Deploy(g.config, g.deployer)
-		instance.Deployed = true
-
-		if address.Cmp(common.Address{}) != 0 {
+		if address!=(common.Address{}) {
 			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
 	}
@@ -147,39 +129,67 @@ func (g *generatorBuilder) deployAll() error {
 	return nil
 }
 
-// createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
-func (g *generatorBuilder) createWeightedGenerator(rng *mrand.Rand) (Generator, error) {
-	if len(g.instances) == 0 {
-		return nil, fmt.Errorf("no scenario instances created")
-	}
+type weightedGenerator struct {
+	registry *types.AccountRegistry
+	scenarios []*scenarioInstance
+	counter    uint64
+}
 
-	// Check that all scenarios are deployed
-	for _, instance := range g.instances {
-		if !instance.Deployed {
-			return nil, fmt.Errorf("scenario %s is not deployed", instance.Name)
+// NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
+func (g *weightedGenerator) PrewarmTxs(rng *mrand.Rand, cfg *config.LoadConfig, accounts []*types.Account) []*types.LoadTx {
+	// Create EVMTransfer scenario for prewarming
+	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
+	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
+	evmScenario.Deploy(cfg, types.NewAccount())
+	var txs []*types.LoadTx
+	for _,account := range accounts {
+		// Create self-transfer transaction
+		scenario := &types.TxScenario{
+			Name:     "EVMTransfer",
+			Sender:   account,
+			Receiver: account.Address, // Send to self
 		}
+		txs = append(txs,evmScenario.Generate(rng, scenario))
 	}
+	return txs
+}
 
+// Generate generates 1 transaction.
+func (w *weightedGenerator) Generate(rng *mrand.Rand) {
+	g := w.scenarios[int(w.counter) % len(w.scenarios)]
+	w.counter++
+	sender := g.Accounts.NextAccount(rng)
+	receiver := g.Accounts.NextAccount(rng)
+	// TODO: This should probably hold a lock on sender.
+	sender.PushTx(g.Scenario.Generate(rng, &types.TxScenario{
+		Name:     g.Scenario.Name(),
+		Sender:   sender,
+		Receiver: receiver.Address,
+	}))
+}
+
+// createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
+func (g *generatorBuilder) build(rng *mrand.Rand) (*weightedGenerator, error) {
 	// Create weighted configurations
-	var weightedConfigs []*WeightedCfg
+	var gens []*scenarioInstance
 	for _, instance := range g.instances {
 		if instance.Weight == 0 {
 			log.Printf("Skipping scenario %s with weight 0", instance.Name)
 			continue
 		}
 		// Create a scenarioGenerator for this scenario instance
-		gen := NewScenarioGenerator(instance.Accounts, instance.Scenario)
-
-		// Add to weighted config with the specified weight
-		weightedConfigs = append(weightedConfigs, WeightedConfig(instance.Weight, gen))
+		for range instance.Weight {
+			gens = append(gens,instance)
+		}
 	}
 
-	if len(weightedConfigs) == 0 {
+	if len(gens) == 0 {
 		return nil, fmt.Errorf("no scenario instances created (define some scenarios)")
 	}
-
-	// Create and return the weighted scenarioGenerator
-	return NewWeightedGenerator(rng, weightedConfigs), nil
+	rng.Shuffle(len(gens), func(i, j int) {
+		gens[i], gens[j] = gens[j], gens[i]
+	})
+	return &weightedGenerator{scenarios: gens}, nil
 }
 
 // resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
@@ -196,10 +206,10 @@ func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
 }
 
 // NewConfigBasedGenerator is a convenience method that combines all steps.
-func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig, registry *types.AccountRegistry) (Generator, error) {
+func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (Generator, error) {
 	b := &generatorBuilder{
 		config:    cfg,
-		registry:  registry,
+		registry:  types.NewAccountRegistry(),
 		instances: make([]*scenarioInstance, 0),
 		deployer:  types.NewAccount(),
 	}
@@ -215,10 +225,10 @@ func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig, registry *
 	}
 
 	// Step 3: Create weighted scenarioGenerator
-	weightedGen, err := b.createWeightedGenerator(rng)
+	g, err := b.build(rng)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create weighted scenarioGenerator: %w", err)
 	}
 
-	return weightedGen, nil
+	return g, nil
 }

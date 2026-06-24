@@ -2,7 +2,6 @@ package types
 
 import (
 	"crypto/ecdsa"
-	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -13,7 +12,8 @@ import (
 type Account struct {
 	Address common.Address
 	PrivKey *ecdsa.PrivateKey
-	Nonce   atomic.Uint64
+	Nonce  uint64
+	Txs []*LoadTx
 }
 
 // NewAccount generates new account.
@@ -25,9 +25,12 @@ func NewAccount() *Account {
 	}
 }
 
-// GetAndIncrementNonce increments the nonce.
-func (s *Account) GetAndIncrementNonce() uint64 {
-	return s.Nonce.Add(1) - 1
+func (s *Account) PushTx(tx *LoadTx) {
+	if tx.EthTx.Nonce()!=s.Nonce {
+		return
+	}
+	s.Nonce += 1
+	s.Txs = append(s.Txs,tx)
 }
 
 // GenerateAccounts generates random accounts.

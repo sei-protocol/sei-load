@@ -3,16 +3,28 @@ package types
 import (
 	mrand "math/rand/v2"
 	"sync"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // AccountRegistry owns account pools created for a run.
 type AccountRegistry struct {
+	accounts map[common.Address]*Account
+	newAccountsTxs []*LoadTx
 	pools []*AccountPool
 }
 
 // NewAccountRegistry creates an empty account registry.
 func NewAccountRegistry() *AccountRegistry {
-	return &AccountRegistry{}
+	return &AccountRegistry{
+		accounts: map[common.Address]*Account{},
+	}
+}
+
+func (r *AccountRegistry) ResetNonce(addr common.Address, nonce uint64) {
+	if a,ok := r.accounts[addr]; ok {
+		a.Txs = nil
+		a.Nonce = nonce
+	}
 }
 
 // Accounts returns a flat copy of all accounts across all pools.
@@ -65,9 +77,13 @@ func (a *AccountPool) GetAccounts() []*Account {
 
 // NewPool creates a new account generator from a config, records it, and returns it.
 func (r *AccountRegistry) NewPool(cfg *AccountConfig) *AccountPool {
+	accounts := GenerateAccounts(cfg.InitialSize)
 	pool := &AccountPool{
-		Accounts: GenerateAccounts(cfg.InitialSize),
+		Accounts: accounts,
 		cfg:      cfg,
+	}
+	for _,a := range accounts {
+		r.accounts[a.Address] = a
 	}
 	r.pools = append(r.pools, pool)
 	return pool
