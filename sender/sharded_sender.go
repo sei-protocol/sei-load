@@ -63,6 +63,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 }
 
 // Send implements TxSender interface - calculates shard ID and routes to appropriate worker
+// TODO: make it respect Settings.MaxInFlight
 func (s *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
 	return s.shards[tx.ShardID(len(s.shards))].Send(ctx, tx)
 }

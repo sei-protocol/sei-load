@@ -211,8 +211,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
 	rng := generator.ResolveSeed(cfg).Rand("")
 	var ramper *sender.Ramper
-	var dispatcher *sender.Dispatcher
-	var inclusionTracker *stats.InclusionTracker
+	inclusion := utils.None[*stats.InclusionTracker]()
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
@@ -265,10 +264,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// tracker (the lossy per-tx receipt path is retired).
 		// Not wired under --dry-run: simulated sends never hit the chain, so they
 		// would all reap as expired and pollute the inclusion stats.
-		inclusion := utils.None[*stats.InclusionTracker]()
 		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
 			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
-			inclusionTracker = stats.NewInclusionTracker(
+			inclusionTracker := stats.NewInclusionTracker(
 				cfg.SeiChainID,
 				reapAfter,
 				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
@@ -280,16 +278,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		// Open-loop owns the arrival clock in the scheduler, so the sender must
-		// not add a second finite gate. Prewarm and the scheduler still use the
-		// real shared limiter.
-		senderLimiter := sharedLimiter
-		if cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop && cfg.Settings.TxsDir == "" {
-			senderLimiter = rate.NewLimiter(rate.Inf, 1)
-		}	
-
 		var snd sender.TxSender
-		// Create dispatcher
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			eth, err := ethclient.Dial(cfg.Endpoints[0])
@@ -313,7 +302,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 				}
 			}
 			// Create the sender from the config struct
-			sharedSender, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
+			sharedSender, err := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
 			if err != nil {
 				return fmt.Errorf("failed to create sender: %w", err)
 			}
@@ -323,17 +312,18 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 			
 		}
-		dispatcher := sender.NewDispatcher(gen, snd, collector, cfg.MaxInFlight)
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			prewarmGen := generator.NewPrewarmGenerator(cfg, registry.Accounts())
+			accounts := registry.Accounts()
+			prewarmGen := generator.NewPrewarmGenerator(cfg, accounts)
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-			if err := dispatcher.RunPrewarm(ctx, rng, prewarmGen); err != nil {
+			if err := sender.Run(ctx, rng, prewarmGen, snd); err != nil {
 				return fmt.Errorf("failed to prewarm accounts: %w", err)
 			}
+			log.Printf("🔥 Prewarming complete! Processed %d accounts", len(accounts))
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
@@ -341,7 +331,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx, rng, gen) })
+		s.SpawnBgNamed("dispatcher", func() error { return sender.Run(ctx, rng, gen, snd) })
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown
@@ -379,21 +369,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		ramper.LogFinalStats()
 	}
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
-	if dispatcher != nil {
-		summary.ArrivalModel = string(dispatcher.ArrivalModel())
-		dstats := dispatcher.GetStats()
-		summary.Dropped = dstats.Dropped
-		summary.Failed = dstats.Failed
-		if summary.Dropped > 0 {
-			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
-		}
-		if summary.Failed > 0 {
-			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
-		}
-	}
 	// Read AFTER service.Run returns: both workers and the tracker have joined,
 	// so inflightAtShutdown is final and the conservation identity holds.
-	if inclusionTracker != nil {
+	if inclusionTracker,ok := inclusion.Get(); ok {
 		incl := inclusionTracker.Summary()
 		summary.InclusionTracked = true
 		summary.Included = incl.Included
