@@ -49,7 +49,7 @@ func (s *EVMTransferFastScenario) AttachScenario(config *config.LoadConfig, addr
 func (s *EVMTransferFastScenario) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
 	// Create transaction with value transfer
 	tx := &ethtypes.DynamicFeeTx{
-		Nonce:     scenario.Sender.GetAndIncrementNonce(),
+		Nonce:     scenario.Sender.Nonce,
 		To:        &scenario.Receiver,
 		Value:     big.NewInt(1_000_000_000_000),
 		Gas:       21000,                    // Standard gas limit for ETH transfer

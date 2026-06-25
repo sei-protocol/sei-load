@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 	mrand "math/rand/v2"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -13,14 +14,6 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils/rng"
 )
-
-// Generator defines the contract for transaction generators.
-//
-// Generators are not thread-safe. Callers must serialize all access to a given
-// Generator instance.
-type Generator interface {
-	Generate(rng *mrand.Rand) // Returns transaction and true if more available, nil/false when done
-}
 
 // scenarioInstance represents a scenario instance with its configuration
 type scenarioInstance struct {
@@ -129,20 +122,24 @@ func (g *generatorBuilder) deployAll() error {
 	return nil
 }
 
-type weightedGenerator struct {
+type Generator struct {
 	registry *types.AccountRegistry
 	scenarios []*scenarioInstance
 	counter    uint64
 }
 
+func (g *Generator) Accounts() []*types.Account {
+	return g.registry.Accounts()
+}
+
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
-func (g *weightedGenerator) PrewarmTxs(rng *mrand.Rand, cfg *config.LoadConfig, accounts []*types.Account) []*types.LoadTx {
+func (g *Generator) PrewarmTxs(rng *mrand.Rand, cfg *config.LoadConfig) []*types.LoadTx {
 	// Create EVMTransfer scenario for prewarming
 	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
 	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
 	evmScenario.Deploy(cfg, types.NewAccount())
 	var txs []*types.LoadTx
-	for _,account := range accounts {
+	for _,account := range g.registry.Accounts() {
 		// Create self-transfer transaction
 		scenario := &types.TxScenario{
 			Name:     "EVMTransfer",
@@ -155,21 +152,25 @@ func (g *weightedGenerator) PrewarmTxs(rng *mrand.Rand, cfg *config.LoadConfig, 
 }
 
 // Generate generates 1 transaction.
-func (w *weightedGenerator) Generate(rng *mrand.Rand) {
+func (w *Generator) Generate(rng *mrand.Rand) {
 	g := w.scenarios[int(w.counter) % len(w.scenarios)]
 	w.counter++
 	sender := g.Accounts.NextAccount(rng)
 	receiver := g.Accounts.NextAccount(rng)
 	// TODO: This should probably hold a lock on sender.
-	sender.PushTx(g.Scenario.Generate(rng, &types.TxScenario{
+	// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
+	// the back-pressured enqueue time, not a true schedule instant.
+	tx := g.Scenario.Generate(rng, &types.TxScenario{
 		Name:     g.Scenario.Name(),
 		Sender:   sender,
 		Receiver: receiver.Address,
-	}))
+	})
+	tx.IntendedSendTime = time.Now()
+	sender.PushTx(tx)
 }
 
 // createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
-func (g *generatorBuilder) build(rng *mrand.Rand) (*weightedGenerator, error) {
+func (g *generatorBuilder) build(rng *mrand.Rand) (*Generator, error) {
 	// Create weighted configurations
 	var gens []*scenarioInstance
 	for _, instance := range g.instances {
@@ -189,7 +190,7 @@ func (g *generatorBuilder) build(rng *mrand.Rand) (*weightedGenerator, error) {
 	rng.Shuffle(len(gens), func(i, j int) {
 		gens[i], gens[j] = gens[j], gens[i]
 	})
-	return &weightedGenerator{scenarios: gens}, nil
+	return &Generator{scenarios: gens}, nil
 }
 
 // resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
@@ -206,7 +207,7 @@ func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
 }
 
 // NewConfigBasedGenerator is a convenience method that combines all steps.
-func NewConfigBasedGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (Generator, error) {
+func NewGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (*Generator, error) {
 	b := &generatorBuilder{
 		config:    cfg,
 		registry:  types.NewAccountRegistry(),

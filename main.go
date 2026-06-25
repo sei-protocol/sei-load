@@ -27,7 +27,6 @@ import (
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
-	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
@@ -215,8 +214,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
-		registry := types.NewAccountRegistry()
-		gen, err := generator.NewConfigBasedGenerator(rng, cfg, registry)
+		gen, err := generator.NewGenerator(rng, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
@@ -297,7 +295,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
 			// don't have until funded.
 			if cfg.Funding != nil && !cfg.Settings.DryRun {
-				if err := funder.FundAccounts(ctx, cfg, registry.Accounts()); err != nil {
+				if err := funder.FundAccounts(ctx, cfg, gen.Accounts()); err != nil {
 					return fmt.Errorf("failed to fund accounts: %w", err)
 				}
 			}
@@ -316,14 +314,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			accounts := registry.Accounts()
-			prewarmGen := generator.NewPrewarmGenerator(cfg, accounts)
+			txs := gen.PrewarmTxs(rng,cfg)
 			log.Printf("✅ Prewarm generator ready")
 			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-			if err := sender.Run(ctx, rng, prewarmGen, snd); err != nil {
-				return fmt.Errorf("failed to prewarm accounts: %w", err)
+			for _,tx := range txs {
+				if err:=snd.Send(ctx, tx); err!=nil {
+					return fmt.Errorf("failed to prewarm accounts: %w", err)
+				}
 			}
-			log.Printf("🔥 Prewarming complete! Processed %d accounts", len(accounts))
+			log.Printf("🔥 Prewarming complete! Processed %d accounts", len(txs))
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
