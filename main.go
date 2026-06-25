@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/time/rate"
+	"github.com/ethereum/go-ethereum/common"
 
+	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/funder"
 	"github.com/sei-protocol/sei-load/generator"
@@ -277,6 +279,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 
 		var snd sender.TxSender
+		q := types.NewTxsQueue()
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			eth, err := ethclient.Dial(cfg.Endpoints[0])
@@ -295,7 +298,11 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
 			// don't have until funded.
 			if cfg.Funding != nil && !cfg.Settings.DryRun {
-				if err := funder.FundAccounts(ctx, cfg, gen.Accounts()); err != nil {
+				var addrs []common.Address
+				for _,a := range gen.Accounts() {
+					addrs = append(addrs,a.Address)
+				}
+				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
 					return fmt.Errorf("failed to fund accounts: %w", err)
 				}
 			}
@@ -305,22 +312,16 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 				return fmt.Errorf("failed to create sender: %w", err)
 			}
 			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
 			snd = sharedSender
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
-
 		}
+		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx,q) })
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			txs := gen.PrewarmTxs(rng,cfg)
-			log.Printf("✅ Prewarm generator ready")
-			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-			for _,tx := range txs {
-				if err:=snd.Send(ctx, tx); err!=nil {
-					return fmt.Errorf("failed to prewarm accounts: %w", err)
-				}
+			if err:=gen.Prewarm(ctx, rng, cfg, q); err!=nil {
+				return fmt.Errorf("gen.Prewarm(): %w",err)
 			}
 			log.Printf("🔥 Prewarming complete! Processed %d accounts", len(txs))
 		}
@@ -330,7 +331,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return sender.Run(ctx, rng, gen, snd) })
+		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, q) })
+
+		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx, q) })
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown

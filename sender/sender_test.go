@@ -113,7 +113,8 @@ func TestShardDistributionVerification(t *testing.T) {
 	}
 
 	mockTx := &types.LoadTx{
-		EthTx: ethtypes.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1000000000), nil),
+		Sender: common.HexToAddress("0x1234567890123456789012345678901234567890"),
+		EthTx:  ethtypes.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1000000000), nil),
 		Scenario: &types.TxScenario{
 			Name:   "TestScenario",
 			Sender: mockAccount,

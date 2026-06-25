@@ -32,7 +32,7 @@ func (s *EVMTransferFastScenario) Name() string {
 }
 
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
-func (s *EVMTransferFastScenario) DeployScenario(config *config.LoadConfig, deployer *types2.Account) common.Address {
+func (s *EVMTransferFastScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
 	// No deployment needed for simple ETH transfers
 	// Return zero address to indicate no contract deployment
 	return common.Address{}
@@ -49,7 +49,7 @@ func (s *EVMTransferFastScenario) AttachScenario(config *config.LoadConfig, addr
 func (s *EVMTransferFastScenario) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
 	// Create transaction with value transfer
 	tx := &ethtypes.DynamicFeeTx{
-		Nonce:     scenario.Sender.Nonce,
+		Nonce:     scenario.Nonce,
 		To:        &scenario.Receiver,
 		Value:     big.NewInt(1_000_000_000_000),
 		Gas:       21000,                    // Standard gas limit for ETH transfer

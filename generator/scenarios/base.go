@@ -24,9 +24,9 @@ var bigOne = big.NewInt(1)
 // TxGenerator defines the interface for generating transactions.
 type TxGenerator interface {
 	Name() string
-	Generate(rng *mrand.Rand, scenario *types.TxScenario) *types.LoadTx
+	Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 	Attach(config *config.LoadConfig, address common.Address) error
-	Deploy(config *config.LoadConfig, deployer *types.Account) common.Address
+	Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
 }
 
 // ScenarioDeployer defines the interface for scenario-specific deployment logic
@@ -35,7 +35,7 @@ type ScenarioDeployer interface {
 	// DeployScenario handles any setup required for the scenario
 	// For contracts: deploys the contract and returns its address
 	// For non-contracts: performs any initialization and returns zero address
-	DeployScenario(config *config.LoadConfig, deployer *types.Account) common.Address
+	DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
 
 	// AttachScenario connects to an existing contract.
 	AttachScenario(config *config.LoadConfig, address common.Address) common.Address
@@ -84,9 +84,9 @@ func NewScenarioBase(deployer ScenarioDeployer, cfg config.Scenario) *ScenarioBa
 }
 
 // Deploy handles the common deployment flow
-func (s *ScenarioBase) Deploy(config *config.LoadConfig, deployer *types.Account) common.Address {
+func (s *ScenarioBase) Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
 	s.config = config
-	s.address = s.deployer.DeployScenario(config, deployer)
+	s.address = s.deployer.DeployScenario(config, deployer, nonce)
 	s.deployed = true
 	return s.address
 }
@@ -100,18 +100,12 @@ func (s *ScenarioBase) Attach(config *config.LoadConfig, address common.Address)
 }
 
 // Generate handles the common transaction generation flow
-func (s *ScenarioBase) Generate(rng *mrand.Rand, scenario *types.TxScenario) *types.LoadTx {
+func (s *ScenarioBase) Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	if !s.deployed {
-		panic("Scenario not deployed/initialized")
+		return nil, fmt.Errorf("Scenario not deployed/initialized")
 	}
-
 	// Create transaction using scenario-specific logic
-	tx, err := s.deployer.CreateTransaction(rng, s.config, scenario)
-	if err != nil {
-		panic("Failed to create transaction: " + err.Error())
-	}
-
-	return types.CreateTxFromEthTx(tx, scenario)
+	return s.deployer.CreateTransaction(rng, s.config, scenario)
 }
 
 // GetConfig returns the configuration
@@ -132,9 +126,7 @@ type ContractScenarioBase[T any] struct {
 
 // NewContractScenarioBase creates a new base scenario with the given contract deployer
 func NewContractScenarioBase[T any](deployer ContractDeployer[T], cfg config.Scenario) *ContractScenarioBase[T] {
-	base := &ContractScenarioBase[T]{
-		deployer: deployer,
-	}
+	base := &ContractScenarioBase[T]{deployer: deployer}
 	base.ScenarioBase = NewScenarioBase(base, cfg)
 	return base
 }
@@ -166,14 +158,14 @@ func (c *ContractScenarioBase[T]) AttachScenario(config *config.LoadConfig, addr
 }
 
 // DeployScenario implements ScenarioDeployer interface for contract scenarios
-func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, deployer *types.Account) common.Address {
+func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
 	client, err := dial(config)
 	if err != nil {
 		panic("Failed to connect to Ethereum client: " + err.Error())
 	}
 
 	// Create deployment options
-	auth, err := utils.CreateDeploymentOpts(config.GetChainID(), client, deployer)
+	auth, err := utils.CreateDeploymentOpts(config.GetChainID(), client, deployer, nonce)
 	if err != nil {
 		panic("Failed to create deployment options: " + err.Error())
 	}

@@ -10,8 +10,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/require"
+	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 func TestNewAccount(t *testing.T) {
@@ -278,6 +278,7 @@ func TestCreateTxFromEthTx(t *testing.T) {
 	// Verify LoadTx structure
 	require.NotNil(t, loadTx)
 	require.Equal(t, tx, loadTx.EthTx)
+	require.Equal(t, scenario.Sender.Address, loadTx.Sender)
 	require.Equal(t, scenario, loadTx.Scenario)
 	require.NotEmpty(t, loadTx.JSONRPCPayload)
 	require.NotEmpty(t, loadTx.Payload)

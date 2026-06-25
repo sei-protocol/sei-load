@@ -1,11 +1,13 @@
 package generator
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
-	"time"
+	"maps"
 	mrand "math/rand/v2"
+	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -26,9 +28,8 @@ type scenarioInstance struct {
 // generatorBuilder manages scenario creation and deployment from config
 type generatorBuilder struct {
 	config         *config.LoadConfig
-	registry       *types.AccountRegistry
 	instances      []*scenarioInstance
-	deployer       *types.Account
+	deployer       types.Account
 	sharedAccounts *types.AccountPool // Shared account pool when using top-level config
 }
 
@@ -36,10 +37,10 @@ type generatorBuilder struct {
 // Each scenario entry in config creates a separate instance, even if same name
 func (g *generatorBuilder) createScenarios() error {
 	if g.config.Accounts != nil {
-		g.sharedAccounts = g.registry.NewPool(&types.AccountConfig{
-			InitialSize:    g.config.Accounts.Accounts,
-			NewAccountRate: g.config.Accounts.NewAccountRate,
-		})
+		g.sharedAccounts = types.NewAccountPool(
+			g.config.Accounts.Accounts,
+			g.config.Accounts.NewAccountRate,
+		)
 	}
 
 	for i, scenarioCfg := range g.config.Scenarios {
@@ -48,12 +49,9 @@ func (g *generatorBuilder) createScenarios() error {
 
 		// Determine account pool to use
 		var accountPool *types.AccountPool
-		if accounts := scenarioCfg.Accounts; accounts != nil {
+		if cfg := scenarioCfg.Accounts; cfg != nil {
 			// Scenario defines its own account settings - create separate pool
-			accountPool = g.registry.NewPool(&types.AccountConfig{
-				InitialSize:    accounts.Accounts,
-				NewAccountRate: accounts.NewAccountRate,
-			})
+			accountPool = types.NewAccountPool(cfg.Accounts, cfg.NewAccountRate)
 		} else if g.sharedAccounts != nil {
 			// Use shared account pool from top-level config
 			accountPool = g.sharedAccounts
@@ -93,10 +91,9 @@ func (g *generatorBuilder) createScenarios() error {
 }
 
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).
-func (g *generatorBuilder) mockDeployAll() error {
+func (g *generatorBuilder) mockDeployAll(deployer common.Address) error {
 	for _, instance := range g.instances {
-		addr := types.NewAccount().Address
-		if err := instance.Scenario.Attach(g.config, addr); err != nil {
+		if err := instance.Scenario.Attach(g.config, deployer); err != nil {
 			return err
 		}
 	}
@@ -105,16 +102,17 @@ func (g *generatorBuilder) mockDeployAll() error {
 
 // DeployAll deploys all scenario instances that require deployment
 func (g *generatorBuilder) deployAll() error {
+	deployer := types.NewAccount(false)
 	if g.config.MockDeploy {
-		return g.mockDeployAll()
+		return g.mockDeployAll(deployer.Address)
 	}
 
 	// Deploy sequentially to ensure proper nonce management
-	for _, instance := range g.instances {
+	for i, instance := range g.instances {
 		// Deploy the scenario
 		log.Printf("Deploying scenario %s", instance.Name)
-		address := instance.Scenario.Deploy(g.config, g.deployer)
-		if address!=(common.Address{}) {
+		address := instance.Scenario.Deploy(g.config, deployer, uint64(i))
+		if address != (common.Address{}) {
 			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
 	}
@@ -122,65 +120,73 @@ func (g *generatorBuilder) deployAll() error {
 	return nil
 }
 
-type Generator struct {
-	registry *types.AccountRegistry
-	scenarios []*scenarioInstance
-	counter    uint64
-}
+type Generator struct {scenarios []*scenarioInstance}
 
-func (g *Generator) Accounts() []*types.Account {
-	return g.registry.Accounts()
+func (g *Generator) Accounts() []types.Account {
+	accs := map[common.Address]types.Account{}
+	for _, s := range g.scenarios {
+		for _, a := range s.Accounts.Accounts() {
+			accs[a.Address] = a
+		}
+	}
+	return slices.Collect(maps.Values(accs))
 }
 
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
-func (g *Generator) PrewarmTxs(rng *mrand.Rand, cfg *config.LoadConfig) []*types.LoadTx {
+func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, q *types.TxsQueue) error {
 	// Create EVMTransfer scenario for prewarming
 	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
 	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
-	evmScenario.Deploy(cfg, types.NewAccount())
-	var txs []*types.LoadTx
-	for _,account := range g.registry.Accounts() {
+	evmScenario.Deploy(cfg, types.NewAccount(false), 0)
+	for _, account := range g.Accounts() {
 		// Create self-transfer transaction
 		scenario := &types.TxScenario{
 			Name:     "EVMTransfer",
+			Nonce:    q.Nonce(account.Address),
 			Sender:   account,
 			Receiver: account.Address, // Send to self
 		}
-		txs = append(txs,evmScenario.Generate(rng, scenario))
+		tx,err := evmScenario.Generate(rng, scenario)
+		if err!=nil { return fmt.Errorf("evmScenario.Generate(): %w",err) }
+		if err := q.Push(ctx,scenario,tx); err!=nil { return err }
 	}
-	return txs
+	return q.WaitUntilEmpty(ctx)
 }
 
 // Generate generates 1 transaction.
-func (w *Generator) Generate(rng *mrand.Rand) {
-	g := w.scenarios[int(w.counter) % len(w.scenarios)]
-	w.counter++
-	sender := g.Accounts.NextAccount(rng)
-	receiver := g.Accounts.NextAccount(rng)
-	// TODO: This should probably hold a lock on sender.
-	// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
-	// the back-pressured enqueue time, not a true schedule instant.
-	tx := g.Scenario.Generate(rng, &types.TxScenario{
-		Name:     g.Scenario.Name(),
-		Sender:   sender,
-		Receiver: receiver.Address,
-	})
-	tx.IntendedSendTime = time.Now()
-	sender.PushTx(tx)
+func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, q *types.TxsQueue) error {
+	counter := 0
+	for {
+		g := w.scenarios[int(counter)%len(w.scenarios)]
+		counter++
+		sender := g.Accounts.NextAccount(rng)
+		receiver := g.Accounts.NextAccount(rng)
+		// TODO: This should probably hold a lock on sender.
+		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
+		// the back-pressured enqueue time, not a true schedule instant.
+		scenario := &types.TxScenario{
+			Name:     g.Scenario.Name(),
+			Sender:   sender,
+			Receiver: receiver.Address,
+		}
+		tx,err := g.Scenario.Generate(rng, scenario)
+		if err!=nil { return fmt.Errorf("g.Scenario.Generate(): %w",err) }
+		if err:=q.Push(ctx,scenario,tx); err!=nil { return err }
+	}
 }
 
 // createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
-func (g *generatorBuilder) build(rng *mrand.Rand) (*Generator, error) {
+func (b *generatorBuilder) build(rng *mrand.Rand) (*Generator, error) {
 	// Create weighted configurations
 	var gens []*scenarioInstance
-	for _, instance := range g.instances {
+	for _, instance := range b.instances {
 		if instance.Weight == 0 {
 			log.Printf("Skipping scenario %s with weight 0", instance.Name)
 			continue
 		}
 		// Create a scenarioGenerator for this scenario instance
 		for range instance.Weight {
-			gens = append(gens,instance)
+			gens = append(gens, instance)
 		}
 	}
 
@@ -210,9 +216,7 @@ func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
 func NewGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (*Generator, error) {
 	b := &generatorBuilder{
 		config:    cfg,
-		registry:  types.NewAccountRegistry(),
 		instances: make([]*scenarioInstance, 0),
-		deployer:  types.NewAccount(),
 	}
 
 	// Step 1: Create scenarios

@@ -12,32 +12,24 @@ import (
 type Account struct {
 	Address common.Address
 	PrivKey *ecdsa.PrivateKey
-	Nonce  uint64
-	Txs []*LoadTx
+	Tracked bool
 }
 
 // NewAccount generates new account.
-func NewAccount() *Account {
+func NewAccount(tracked bool) Account {
 	privateKey := utils.OrPanic1(crypto.GenerateKey())
-	return &Account{
+	return Account{
 		Address: crypto.PubkeyToAddress(privateKey.PublicKey),
 		PrivKey: privateKey,
+		Tracked: tracked,
 	}
-}
-
-func (s *Account) PushTx(tx *LoadTx) {
-	if tx.EthTx.Nonce()!=s.Nonce {
-		return
-	}
-	s.Nonce += 1
-	s.Txs = append(s.Txs,tx)
 }
 
 // GenerateAccounts generates random accounts.
-func GenerateAccounts(n int) []*Account {
-	result := make([]*Account, n)
+func GenerateAccounts(n int, tracked bool) []Account {
+	result := make([]Account, n)
 	for i := range result {
-		result[i] = NewAccount()
+		result[i] = NewAccount(tracked)
 	}
 	return result
 }
