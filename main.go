@@ -278,7 +278,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		var snd sender.TxSender
 		q := types.NewTxsQueue()
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
@@ -293,7 +292,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			numBlocksToWrite := cfg.Settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
+			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
+			s.SpawnBgNamed("writer", func() error { return writer.Run(ctx,q) })
 		} else {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
 			// don't have until funded.
@@ -312,10 +312,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 				return fmt.Errorf("failed to create sender: %w", err)
 			}
 			// Start the sender (starts all workers)
-			snd = sharedSender
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx,q) })
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
-		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx,q) })
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {

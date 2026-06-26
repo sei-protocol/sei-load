@@ -25,6 +25,10 @@ func NewTxsQueue() *TxsQueue {
 	return &TxsQueue{byAddr: map[common.Address]*accQueue{}}
 }
 
+func (q *TxsQueue) Pop(ctx context.Context) (tx *LoadTx, ack func(), err error) {
+	panic("unimplemented")
+}
+
 func (q *TxsQueue) Push(ctx context.Context, scenario *TxScenario, tx *ethtypes.Transaction) error {
 	// TODO: make it respect Settings.MaxInFlight
 	// TODO: make it blocking
