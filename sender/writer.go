@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // implements `Send`
@@ -55,7 +56,7 @@ func (w *TxsWriter) Run(ctx context.Context, q *types.TxsQueue) error {
 		// add to buffer
 		w.txBuffer = append(w.txBuffer, tx)
 		w.bufferGas += tx.EthTx.Gas()
-		ack()
+		ack(utils.None[uint64]())
 	}
 }
 

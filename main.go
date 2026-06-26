@@ -278,7 +278,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		q := types.NewTxsQueue()
+		// TODO: MaxInFlight should have a sensible default.
+		q := types.NewTxsQueue(cfg.Settings.MaxInFlight)
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			eth, err := ethclient.Dial(cfg.Endpoints[0])

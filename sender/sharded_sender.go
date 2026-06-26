@@ -59,18 +59,20 @@ func (ss *ShardedSender) Run(ctx context.Context, q *types.TxsQueue) error {
 				return err
 			}
 			s.Spawn(func() error {
-				defer ack()
 				if ss.cfg.Settings.DryRun {
 					// In dry-run mode, simulate processing time and mark as successful
 					// Use very minimal delay to avoid channel overflow
-					return utils.Sleep(ctx, 10*time.Microsecond) // Much faster simulation
+					defer ack(utils.None[uint64]())
+					return utils.Sleep(ctx, 10*time.Millisecond) // Much faster simulation
 				}
 				if err := client.Send(ctx, tx); err != nil {
+					// TODO: correct nonce
 					return err
 				}
 				if inclusion, ok := ss.inclusion.Get(); ok {
 					inclusion.Register(tx)
 				}
+				ack(utils.None[uint64]())
 				return nil
 			})
 		}
