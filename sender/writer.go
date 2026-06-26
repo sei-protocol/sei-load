@@ -41,8 +41,8 @@ func NewTxsWriter(gasPerBlock uint64, txsDir string, startHeight uint64, numBloc
 // Send writes the transaction to the writer
 func (w *TxsWriter) Run(ctx context.Context, q *types.TxsQueue) error {
 	for {
-		tx,err := q.Pop(ctx)
-		if err!=nil {
+		tx, ack, err := q.Pop(ctx)
+		if err != nil {
 			return err
 		}
 		// if bwe would exceed gasPerBlock, flush
@@ -55,7 +55,7 @@ func (w *TxsWriter) Run(ctx context.Context, q *types.TxsQueue) error {
 		// add to buffer
 		w.txBuffer = append(w.txBuffer, tx)
 		w.bufferGas += tx.EthTx.Gas()
-		return nil
+		ack()
 	}
 }
 
@@ -82,8 +82,10 @@ func (w *TxsWriter) Flush() error {
 		TxPayloads: make([][]byte, 0),
 	}
 	for _, tx := range w.txBuffer {
-		payload,err := tx.EthTx.MarshalBinary()
-		if err!=nil { return fmt.Errorf("tx.EthTx.MarshalBinary(): %w",err) }
+		payload, err := tx.EthTx.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("tx.EthTx.MarshalBinary(): %w", err)
+		}
 		txData.TxPayloads = append(txData.TxPayloads, payload)
 	}
 

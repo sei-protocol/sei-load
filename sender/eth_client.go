@@ -10,13 +10,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"github.com/sei-protocol/sei-load/stats"
 )
 
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
@@ -28,26 +28,26 @@ type ethClientConfig struct {
 }
 
 type ethClient struct {
-	cfg  *ethClientConfig
+	cfg     *ethClientConfig
 	clients []*ethclient.Client
 }
 
 func (c *ethClient) Close() {
-	for _,eth := range c.clients {
+	for _, eth := range c.clients {
 		eth.Close()
 	}
 }
 
-func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient,err error) {
+func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient, err error) {
 	var clients []*ethclient.Client
 	defer func() {
-		if err!=nil {
-			for _,eth := range clients {
+		if err != nil {
+			for _, eth := range clients {
 				eth.Close()
 			}
 		}
 	}()
-	for _,endpoint := range cfg.Endpoints {
+	for _, endpoint := range cfg.Endpoints {
 		u, err := url.Parse(endpoint)
 		if err != nil {
 			return nil, fmt.Errorf("parse endpoint %q: %w", endpoint, err)
@@ -63,7 +63,7 @@ func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient,err e
 		}
 		clients = append(clients, ethclient.NewClient(rpcClient))
 	}
-	return &ethClient{cfg:cfg,clients:clients},nil
+	return &ethClient{cfg: cfg, clients: clients}, nil
 }
 
 // newHttpClient returns an otelhttp-wrapped client: injects traceparent on
@@ -97,12 +97,12 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 		attribute.Int("seiload.worker_id", id),
 		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
-	defer span.End()	
+	defer span.End()
 	start := time.Now()
 	// This goroutine solely owns tx between dequeue and the sentTxs hand-off,
 	// so stamping the actual send-attempt time here is race-free (see LoadTx).
 	tx.AttemptedSendTime = start
-	err := c.clients[id].SendTransaction(ctx, tx.EthTx)	
+	err := c.clients[id].SendTransaction(ctx, tx.EthTx)
 	// Record inside the span ctx so exemplars link to the trace.
 	sendLatency.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(

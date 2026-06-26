@@ -2,11 +2,11 @@ package types
 
 import (
 	"context"
-	"time"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	mrand "math/rand/v2"
 	"sync"
+	"time"
 )
 
 type accQueue struct {
@@ -33,7 +33,7 @@ func (q *TxsQueue) Push(ctx context.Context, scenario *TxScenario, tx *ethtypes.
 	// TODO: make it respect Settings.MaxInFlight
 	// TODO: make it blocking
 	sender := scenario.Sender
-	ltx := &LoadTx{EthTx:tx,IntendedSendTime:time.Now(),Scenario:scenario}
+	ltx := &LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
 	if sender.Tracked {
 		aq, ok := q.byAddr[sender.Address]
 		if !ok {

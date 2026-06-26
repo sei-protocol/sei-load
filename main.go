@@ -14,21 +14,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/time/rate"
-	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/funder"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
@@ -293,36 +293,33 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
 			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
-			s.SpawnBgNamed("writer", func() error { return writer.Run(ctx,q) })
+			s.SpawnBgNamed("writer", func() error { return writer.Run(ctx, q) })
 		} else {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
 			// don't have until funded.
 			if cfg.Funding != nil && !cfg.Settings.DryRun {
 				var addrs []common.Address
-				for _,a := range gen.Accounts() {
-					addrs = append(addrs,a.Address)
+				for _, a := range gen.Accounts() {
+					addrs = append(addrs, a.Address)
 				}
 				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
 					return fmt.Errorf("failed to fund accounts: %w", err)
 				}
 			}
 			// Create the sender from the config struct
-			sharedSender, err := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
-			if err != nil {
-				return fmt.Errorf("failed to create sender: %w", err)
-			}
+			sharedSender := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
 			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx,q) })
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx, q) })
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			if err:=gen.Prewarm(ctx, rng, cfg, q); err!=nil {
-				return fmt.Errorf("gen.Prewarm(): %w",err)
+			if err := gen.Prewarm(ctx, rng, cfg, q); err != nil {
+				return fmt.Errorf("gen.Prewarm(): %w", err)
 			}
-			log.Printf("🔥 Prewarming complete! Processed %d accounts", len(txs))
+			log.Printf("🔥 Prewarming complete!")
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
@@ -332,7 +329,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Start dispatcher for main load test
 		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, q) })
 
-		s.SpawnBgNamed("sender", func() error { return snd.Run(ctx, q) })
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown

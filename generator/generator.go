@@ -120,7 +120,7 @@ func (g *generatorBuilder) deployAll() error {
 	return nil
 }
 
-type Generator struct {scenarios []*scenarioInstance}
+type Generator struct{ scenarios []*scenarioInstance }
 
 func (g *Generator) Accounts() []types.Account {
 	accs := map[common.Address]types.Account{}
@@ -146,9 +146,13 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 			Sender:   account,
 			Receiver: account.Address, // Send to self
 		}
-		tx,err := evmScenario.Generate(rng, scenario)
-		if err!=nil { return fmt.Errorf("evmScenario.Generate(): %w",err) }
-		if err := q.Push(ctx,scenario,tx); err!=nil { return err }
+		tx, err := evmScenario.Generate(rng, scenario)
+		if err != nil {
+			return fmt.Errorf("evmScenario.Generate(): %w", err)
+		}
+		if err := q.Push(ctx, scenario, tx); err != nil {
+			return err
+		}
 	}
 	return q.WaitUntilEmpty(ctx)
 }
@@ -169,9 +173,13 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, q *types.TxsQueue)
 			Sender:   sender,
 			Receiver: receiver.Address,
 		}
-		tx,err := g.Scenario.Generate(rng, scenario)
-		if err!=nil { return fmt.Errorf("g.Scenario.Generate(): %w",err) }
-		if err:=q.Push(ctx,scenario,tx); err!=nil { return err }
+		tx, err := g.Scenario.Generate(rng, scenario)
+		if err != nil {
+			return fmt.Errorf("g.Scenario.Generate(): %w", err)
+		}
+		if err := q.Push(ctx, scenario, tx); err != nil {
+			return err
+		}
 	}
 }
 
