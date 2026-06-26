@@ -18,6 +18,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // JSONRPCRequest represents a captured JSON-RPC request
@@ -112,7 +113,8 @@ func TestShardDistributionVerification(t *testing.T) {
 	}
 
 	mockTx := &types.LoadTx{
-		EthTx: ethtypes.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1000000000), nil),
+		Sender: common.HexToAddress("0x1234567890123456789012345678901234567890"),
+		EthTx:  ethtypes.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1000000000), nil),
 		Scenario: &types.TxScenario{
 			Name:   "TestScenario",
 			Sender: mockAccount,
@@ -149,12 +151,14 @@ func TestShardDistribution(t *testing.T) {
 	}
 
 	// Create generator
-	gen, err := generator.NewConfigBasedGenerator(cfg)
+	rngSource := generator.ResolveSeed(cfg)
+	gen, err := generator.NewConfigBasedGenerator(rngSource.Rand(testrng.StreamWeightedShuffle), cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
+	rng := testrng.NewSource(1).Rand("sender:shards:test")
 
 	// Test shard calculation without creating actual sender
 	for i := 0; i < 10; i++ {
-		tx, ok := gen.Generate()
+		tx, ok := gen.Generate(rng)
 		require.True(t, ok)
 		require.NotNil(t, tx)
 

@@ -40,7 +40,7 @@ type Settings struct {
 	ArrivalModel string `json:"arrivalModel,omitempty"`
 	// MaxInFlight bounds concurrent in-flight sends in the open-loop model;
 	// txs that would exceed it at their scheduled instant are dropped and
-	// counted rather than throttling the arrival clock. Ignored in closed-loop.
+	// counted rather than throttling the arrival clock.
 	MaxInFlight int `json:"maxInFlight,omitempty"`
 }
 

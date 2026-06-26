@@ -8,6 +8,8 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
@@ -35,12 +37,13 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 		},
 	}
 
-	gen, err := generator.NewConfigBasedGenerator(cfg)
+	rngSource := generator.ResolveSeed(cfg)
+	gen, err := generator.NewConfigBasedGenerator(rngSource.Rand(testrng.StreamWeightedShuffle), cfg, types.NewAccountRegistry())
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 
 	totalTxs := 100
-	txs := gen.GenerateN(totalTxs)
+	txs := generator.GenerateN(rngSource.Rand("generator:test:draws"), gen, totalTxs)
 	require.Len(t, txs, totalTxs)
 
 	// Count occurrences per scenario

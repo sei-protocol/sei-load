@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -30,7 +31,7 @@ func (s *EVMTransferNoopScenario) Name() string {
 }
 
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
-func (s *EVMTransferNoopScenario) DeployScenario(config *config.LoadConfig, deployer *types2.Account) common.Address {
+func (s *EVMTransferNoopScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
 	// No deployment needed for simple ETH transfers
 	// Return zero address to indicate no contract deployment
 	return common.Address{}
@@ -44,10 +45,10 @@ func (s *EVMTransferNoopScenario) AttachScenario(config *config.LoadConfig, addr
 }
 
 // CreateTransaction implements ScenarioDeployer interface - creates ETH transfer transaction
-func (s *EVMTransferNoopScenario) CreateTransaction(config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
+func (s *EVMTransferNoopScenario) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types2.TxScenario) (*ethtypes.Transaction, error) {
 	// Create transaction with value transfer
 	tx := &ethtypes.DynamicFeeTx{
-		Nonce:     scenario.Sender.GetAndIncrementNonce(),
+		Nonce:     scenario.Nonce,
 		To:        &scenario.Sender.Address,
 		Value:     big.NewInt(0),
 		Gas:       21000,                   // Standard gas limit for ETH transfer
@@ -58,20 +59,20 @@ func (s *EVMTransferNoopScenario) CreateTransaction(config *config.LoadConfig, s
 
 	if s.scenarioConfig.GasPicker != nil {
 		var err error
-		tx.Gas, err = s.scenarioConfig.GasPicker.GenerateGas()
+		tx.Gas, err = s.scenarioConfig.GasPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if s.scenarioConfig.GasTipCapPicker != nil {
-		gasTipCap, err := s.scenarioConfig.GasTipCapPicker.GenerateGas()
+		gasTipCap, err := s.scenarioConfig.GasTipCapPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}
 		tx.GasTipCap = big.NewInt(int64(gasTipCap))
 	}
 	if s.scenarioConfig.GasFeeCapPicker != nil {
-		gasFeeCap, err := s.scenarioConfig.GasFeeCapPicker.GenerateGas()
+		gasFeeCap, err := s.scenarioConfig.GasFeeCapPicker.GenerateGas(rng)
 		if err != nil {
 			return nil, err
 		}

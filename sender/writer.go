@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 // implements `Send`
@@ -39,18 +40,24 @@ func NewTxsWriter(gasPerBlock uint64, txsDir string, startHeight uint64, numBloc
 }
 
 // Send writes the transaction to the writer
-func (w *TxsWriter) Send(ctx context.Context, tx *types.LoadTx) error {
-	// if bwe would exceed gasPerBlock, flush
-	if w.bufferGas+tx.EthTx.Gas() > w.gasPerBlock {
-		if err := w.Flush(); err != nil {
+func (w *TxsWriter) Run(ctx context.Context, q *types.TxsQueue) error {
+	for {
+		tx, ack, err := q.Pop(ctx)
+		if err != nil {
 			return err
 		}
-	}
+		// if bwe would exceed gasPerBlock, flush
+		if w.bufferGas+tx.EthTx.Gas() > w.gasPerBlock {
+			if err := w.Flush(); err != nil {
+				return err
+			}
+		}
 
-	// add to buffer
-	w.txBuffer = append(w.txBuffer, tx)
-	w.bufferGas += tx.EthTx.Gas()
-	return nil
+		// add to buffer
+		w.txBuffer = append(w.txBuffer, tx)
+		w.bufferGas += tx.EthTx.Gas()
+		ack(utils.None[uint64]())
+	}
 }
 
 type TxWriteData struct {
@@ -76,7 +83,11 @@ func (w *TxsWriter) Flush() error {
 		TxPayloads: make([][]byte, 0),
 	}
 	for _, tx := range w.txBuffer {
-		txData.TxPayloads = append(txData.TxPayloads, tx.Payload)
+		payload, err := tx.EthTx.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("tx.EthTx.MarshalBinary(): %w", err)
+		}
+		txData.TxPayloads = append(txData.TxPayloads, payload)
 	}
 
 	txDataJSON, err := json.Marshal(txData)

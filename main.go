@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -27,6 +28,7 @@ import (
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
+	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
@@ -208,13 +210,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
+	rng := generator.ResolveSeed(cfg).Rand("")
 	var ramper *sender.Ramper
-	var dispatcher *sender.Dispatcher
-	var inclusionTracker *stats.InclusionTracker
+	inclusion := utils.None[*stats.InclusionTracker]()
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
-		gen, err := generator.NewConfigBasedGenerator(cfg)
+		gen, err := generator.NewGenerator(rng, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
@@ -262,10 +264,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// tracker (the lossy per-tx receipt path is retired).
 		// Not wired under --dry-run: simulated sends never hit the chain, so they
 		// would all reap as expired and pollute the inclusion stats.
-		inclusion := utils.None[*stats.InclusionTracker]()
 		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
 			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
-			inclusionTracker = stats.NewInclusionTracker(
+			inclusionTracker := stats.NewInclusionTracker(
 				cfg.SeiChainID,
 				reapAfter,
 				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
@@ -277,36 +278,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		// Open-loop owns the arrival clock in the scheduler, so the sender must
-		// not add a second finite gate. Prewarm and the scheduler still use the
-		// real shared limiter.
-		senderLimiter := sharedLimiter
-		if cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop && cfg.Settings.TxsDir == "" {
-			senderLimiter = rate.NewLimiter(rate.Inf, 1)
-		}
-
-		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
-		if err != nil {
-			return fmt.Errorf("failed to create sender: %w", err)
-		}
-
-		// Fund the pool before prewarm/dispatch — both spend gas the accounts
-		// don't have until funded.
-		if cfg.Funding != nil && !cfg.Settings.DryRun {
-			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
-				return fmt.Errorf("failed to fund accounts: %w", err)
-			}
-		}
-
-		// Create dispatcher
+		// TODO: MaxInFlight should have a sensible default.
+		q := types.NewTxsQueue(cfg.Settings.MaxInFlight)
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
-			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
+			eth, err := ethclient.Dial(cfg.Endpoints[0])
 			if err != nil {
 				return fmt.Errorf("failed to create ethclient: %w", err)
 			}
-			latestHeight, err := ethclient.BlockNumber(ctx)
+			latestHeight, err := eth.BlockNumber(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get latest height: %w", err)
 			}
@@ -314,48 +294,33 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
 			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
-			dispatcher = sender.NewDispatcher(gen, writer)
+			s.SpawnBgNamed("writer", func() error { return writer.Run(ctx, q) })
 		} else {
-			dispatcher = sender.NewDispatcher(gen, snd)
-		}
-
-		// Set statistics collector for dispatcher
-		dispatcher.SetStatsCollector(collector)
-
-		// Open-loop drives arrivals from the scheduler (see sender doc); the
-		// txs-writer path has no arrival clock, so it stays closed-loop.
-		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
-		switch {
-		case openLoop && cfg.Settings.TxsDir == "":
-			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
-			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
-		case openLoop:
-			// open_loop was requested but the txs-writer path has no arrival clock,
-			// so the run falls back to closed_loop. Surface the downgrade.
-			log.Printf("📤 Arrival model: closed_loop (txs-writer path; --arrival-model open_loop ignored)")
-		default:
-			log.Printf("📤 Arrival model: closed_loop")
+			// Fund the pool before prewarm/dispatch — both spend gas the accounts
+			// don't have until funded.
+			if cfg.Funding != nil && !cfg.Settings.DryRun {
+				var addrs []common.Address
+				for _, a := range gen.Accounts() {
+					addrs = append(addrs, a.Address)
+				}
+				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
+					return fmt.Errorf("failed to fund accounts: %w", err)
+				}
+			}
+			// Create the sender from the config struct
+			sharedSender := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
+			// Start the sender (starts all workers)
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx, q) })
+			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
-			dispatcher.SetPrewarmGenerator(prewarmGen)
-			log.Printf("✅ Prewarm generator ready")
-			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-		}
-
-		if cfg.Settings.TxsDir == "" {
-			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
-		}
-		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
-		if cfg.Settings.Prewarm {
-			if err := dispatcher.Prewarm(ctx); err != nil {
-				return fmt.Errorf("failed to prewarm accounts: %w", err)
+			if err := gen.Prewarm(ctx, rng, cfg, q); err != nil {
+				return fmt.Errorf("gen.Prewarm(): %w", err)
 			}
+			log.Printf("🔥 Prewarming complete!")
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
@@ -363,7 +328,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx) })
+		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, q) })
+
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown
@@ -401,21 +367,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		ramper.LogFinalStats()
 	}
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
-	if dispatcher != nil {
-		summary.ArrivalModel = string(dispatcher.ArrivalModel())
-		dstats := dispatcher.GetStats()
-		summary.Dropped = dstats.Dropped
-		summary.Failed = dstats.Failed
-		if summary.Dropped > 0 {
-			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
-		}
-		if summary.Failed > 0 {
-			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
-		}
-	}
 	// Read AFTER service.Run returns: both workers and the tracker have joined,
 	// so inflightAtShutdown is final and the conservation identity holds.
-	if inclusionTracker != nil {
+	if inclusionTracker, ok := inclusion.Get(); ok {
 		incl := inclusionTracker.Summary()
 		summary.InclusionTracked = true
 		summary.Included = incl.Included

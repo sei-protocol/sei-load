@@ -96,9 +96,7 @@ func NewSource(seed uint64) *Source {
 // replayed after the fact by re-running with the returned seed.
 func NewRandomSource() (*Source, uint64) {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("rng: crypto/rand failed: " + err.Error())
-	}
+	rand.Read(b[:]) // documented to never return an error
 	seed := binary.LittleEndian.Uint64(b[:])
 	return NewSource(seed), seed
 }
@@ -113,6 +111,12 @@ func (s *Source) Seed() uint64 { return s.seed }
 // interleaving — and thus the per-call ordering — is non-deterministic.
 func (s *Source) Stream(streamID string) *Stream {
 	return &Stream{rand: mrand.New(substream(s.seed, streamID))}
+}
+
+// Rand returns the sub-stream for a logical consumer named streamID as a
+// plain math/rand/v2 Rand. Callers are responsible for serializing access.
+func (s *Source) Rand(streamID string) *mrand.Rand {
+	return mrand.New(substream(s.seed, streamID))
 }
 
 // Stream is a single consumer's reproducible sub-stream. It is safe for

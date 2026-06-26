@@ -6,5 +6,6 @@ import (
 )
 
 type TxSender interface {
+	Run(ctx context.Context, q *types.TxsQueue) error
 	Send(ctx context.Context, tx *types.LoadTx) error
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator/bindings"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // rmwSelector is the 4-byte function selector for StorageRWv1.rmw(uint256,bytes).
@@ -46,7 +47,7 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 		Sender: sender,
 	}
 
-	loadTx := gen.Generate(txScenario)
+	loadTx := gen.Generate(testrng.NewSource(1).Rand("generator:storagerw:test"), txScenario)
 	require.NotNil(t, loadTx)
 	require.NotNil(t, loadTx.EthTx)
 

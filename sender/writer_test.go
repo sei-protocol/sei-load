@@ -8,6 +8,7 @@ import (
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
+	testrng "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,8 +20,8 @@ func TestTxsWriter_Flush(t *testing.T) {
 		ChainID: 7777,
 	}
 
-	sharedAccounts := types.NewAccountPool(&types.AccountConfig{
-		Accounts:       types.GenerateAccounts(10),
+	sharedAccounts := types.NewAccountRegistry().NewPool(&types.AccountConfig{
+		InitialSize:    10,
 		NewAccountRate: 0.0,
 	})
 
@@ -28,11 +29,12 @@ func TestTxsWriter_Flush(t *testing.T) {
 		Name:   "EVMTransfer",
 		Weight: 1,
 	})
-	evmScenario.Deploy(loadConfig, sharedAccounts.NextAccount())
+	rng := testrng.NewSource(1).Rand("sender:writer:test")
+	evmScenario.Deploy(loadConfig, sharedAccounts.NextAccount(rng))
 
-	generator := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
+	gen := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
 
-	txs := generator.GenerateN(3)
+	txs := generator.GenerateN(rng, gen, 3)
 
 	err := writer.Send(context.Background(), txs[0])
 	require.NoError(t, err)

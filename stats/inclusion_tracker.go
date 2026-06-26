@@ -15,7 +15,7 @@ import (
 
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
 // blockSource yields the tx hashes of a single block by number. Consumer-side
@@ -138,7 +138,7 @@ func (t *InclusionTracker) Run(ctx context.Context, firstEndpoint string) error 
 		defer client.Close()
 		t.source = ethBlockSource{client: client}
 	}
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		client, err := ethclient.Dial(wsEndpoint)
 		if err != nil {
 			return fmt.Errorf("inclusion tracker: connect WebSocket %s: %w", wsEndpoint, err)
