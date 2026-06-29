@@ -37,7 +37,7 @@ func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *
 }
 
 func (ss *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
-	return ss.queue.Push(ctx,tx)	
+	return ss.queue.Push(ctx, tx)
 }
 
 func (ss *ShardedSender) Nonce(acc types.Account) uint64 {
@@ -45,7 +45,7 @@ func (ss *ShardedSender) Nonce(acc types.Account) uint64 {
 }
 
 func (ss *ShardedSender) Flush(ctx context.Context) error {
-	return ss.queue.WaitUntilEmpty(ctx) 
+	return ss.queue.WaitUntilEmpty(ctx)
 }
 
 // Start initializes and starts all workers
@@ -82,7 +82,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 					return utils.Sleep(ctx, 10*time.Millisecond)
 				}
 				if err := client.Send(ctx, tx); err != nil {
-					log.Printf("client.Send(): %w",err)
+					log.Printf("client.Send(): %w", err)
 					// Correct the nonce of a tracked account.
 					if tx.Scenario.Sender.Tracked {
 						for {
@@ -90,12 +90,12 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 								return err
 							}
 							// Nonce lookup is expected to succeed eventually.
-							nonce,err := client.Nonce(ctx,addr)
-							if err!=nil {
-								log.Printf("client.Nonce(): %w",err)
+							nonce, err := client.Nonce(ctx, addr)
+							if err != nil {
+								log.Printf("client.Nonce(): %w", err)
 								continue
 							}
-							ss.queue.Reset(addr,nonce)
+							ss.queue.Reset(addr, nonce)
 							return nil
 						}
 					}

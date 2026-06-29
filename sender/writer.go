@@ -19,28 +19,28 @@ type txsWriterInner struct {
 
 	bufferGas uint64
 	txBuffer  []*types.LoadTx
-	nonces map[common.Address]uint64
+	nonces    map[common.Address]uint64
 }
 
 type TxsWriter struct {
-	txsDir          string
-	gasPerBlock     uint64
-	numBlocks       uint64
-	inner utils.Mutex[*txsWriterInner]
+	txsDir      string
+	gasPerBlock uint64
+	numBlocks   uint64
+	inner       utils.Mutex[*txsWriterInner]
 }
 
 func NewTxsWriter(gasPerBlock uint64, txsDir string, startHeight uint64, numBlocks uint64) *TxsWriter {
 	// what height to start at?
 	return &TxsWriter{
-		gasPerBlock:     gasPerBlock,
-		txsDir:          txsDir,
-		numBlocks:       numBlocks,
-		inner: utils.NewMutex(&txsWriterInner {
+		gasPerBlock: gasPerBlock,
+		txsDir:      txsDir,
+		numBlocks:   numBlocks,
+		inner: utils.NewMutex(&txsWriterInner{
 			nextHeight:      startHeight,
 			blocksGenerated: 0,
-			bufferGas: 0,
-			txBuffer:  make([]*types.LoadTx, 0),
-			nonces: map[common.Address]uint64{},
+			bufferGas:       0,
+			txBuffer:        make([]*types.LoadTx, 0),
+			nonces:          map[common.Address]uint64{},
 		}),
 	}
 }
@@ -85,7 +85,7 @@ func (w *TxsWriter) Flush(ctx context.Context) error {
 func (w *TxsWriter) flush(inner *txsWriterInner) error {
 	defer func() {
 		// clear buffer and reset bufferGas and increment nextHeight
-		inner.txBuffer = nil 
+		inner.txBuffer = nil
 		inner.bufferGas = 0
 		inner.nextHeight++
 		inner.blocksGenerated++

@@ -167,7 +167,7 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 
 type EthClient interface {
 	Send(ctx context.Context, tx *types.LoadTx) error
-	Nonce(ctx context.Context, acc types.Account) (uint64,error)
+	Nonce(ctx context.Context, acc types.Account) (uint64, error)
 }
 
 // Generate generates 1 transaction.

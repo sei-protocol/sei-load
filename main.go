@@ -28,7 +28,6 @@ import (
 	"github.com/sei-protocol/sei-load/observability"
 	"github.com/sei-protocol/sei-load/sender"
 	"github.com/sei-protocol/sei-load/stats"
-	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
@@ -279,7 +278,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		}
 
 		// TODO: MaxInFlight should have a sensible default.
-		q := types.NewTxsQueue(cfg.Settings.MaxInFlight)
+		var snd generator.TxSender
 		if cfg.Settings.TxsDir != "" {
 			// get latest height
 			eth, err := ethclient.Dial(cfg.Endpoints[0])
@@ -293,8 +292,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			numBlocksToWrite := cfg.Settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
-			s.SpawnBgNamed("writer", func() error { return writer.Run(ctx, q) })
+			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 		} else {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
 			// don't have until funded.
@@ -310,14 +308,14 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			// Create the sender from the config struct
 			sharedSender := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
 			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx, q) })
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			if err := gen.Prewarm(ctx, rng, cfg, q); err != nil {
+			if err := gen.Prewarm(ctx, rng, cfg, snd); err != nil {
 				return fmt.Errorf("gen.Prewarm(): %w", err)
 			}
 			log.Printf("🔥 Prewarming complete!")
@@ -328,7 +326,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, q) })
+		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, snd) })
 
 		log.Printf("✅ Started dispatcher")
 

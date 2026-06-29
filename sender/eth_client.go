@@ -1,9 +1,9 @@
 package sender
 
 import (
-	"math/big"
 	"context"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -99,7 +99,7 @@ func (c *ethClient) shardID(addr common.Address) int {
 }
 
 func (c *ethClient) Nonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return c.clients[c.shardID(addr)].NonceAt(ctx,addr,nil)
+	return c.clients[c.shardID(addr)].NonceAt(ctx, addr, nil)
 }
 
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
