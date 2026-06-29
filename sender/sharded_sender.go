@@ -99,13 +99,20 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 				if ss.cfg.Settings.DryRun {
 					// In dry-run mode, simulate processing time and mark as successful
 					// Use very minimal delay to avoid channel overflow
-					return utils.Sleep(ctx, 10*time.Millisecond)
+					if err := utils.Sleep(ctx, 10*time.Millisecond); err != nil {
+						return err
+					}
+					if inclusion, ok := ss.inclusion.Get(); ok {
+						inclusion.Register(tx)
+					}
+					return nil
 				}
 				if err := client.Send(ctx, tx); err != nil {
 					log.Printf("client.Send(): %v", err)
 					if err := ss.handleSendFailure(ctx, client, tx); err != nil {
 						return err
 					}
+					return nil
 				}
 				if inclusion, ok := ss.inclusion.Get(); ok {
 					inclusion.Register(tx)
