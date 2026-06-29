@@ -139,34 +139,54 @@ func TestShardedSender_UntrackedReset(t *testing.T) {
 }
 
 func TestShardedSender_WithGeneratorAndNonceRewinds(t *testing.T) {
-	state := newChainState(chainConfig{
-		failNonceRPCEvery: 3,
-		resetNonceAfter:   10,
-		resetNonceRange:   5,
-	})
-	endpoints := state.newRPCServers(t, 2)
+	tests := []struct {
+		name           string
+		accountCount   int
+		newAccountRate float64
+	}{
+		{
+			name:           "tracked_only",
+			accountCount:   5,
+			newAccountRate: 0,
+		},
+		{
+			name:           "mixed_tracked_untracked",
+			accountCount:   5,
+			newAccountRate: 0.25,
+		},
+		{
+			name:           "only_untracked",
+			accountCount:   0,
+			newAccountRate: 1.0,
+		},
+	}
 
-	cfg := testGeneratorConfig(endpoints)
-	rngSource := generator.ResolveSeed(cfg)
-	rng := rngSource.Rand(rngutil.StreamLoadGeneration)
-	gen, err := generator.NewGenerator(rng, cfg)
-	require.NoError(t, err)
-	ss := newTestShardedSender(endpoints)
-
-	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
-		s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
-		s.SpawnBg(func() error { return utils.IgnoreCancel(gen.Run(ctx, rng, ss)) })
-		for inner, ctrl := range state.inner.Lock() {
-			return ctrl.WaitUntil(ctx, func() bool {
-				total := uint64(0)
-				for _, a := range inner.accounts {
-					total += a.nonce
-				}
-				return total > 500
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newChainState(chainConfig{
+				failNonceRPCEvery: 3,
+				resetNonceAfter:   10,
+				resetNonceRange:   5,
 			})
-		}
-		panic("unreachable")
-	}))
+			endpoints := state.newRPCServers(t, 2)
+
+			cfg := testGeneratorConfigWithAccounts(endpoints, tt.accountCount, tt.newAccountRate)
+			rngSource := generator.ResolveSeed(cfg)
+			rng := rngSource.Rand(rngutil.StreamLoadGeneration)
+			gen, err := generator.NewGenerator(rng, cfg)
+			require.NoError(t, err)
+			ss := newTestShardedSender(endpoints)
+
+			require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
+				s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
+				s.SpawnBg(func() error { return utils.IgnoreCancel(gen.Run(ctx, rng, ss)) })
+				for inner, ctrl := range state.inner.Lock() {
+					return ctrl.WaitUntil(ctx, func() bool { return inner.nonceSum > 200 })
+				}
+				panic("unreachable")
+			}))
+		})
+	}
 }
 
 type chainState struct {
@@ -181,6 +201,7 @@ type accountState struct {
 
 type chainStateInner struct {
 	nonceRPCs uint64
+	nonceSum  uint64
 	accounts  map[common.Address]*accountState
 }
 
@@ -203,6 +224,9 @@ func (s *chainState) ensure(inner *chainStateInner, addr common.Address) *accoun
 	acc, ok := inner.accounts[addr]
 	if !ok {
 		acc = &accountState{}
+		if s.cfg.resetNonceAfter > 0 {
+			acc.nextResetAt = s.cfg.resetNonceAfter
+		}
 		inner.accounts[addr] = acc
 	}
 	return acc
@@ -210,7 +234,11 @@ func (s *chainState) ensure(inner *chainStateInner, addr common.Address) *accoun
 
 func (s *chainState) SetNonce(addr common.Address, nonce uint64) {
 	for inner, ctrl := range s.inner.Lock() {
-		s.ensure(inner, addr).nonce = nonce
+		acc := s.ensure(inner, addr)
+		inner.nonceSum -= acc.nonce
+		acc.nonce = nonce
+		acc.nextResetAt = nonce + s.cfg.resetNonceAfter
+		inner.nonceSum += acc.nonce
 		ctrl.Updated()
 	}
 }
@@ -218,6 +246,13 @@ func (s *chainState) SetNonce(addr common.Address, nonce uint64) {
 func (s *chainState) Nonce(addr common.Address) uint64 {
 	for inner := range s.inner.Lock() {
 		return s.ensure(inner, addr).nonce
+	}
+	panic("unreachable")
+}
+
+func (s *chainState) AccountCount() int {
+	for inner := range s.inner.Lock() {
+		return len(inner.accounts)
 	}
 	panic("unreachable")
 }
@@ -245,11 +280,13 @@ func (s *chainState) SendRawTransaction(rawTx hexutil.Bytes) (common.Hash, error
 		if acc.nonce != tx.Nonce() {
 			return common.Hash{}, errors.New("nonce too low")
 		}
+		inner.nonceSum -= acc.nonce
 		acc.nonce += 1
 		if acc.nonce == acc.nextResetAt {
 			acc.nonce -= s.cfg.resetNonceRange
 			acc.nextResetAt = acc.nonce + s.cfg.resetNonceAfter
 		}
+		inner.nonceSum += acc.nonce
 		ctrl.Updated()
 		return tx.Hash(), nil
 	}
@@ -290,7 +327,7 @@ func newTestShardedSender(endpoints []string) *ShardedSender {
 	}, rate.NewLimiter(rate.Inf, 1), stats.NewCollector(), utils.None[*stats.InclusionTracker]())
 }
 
-func testGeneratorConfig(endpoints []string) *config.LoadConfig {
+func testGeneratorConfigWithAccounts(endpoints []string, accountCount int, newAccountRate float64) *config.LoadConfig {
 	settings := config.DefaultSettings()
 	settings.MaxInFlight = 10
 	return &config.LoadConfig{
@@ -298,8 +335,8 @@ func testGeneratorConfig(endpoints []string) *config.LoadConfig {
 		SeiChainID: "test-chain",
 		Endpoints:  endpoints,
 		Accounts: &config.AccountConfig{
-			Accounts:       5,
-			NewAccountRate: 0,
+			Accounts:       accountCount,
+			NewAccountRate: newAccountRate,
 		},
 		Scenarios: []config.Scenario{{
 			Name:   "evmtransfer",
