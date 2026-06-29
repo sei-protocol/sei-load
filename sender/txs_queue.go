@@ -29,6 +29,10 @@ func newQueue[T any]() *queue[T] {
 	return &queue[T]{q: map[uint64]T{}}
 }
 
+func (q *queue[T]) Len() uint64 {
+	return q.next-q.first
+}
+
 func (q *queue[T]) Push(v T) {
 	q.q[q.next] = v
 	q.next += 1
@@ -47,7 +51,7 @@ func (q *queue[T]) Pop() T {
 type txsQueueInner struct {
 	txs    map[addrNonce]*types.LoadTx
 	byAddr map[common.Address]*accState
-	ready  queue[common.Address]
+	ready  *queue[common.Address]
 }
 
 type TxsQueue struct {
@@ -61,6 +65,7 @@ func NewTxsQueue(capacity int) *TxsQueue {
 		inner: utils.NewWatch(&txsQueueInner{
 			txs:    map[addrNonce]*types.LoadTx{},
 			byAddr: map[common.Address]*accState{},
+			ready:  newQueue[common.Address](),
 		}),
 	}
 }
@@ -104,7 +109,7 @@ func (q *TxsQueue) Reset(addr common.Address, nonce uint64) {
 
 func (q *TxsQueue) PopReady(ctx context.Context) (*types.LoadTx, error) {
 	for inner, ctrl := range q.inner.Lock() {
-		if err := ctrl.WaitUntil(ctx, func() bool { return len(inner.txs) == 0 }); err != nil {
+		if err := ctrl.WaitUntil(ctx, func() bool { return inner.ready.Len()>0 }); err != nil {
 			return nil, err
 		}
 		addr := inner.ready.Pop()

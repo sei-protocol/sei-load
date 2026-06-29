@@ -48,6 +48,26 @@ func (ss *ShardedSender) Flush(ctx context.Context) error {
 	return ss.queue.WaitUntilEmpty(ctx)
 }
 
+func (ss *ShardedSender) handleSendFailure(ctx context.Context, client *ethClient, tx *types.LoadTx) error {
+	if !tx.Scenario.Sender.Tracked {
+		return nil
+	}
+	addr := tx.Scenario.Sender.Address
+	for {
+		if err := ss.limiter.Wait(ctx); err != nil {
+			return err
+		}
+		// Nonce lookup is expected to succeed eventually.
+		nonce, err := client.Nonce(ctx, addr)
+		if err != nil {
+			log.Printf("client.Nonce(): %v", err)
+			continue
+		}
+		ss.queue.Reset(addr, nonce)
+		return nil
+	}
+}
+
 // Start initializes and starts all workers
 func (ss *ShardedSender) Run(ctx context.Context) error {
 	if len(ss.cfg.Endpoints) == 0 {
@@ -83,21 +103,8 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 				}
 				if err := client.Send(ctx, tx); err != nil {
 					log.Printf("client.Send(): %v", err)
-					// Correct the nonce of a tracked account.
-					if tx.Scenario.Sender.Tracked {
-						for {
-							if err := ss.limiter.Wait(ctx); err != nil {
-								return err
-							}
-							// Nonce lookup is expected to succeed eventually.
-							nonce, err := client.Nonce(ctx, addr)
-							if err != nil {
-								log.Printf("client.Nonce(): %v", err)
-								continue
-							}
-							ss.queue.Reset(addr, nonce)
-							return nil
-						}
+					if err := ss.handleSendFailure(ctx, client, tx); err != nil {
+						return err
 					}
 				}
 				if inclusion, ok := ss.inclusion.Get(); ok {
