@@ -82,7 +82,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 					return utils.Sleep(ctx, 10*time.Millisecond)
 				}
 				if err := client.Send(ctx, tx); err != nil {
-					log.Printf("client.Send(): %w", err)
+					log.Printf("client.Send(): %v", err)
 					// Correct the nonce of a tracked account.
 					if tx.Scenario.Sender.Tracked {
 						for {
@@ -92,7 +92,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 							// Nonce lookup is expected to succeed eventually.
 							nonce, err := client.Nonce(ctx, addr)
 							if err != nil {
-								log.Printf("client.Nonce(): %w", err)
+								log.Printf("client.Nonce(): %v", err)
 								continue
 							}
 							ss.queue.Reset(addr, nonce)

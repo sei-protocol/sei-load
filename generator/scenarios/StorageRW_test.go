@@ -37,26 +37,27 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
 
 	// Mirror generator.mockDeployAll: attach the bound contract at a known address.
-	contractAddr := types.GenerateAccounts(1)[0].Address
+	contractAddr := types.GenerateAccounts(1, false)[0].Address
 	require.NoError(t, gen.Attach(cfg, contractAddr))
 
 	// Build the tx scenario the way the weighted generator does: a funded sender.
-	sender := types.GenerateAccounts(1)[0]
+	sender := types.GenerateAccounts(1, true)[0]
 	txScenario := &types.TxScenario{
 		Name:   scenarios.StorageRW,
+		Nonce:  0,
 		Sender: sender,
 	}
 
-	loadTx := gen.Generate(testrng.NewSource(1).Rand("generator:storagerw:test"), txScenario)
-	require.NotNil(t, loadTx)
-	require.NotNil(t, loadTx.EthTx)
+	tx, err := gen.Generate(testrng.NewSource(1).Rand("generator:storagerw:test"), txScenario)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
 
 	// The produced tx must target the deployed contract...
-	require.NotNil(t, loadTx.EthTx.To())
-	require.Equal(t, contractAddr, *loadTx.EthTx.To())
+	require.NotNil(t, tx.To())
+	require.Equal(t, contractAddr, *tx.To())
 
 	// ...and carry rmw calldata against the fixed slot 0.
-	data := loadTx.EthTx.Data()
+	data := tx.Data()
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 

@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -18,7 +17,6 @@ import (
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/scope"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -46,20 +44,15 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 	defer span.End()
 
 	tx := testLoadTx(t)
-	client := newEthClient(&ethClientConfig{
+	client, err := newEthClient(ctx, &ethClientConfig{
 		ChainID:   "test-chain",
-		ID:        7,
-		Endpoint:  ts.URL,
-		Tasks:     1,
+		Endpoints: []string{ts.URL},
 		Collector: stats.NewCollector(),
 	})
-
-	err := scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
-		s.SpawnBg(func() error { return utils.IgnoreCancel(client.Run(ctx)) })
-		return client.Send(ctx, tx)
-	})
 	require.NoError(t, err)
-	require.Equal(t, [][]byte{tx.Payload}, api.RawTransactions())
+	defer client.Close()
+
+	require.NoError(t, client.Send(ctx, tx))
 	require.Contains(t, traceparent, span.SpanContext().TraceID().String())
 }
 
@@ -72,46 +65,20 @@ func TestEthClientSendTx_WS(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
-	tx := testLoadTx(t)
-	client := newEthClient(&ethClientConfig{
+	client, err := newEthClient(t.Context(), &ethClientConfig{
 		ChainID:   "test-chain",
-		ID:        8,
-		Endpoint:  wsURL,
-		Tasks:     1,
+		Endpoints: []string{wsURL},
 		Collector: stats.NewCollector(),
-	})
-
-	err := scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
-		s.SpawnBg(func() error { return utils.IgnoreCancel(client.Run(ctx)) })
-		return client.Send(ctx, tx)
 	})
 	require.NoError(t, err)
-	require.Equal(t, [][]byte{tx.Payload}, api.RawTransactions())
-}
-
-func TestEthClientRunSender_RegistersSuccessfulSendAfterOnComplete(t *testing.T) {
-	tracker := stats.NewInclusionTracker("test-chain", time.Hour, 100, true)
-	client := newEthClient(&ethClientConfig{
-		ChainID:   "test-chain",
-		ID:        9,
-		Endpoint:  "dryrun",
-		Tasks:     1,
-		DryRun:    true,
-		Collector: stats.NewCollector(),
-		Inclusion: utils.Some(tracker),
-	})
+	defer client.Close()
 
 	tx := testLoadTx(t)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
+	require.NoError(t, client.Send(t.Context(), tx))
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- client.runSender(ctx, nil) }()
-
-	require.NoError(t, client.Send(ctx, tx))
-	cancel()
-	require.ErrorIs(t, <-errCh, context.Canceled)
-	require.Equal(t, uint64(1), tracker.Summary().InflightAtShutdown, "successful send must register exactly once")
+	payload, err := tx.EthTx.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{payload}, api.RawTransactions())
 }
 
 type mockEthAPI struct {
@@ -141,8 +108,7 @@ func (m *mockEthAPI) RawTransactions() [][]byte {
 func testLoadTx(t *testing.T) *types.LoadTx {
 	t.Helper()
 
-	account := types.NewAccount()
-
+	account := types.NewAccount(true)
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	tx := ethtypes.NewTx(&ethtypes.LegacyTx{
 		Nonce:    1,
@@ -156,6 +122,7 @@ func testLoadTx(t *testing.T) *types.LoadTx {
 
 	return types.CreateTxFromEthTx(signedTx, &types.TxScenario{
 		Name:   "test-scenario",
+		Nonce:  1,
 		Sender: account,
 	})
 }

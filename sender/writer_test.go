@@ -1,60 +1,65 @@
 package sender
 
 import (
-	"context"
+	"math/big"
 	"testing"
 
-	"github.com/sei-protocol/sei-load/config"
-	"github.com/sei-protocol/sei-load/generator"
-	"github.com/sei-protocol/sei-load/generator/scenarios"
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/sei-protocol/sei-load/types"
-	testrng "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTxsWriter_Flush(t *testing.T) {
 	// two evm transfer txs
-	writer := NewTxsWriter(42000, "/tmp", 1, 1)
-
-	loadConfig := &config.LoadConfig{
-		ChainID: 7777,
+	writer := NewTxsWriter(42_000, "/tmp", 1, 3)
+	txs := []*types.LoadTx{
+		testWriterTx(t, 0),
+		testWriterTx(t, 1),
+		testWriterTx(t, 2),
 	}
 
-	sharedAccounts := types.NewAccountRegistry().NewPool(&types.AccountConfig{
-		InitialSize:    10,
-		NewAccountRate: 0.0,
-	})
+	require.NoError(t, writer.Send(t.Context(), txs[0]))
+	for inner := range writer.inner.Lock() {
+		require.Equal(t, uint64(1), inner.nextHeight)
+		require.Equal(t, uint64(21_000), inner.bufferGas)
+		require.Len(t, inner.txBuffer, 1)
+		require.Equal(t, txs[0], inner.txBuffer[0])
+	}
 
-	evmScenario := scenarios.CreateScenario(config.Scenario{
-		Name:   "EVMTransfer",
-		Weight: 1,
-	})
-	rng := testrng.NewSource(1).Rand("sender:writer:test")
-	evmScenario.Deploy(loadConfig, sharedAccounts.NextAccount(rng))
+	require.NoError(t, writer.Send(t.Context(), txs[1]))
+	for inner := range writer.inner.Lock() {
+		require.Equal(t, uint64(1), inner.nextHeight)
+		require.Equal(t, uint64(42_000), inner.bufferGas)
+		require.Len(t, inner.txBuffer, 2)
+		require.Equal(t, txs[1], inner.txBuffer[1])
+	}
 
-	gen := generator.NewScenarioGenerator(sharedAccounts, evmScenario)
-
-	txs := generator.GenerateN(rng, gen, 3)
-
-	err := writer.Send(context.Background(), txs[0])
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), writer.nextHeight)
-	require.Equal(t, uint64(21000), writer.bufferGas)
-	require.Len(t, writer.txBuffer, 1)
-	require.Equal(t, txs[0], writer.txBuffer[0])
-
-	err = writer.Send(context.Background(), txs[1])
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), writer.nextHeight)
-	require.Equal(t, uint64(42000), writer.bufferGas)
-	require.Len(t, writer.txBuffer, 2)
-	require.Equal(t, txs[1], writer.txBuffer[1])
-
-	err = writer.Send(context.Background(), txs[2])
-	require.NoError(t, err)
+	require.NoError(t, writer.Send(t.Context(), txs[2]))
 	// now should be flushed and have the new tx
-	require.Equal(t, uint64(2), writer.nextHeight)
-	require.Equal(t, uint64(21000), writer.bufferGas)
-	require.Len(t, writer.txBuffer, 1)
+	for inner := range writer.inner.Lock() {
+		require.Equal(t, uint64(2), inner.nextHeight)
+		require.Equal(t, uint64(21_000), inner.bufferGas)
+		require.Len(t, inner.txBuffer, 1)
+		require.Equal(t, txs[2], inner.txBuffer[0])
+	}
+}
 
+func testWriterTx(t *testing.T, nonce uint64) *types.LoadTx {
+	t.Helper()
+	sender := types.NewAccount(true)
+	receiver := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	return types.CreateTxFromEthTx(ethtypes.NewTx(&ethtypes.DynamicFeeTx{
+		Nonce:     nonce,
+		To:        &receiver,
+		Value:     big.NewInt(1),
+		Gas:       21_000,
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(1),
+	}), &types.TxScenario{
+		Name:     "evmtransfer",
+		Nonce:    nonce,
+		Sender:   sender,
+		Receiver: receiver,
+	})
 }

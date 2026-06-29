@@ -50,7 +50,7 @@ func (w *TxsWriter) Send(ctx context.Context, tx *types.LoadTx) error {
 	for inner := range w.inner.Lock() {
 		// if bwe would exceed gasPerBlock, flush
 		if inner.bufferGas+tx.EthTx.Gas() > w.gasPerBlock {
-			if err := w.Flush(ctx); err != nil {
+			if err := w.flush(inner); err != nil {
 				return err
 			}
 		}
