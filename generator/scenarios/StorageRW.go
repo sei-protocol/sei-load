@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -80,7 +81,7 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 // CreateContractTransaction implements ContractDeployer interface - creates a
 // fixed StorageRWv1 rmw transaction. See package doc for the scaffold and gas
 // rationale.
-func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	// 50k fits rmw (SLOAD+SSTORE) with headroom; see package doc for sizing.
 	// PLT-465 revisits with the distribution-driven pad.
 	auth.GasLimit = 50000

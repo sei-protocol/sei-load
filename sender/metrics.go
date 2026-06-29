@@ -44,13 +44,14 @@ func init() {
 		metric.WithUnit("{count}"),
 		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
 			for _, ss := range meteredSenders.Get() {
-				for _, stats := range ss.ShardStats() {
+				_ = ss
+				/*for _, stats := range ss.ShardStats() {
 					observer.Observe(int64(stats.TxsQueued), metric.WithAttributes(
 						attribute.String("endpoint", stats.Endpoint),
 						attribute.Int("worker_id", stats.ID),
 						attribute.String("chain_id", stats.ChainID),
 					))
-				}
+				}*/
 			}
 			return nil
 		})))

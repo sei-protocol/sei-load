@@ -3,9 +3,12 @@ package utils
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"math/rand"
+	mrandv2 "math/rand/v2"
 	"reflect"
 	"time"
 
@@ -135,6 +138,21 @@ func TestRng() Rng {
 
 func TestRngFromSeed(seed int64) Rng {
 	return Rng{Alloc(NewMutex(rand.New(rand.NewSource(seed))))}
+}
+
+// SplitRng derives an independent math/rand/v2 generator from rng by reading
+// 32 bytes of preseed material and hashing it with SHA-256 to decorrelate the
+// derived seed from the parent generator's raw output.
+func SplitRng(rng *mrandv2.Rand) *mrandv2.Rand {
+	var preseed [32]byte
+	for i := 0; i < 4; i++ {
+		binary.LittleEndian.PutUint64(preseed[i*8:(i+1)*8], rng.Uint64())
+	}
+	seed := sha256.Sum256(preseed[:])
+	return mrandv2.New(mrandv2.NewPCG(
+		binary.LittleEndian.Uint64(seed[:8]),
+		binary.LittleEndian.Uint64(seed[8:16]),
+	))
 }
 
 func GenBool(rng Rng) bool {

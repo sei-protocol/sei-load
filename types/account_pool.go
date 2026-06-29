@@ -1,71 +1,50 @@
 package types
 
 import (
-	"math/rand/v2"
+	mrand "math/rand/v2"
 	"sync"
-
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // AccountPool returns a next account for load generation.
-type AccountPool interface {
-	NextAccount() *Account
-	// GetAccounts returns the fixed accounts backing the pool (excludes any
-	// on-demand accounts minted via NewAccountRate). Used to enumerate the pool
-	// for one-time funding.
-	GetAccounts() []*Account
+type AccountPool struct {
+	newAccountRate float64
+	accounts       []Account
+	mx             sync.Mutex
+	idx            int
 }
 
 // AccountConfig stores the configuration for account generation.
 type AccountConfig struct {
-	Accounts       []*Account
+	InitialSize    int
 	NewAccountRate float64
-	// Stream, when non-nil, makes the new-account roll deterministic. A nil
-	// Stream leaves the pool on the unseeded global RNG.
-	Stream *rng.Stream
 }
 
-type accountPool struct {
-	Accounts []*Account
-	cfg      *AccountConfig
-
-	mx  sync.Mutex
-	idx int
-}
-
-func (a *accountPool) nextIndex() int {
+func (a *AccountPool) nextIndex() int {
 	a.mx.Lock()
 	defer a.mx.Unlock()
 	a.idx++
-	a.idx %= len(a.Accounts)
+	a.idx %= len(a.accounts)
 	return a.idx
 }
 
-// NextAccount returns the next account.
-func (a *accountPool) NextAccount() *Account {
-	if a.cfg.NewAccountRate > 0 {
-		var randomNumber float64
-		if a.cfg.Stream != nil {
-			randomNumber = a.cfg.Stream.Float64()
-		} else {
-			randomNumber = rand.Float64()
-		}
-		if randomNumber <= a.cfg.NewAccountRate {
-			return GenerateAccounts(1)[0]
+// NextAccount returns the next account, using rng for the new-account roll when
+// NewAccountRate > 0.
+func (a *AccountPool) NextAccount(rng *mrand.Rand) Account {
+	if a.newAccountRate > 0 {
+		if rng.Float64() <= a.newAccountRate {
+			return NewAccount(false)
 		}
 	}
-	return a.Accounts[a.nextIndex()]
+	return a.accounts[a.nextIndex()]
 }
 
 // GetAccounts returns the fixed accounts backing the pool.
-func (a *accountPool) GetAccounts() []*Account {
-	return a.Accounts
-}
+func (a *AccountPool) Accounts() []Account { return a.accounts }
 
-// NewAccountPool creates a new account generator from a config.
-func NewAccountPool(cfg *AccountConfig) AccountPool {
-	return &accountPool{
-		Accounts: cfg.Accounts,
-		cfg:      cfg,
+// NewPool creates a new account generator from a config, records it, and returns it.
+func NewAccountPool(size int, newAccountRate float64) *AccountPool {
+	return &AccountPool{
+		accounts:       GenerateAccounts(size, true),
+		newAccountRate: newAccountRate,
 	}
 }

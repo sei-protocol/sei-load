@@ -1,6 +1,8 @@
 package scenarios
 
 import (
+	mrand "math/rand/v2"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -69,7 +71,7 @@ func (s *ERC20NoopScenario) Attach(config *config.LoadConfig, address common.Add
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates ERC20Noop transaction
-func (s *ERC20NoopScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (s *ERC20NoopScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	auth.GasLimit = 22460
 	return s.contract.Transfer(auth, scenario.Receiver, bigOne)
 }
