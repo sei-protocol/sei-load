@@ -84,10 +84,10 @@ func TestTxsWriter_WithGeneratorFinalFiles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			const (
-				totalTxs         = 500
-				gasPerTx   uint64 = 21_000
-				txsPerFile       = 10
-				expectedFiles    = totalTxs / txsPerFile
+				totalTxs             = 500
+				gasPerTx      uint64 = 21_000
+				txsPerFile           = 10
+				expectedFiles        = totalTxs / txsPerFile
 			)
 
 			cfg := testGeneratorConfigWithAccounts(nil, tt.accountCount, tt.newAccountRate)
