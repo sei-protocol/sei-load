@@ -29,17 +29,16 @@ type scenarioInstance struct {
 
 // generatorBuilder manages scenario creation and deployment from config
 type generatorBuilder struct {
-	config         *config.LoadConfig
-	instances      []*scenarioInstance
-	deployer       types.Account
-	sharedAccounts *types.AccountPool // Shared account pool when using top-level config
+	config    *config.LoadConfig
+	instances []*scenarioInstance
 }
 
 // CreateScenarios creates scenario instances based on the configuration
 // Each scenario entry in config creates a separate instance, even if same name
 func (g *generatorBuilder) createScenarios() error {
+	var sharedAccounts *types.AccountPool
 	if g.config.Accounts != nil {
-		g.sharedAccounts = types.NewAccountPool(
+		sharedAccounts = types.NewAccountPool(
 			g.config.Accounts.Accounts,
 			g.config.Accounts.NewAccountRate,
 		)
@@ -54,9 +53,9 @@ func (g *generatorBuilder) createScenarios() error {
 		if cfg := scenarioCfg.Accounts; cfg != nil {
 			// Scenario defines its own account settings - create separate pool
 			accountPool = types.NewAccountPool(cfg.Accounts, cfg.NewAccountRate)
-		} else if g.sharedAccounts != nil {
+		} else if sharedAccounts != nil {
 			// Use shared account pool from top-level config
-			accountPool = g.sharedAccounts
+			accountPool = sharedAccounts
 		} else {
 			return errors.New("no accounts config defined")
 		}

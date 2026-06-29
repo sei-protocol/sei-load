@@ -102,7 +102,7 @@ func (s *ScenarioBase) Attach(config *config.LoadConfig, address common.Address)
 // Generate handles the common transaction generation flow
 func (s *ScenarioBase) Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	if !s.deployed {
-		return nil, fmt.Errorf("Scenario not deployed/initialized")
+		return nil, fmt.Errorf("scenario not deployed/initialized")
 	}
 	// Create transaction using scenario-specific logic
 	return s.deployer.CreateTransaction(rng, s.config, scenario)
