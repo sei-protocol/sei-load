@@ -1,12 +1,12 @@
-package types
+package sender
 
 import (
 	"context"
-	"github.com/ethereum/go-ethereum/common"
 	"log"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/sei-protocol/sei-load/utils"
-	"time"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 type addrNonce struct {
@@ -45,87 +45,93 @@ func (q *queue[T]) Pop() T {
 }
 
 type txsQueueInner struct {
-	capacity int
-	txs map[addrNonce]*LoadTx
+	txs map[addrNonce]*types.LoadTx
 	byAddr map[common.Address]*accState
 	ready queue[common.Address]
 }
 
 type TxsQueue struct {
+	capacity int
 	inner utils.Watch[*txsQueueInner]
 }
 
 func NewTxsQueue(capacity int) *TxsQueue {
 	return &TxsQueue{
+		capacity: capacity,
 		inner: utils.NewWatch(&txsQueueInner {
-			capacity: capacity,
-			txs: map[addrNonce]*LoadTx{},	
+			txs: map[addrNonce]*types.LoadTx{},	
 			byAddr: map[common.Address]*accState{},
 		}),
 	}
 }
 
-func (q *TxsQueue) ack(an addrNonce, resetNonce utils.Option[uint64]) {
+func (q *TxsQueue) PopSent(addr common.Address) {
 	for inner,ctrl := range q.inner.Lock() {
-		state := inner.byAddr[an.addr]
-		if an.nonce != state.firstNonce {
-			// It can happen if ack returned by Pop is called twice.
-			panic("bad nonce acknowledged")
-		}
+		state,ok := inner.byAddr[addr]
+		if !ok || state.firstNonce == state.nextNonce { return }
 		ctrl.Updated()
-		if resetNonce,ok := resetNonce.Get(); ok {
-			for state.firstNonce<state.nextNonce {
-				delete(inner.txs, addrNonce{an.addr,state.firstNonce})
-			}
-			state.firstNonce = resetNonce
-			state.nextNonce = resetNonce
-		} else {
-			delete(inner.txs, addrNonce{an.addr,state.firstNonce})
-			state.firstNonce += 1	
-		}
+		delete(inner.txs, addrNonce{addr,state.firstNonce})
+		state.firstNonce += 1
 		if state.firstNonce < state.nextNonce {
-			inner.ready.Push(an.addr)
+			inner.ready.Push(addr)
 		} else if !state.track {
-			delete(inner.byAddr, an.addr)
+			delete(inner.byAddr, addr)
+		}	
+	}
+}
+
+func (q *TxsQueue) Reset(addr common.Address, nonce uint64) {
+	for inner,ctrl := range q.inner.Lock() {
+		state,ok := inner.byAddr[addr]
+		if !ok { return }
+		ctrl.Updated()
+		for state.firstNonce < state.nextNonce {
+			delete(inner.txs, addrNonce{addr,state.firstNonce})
+			state.firstNonce += 1
+		}
+		if state.track {
+			state.firstNonce = nonce
+			state.nextNonce = nonce
+		} else {
+			delete(inner.byAddr, addr)
 		}
 	}
 }
 
-func (q *TxsQueue) Pop(ctx context.Context) (tx *LoadTx, ack func(resetNonce utils.Option[uint64]), err error) {
+func (q *TxsQueue) PopReady(ctx context.Context) (*types.LoadTx, error) {
 	for inner,ctrl := range q.inner.Lock() {
 		if err:=ctrl.WaitUntil(ctx,func() bool { return len(inner.txs) == 0 }); err!=nil {
-			return nil,nil,err
+			return nil,err
 		}
 		addr := inner.ready.Pop()
 		state := inner.byAddr[addr]
 		an := addrNonce{addr,state.firstNonce}
 		tx := inner.txs[an]
 		ctrl.Updated()
-		return tx, func(resetNonce utils.Option[uint64]){ q.ack(an,resetNonce) }, nil
+		return tx, nil
 	}
 	panic("unreachable")
 }
 
-func (q *TxsQueue) Push(ctx context.Context, scenario *TxScenario, tx *ethtypes.Transaction) error {
+func (q *TxsQueue) Push(ctx context.Context, tx *types.LoadTx) error {
 	for inner,ctrl := range q.inner.Lock() {
-		if err:=ctrl.WaitUntil(ctx,func() bool { return len(inner.txs) < inner.capacity }); err!=nil {
+		if err:=ctrl.WaitUntil(ctx,func() bool { return len(inner.txs) < q.capacity }); err!=nil {
 			return err
 		}
-		addr := scenario.Sender.Address
-		nonce := tx.Nonce()
-		ltx := &LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		addr := tx.Scenario.Sender.Address
+		nonce := tx.EthTx.Nonce()
 		state,ok := inner.byAddr[addr]
 		if !ok {
-			state = &accState{track: scenario.Sender.Tracked}
+			state = &accState{track: tx.Scenario.Sender.Tracked}
 		}
 		if nonce!=state.nextNonce {
 			// It is expected in case of send failure.
-			log.Printf("bad nonce for %v: got %v, want %v",addr,tx.Nonce(),state.nextNonce)
+			log.Printf("bad nonce for %v: got %v, want %v",addr,nonce,state.nextNonce)
 			return nil
 		}
 		state.nextNonce += 1
 		inner.byAddr[addr] = state
-		inner.txs[addrNonce{addr,nonce}] = ltx
+		inner.txs[addrNonce{addr,nonce}] = tx
 		if state.firstNonce == nonce {
 			inner.ready.Push(addr)
 			ctrl.Updated()
@@ -141,9 +147,9 @@ func (q *TxsQueue) WaitUntilEmpty(ctx context.Context) error {
 	panic("unreachable")
 }
 
-func (q *TxsQueue) Nonce(addr common.Address) uint64 {
+func (q *TxsQueue) Nonce(acc types.Account) uint64 {
 	for inner := range q.inner.Lock() {
-		if state, ok := inner.byAddr[addr]; ok {
+		if state, ok := inner.byAddr[acc.Address]; ok {
 			return state.nextNonce
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"maps"
 	mrand "math/rand/v2"
 	"slices"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -132,8 +133,14 @@ func (g *Generator) Accounts() []types.Account {
 	return slices.Collect(maps.Values(accs))
 }
 
+type TxSender interface {
+	Send(ctx context.Context, tx *types.LoadTx) error
+	Flush(ctx context.Context) error
+	Nonce(acc types.Account) uint64
+}
+
 // NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
-func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, q *types.TxsQueue) error {
+func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, txSender TxSender) error {
 	// Create EVMTransfer scenario for prewarming
 	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
 	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
@@ -142,7 +149,7 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 		// Create self-transfer transaction
 		scenario := &types.TxScenario{
 			Name:     "EVMTransfer",
-			Nonce:    q.Nonce(account.Address),
+			Nonce:    txSender.Nonce(account),
 			Sender:   account,
 			Receiver: account.Address, // Send to self
 		}
@@ -150,15 +157,21 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 		if err != nil {
 			return fmt.Errorf("evmScenario.Generate(): %w", err)
 		}
-		if err := q.Push(ctx, scenario, tx); err != nil {
+		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
 	}
-	return q.WaitUntilEmpty(ctx)
+	return txSender.Flush(ctx)
+}
+
+type EthClient interface {
+	Send(ctx context.Context, tx *types.LoadTx) error
+	Nonce(ctx context.Context, acc types.Account) (uint64,error)
 }
 
 // Generate generates 1 transaction.
-func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, q *types.TxsQueue) error {
+func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender) error {
 	counter := 0
 	for {
 		g := w.scenarios[int(counter)%len(w.scenarios)]
@@ -170,6 +183,7 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, q *types.TxsQueue)
 		// the back-pressured enqueue time, not a true schedule instant.
 		scenario := &types.TxScenario{
 			Name:     g.Scenario.Name(),
+			Nonce:    txSender.Nonce(sender),
 			Sender:   sender,
 			Receiver: receiver.Address,
 		}
@@ -177,7 +191,8 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, q *types.TxsQueue)
 		if err != nil {
 			return fmt.Errorf("g.Scenario.Generate(): %w", err)
 		}
-		if err := q.Push(ctx, scenario, tx); err != nil {
+		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
 	}

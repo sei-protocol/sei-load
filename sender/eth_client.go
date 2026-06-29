@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"math/big"
 	"context"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/sei-protocol/sei-load/stats"
@@ -88,9 +90,20 @@ func newHttpClient() *http.Client {
 	}
 }
 
+// Addresses are sharded across endpoints so that each account is handled by a single RPC nonce.
+// TODO: make this stickiness optional
+func (c *ethClient) shardID(addr common.Address) int {
+	addressBigInt := new(big.Int).SetBytes(addr.Bytes())
+	mod := new(big.Int).Mod(addressBigInt, big.NewInt(int64(len(c.cfg.Endpoints))))
+	return int(mod.Int64())
+}
+
+func (c *ethClient) Nonce(ctx context.Context, addr common.Address) (uint64, error) {
+	return c.clients[c.shardID(addr)].NonceAt(ctx,addr,nil)
+}
+
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
-	// TODO: make client stickiness optional
-	id := tx.ShardID(len(c.cfg.Endpoints))
+	id := c.shardID(tx.Scenario.Sender.Address)
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
 		attribute.String("seiload.endpoint", c.cfg.Endpoints[id]),

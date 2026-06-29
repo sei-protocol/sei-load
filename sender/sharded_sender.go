@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -17,6 +18,7 @@ import (
 // ShardedSender implements TxSender with multiple workers, one per endpoint
 type ShardedSender struct {
 	cfg       *config.LoadConfig
+	queue     *TxsQueue
 	limiter   *rate.Limiter // Shared rate limiter for transaction sending
 	collector *stats.Collector
 	inclusion utils.Option[*stats.InclusionTracker]
@@ -27,14 +29,27 @@ type ShardedSender struct {
 func NewShardedSender(cfg *config.LoadConfig, limiter *rate.Limiter, collector *stats.Collector, inclusion utils.Option[*stats.InclusionTracker]) *ShardedSender {
 	return &ShardedSender{
 		cfg:       cfg,
+		queue:     NewTxsQueue(cfg.Settings.MaxInFlight),
 		limiter:   limiter,
 		collector: collector,
 		inclusion: inclusion,
 	}
 }
 
+func (ss *ShardedSender) Send(ctx context.Context, tx *types.LoadTx) error {
+	return ss.queue.Push(ctx,tx)	
+}
+
+func (ss *ShardedSender) Nonce(acc types.Account) uint64 {
+	return ss.queue.Nonce(acc)
+}
+
+func (ss *ShardedSender) Flush(ctx context.Context) error {
+	return ss.queue.WaitUntilEmpty(ctx) 
+}
+
 // Start initializes and starts all workers
-func (ss *ShardedSender) Run(ctx context.Context, q *types.TxsQueue) error {
+func (ss *ShardedSender) Run(ctx context.Context) error {
 	if len(ss.cfg.Endpoints) == 0 {
 		return fmt.Errorf("no endpoints configured")
 	}
@@ -54,25 +69,40 @@ func (ss *ShardedSender) Run(ctx context.Context, q *types.TxsQueue) error {
 			if err := ss.limiter.Wait(ctx); err != nil {
 				return err
 			}
-			tx, ack, err := q.Pop(ctx)
+			tx, err := ss.queue.PopReady(ctx)
 			if err != nil {
 				return err
 			}
+			addr := tx.Scenario.Sender.Address
 			s.Spawn(func() error {
+				defer ss.queue.PopSent(addr)
 				if ss.cfg.Settings.DryRun {
 					// In dry-run mode, simulate processing time and mark as successful
 					// Use very minimal delay to avoid channel overflow
-					defer ack(utils.None[uint64]())
-					return utils.Sleep(ctx, 10*time.Millisecond) // Much faster simulation
+					return utils.Sleep(ctx, 10*time.Millisecond)
 				}
 				if err := client.Send(ctx, tx); err != nil {
-					// TODO: correct nonce
-					return err
+					log.Printf("client.Send(): %w",err)
+					// Correct the nonce of a tracked account.
+					if tx.Scenario.Sender.Tracked {
+						for {
+							if err := ss.limiter.Wait(ctx); err != nil {
+								return err
+							}
+							// Nonce lookup is expected to succeed eventually.
+							nonce,err := client.Nonce(ctx,addr)
+							if err!=nil {
+								log.Printf("client.Nonce(): %w",err)
+								continue
+							}
+							ss.queue.Reset(addr,nonce)
+							return nil
+						}
+					}
 				}
 				if inclusion, ok := ss.inclusion.Get(); ok {
 					inclusion.Register(tx)
 				}
-				ack(utils.None[uint64]())
 				return nil
 			})
 		}

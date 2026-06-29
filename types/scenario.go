@@ -62,13 +62,6 @@ type JSONRPCRequest struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// ShardID returns the shard id for the given number of shards.
-func (tx *LoadTx) ShardID(n int) int {
-	addressBigInt := new(big.Int).SetBytes(tx.Scenario.Sender.Address.Bytes())
-	mod := new(big.Int).Mod(addressBigInt, big.NewInt(int64(n)))
-	return int(mod.Int64())
-}
-
 // TxScenario captures the scenario of this test transaction.
 type TxScenario struct {
 	Name     string
