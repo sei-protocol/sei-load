@@ -92,9 +92,10 @@ func (g *generatorBuilder) createScenarios() error {
 }
 
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).
-func (g *generatorBuilder) mockDeployAll(deployer common.Address) error {
+func (g *generatorBuilder) mockDeployAll() error {
 	for _, instance := range g.instances {
-		if err := instance.Scenario.Attach(g.config, deployer); err != nil {
+		addr := types.NewAccount(false).Address
+		if err := instance.Scenario.Attach(g.config, addr); err != nil {
 			return err
 		}
 	}
@@ -105,7 +106,7 @@ func (g *generatorBuilder) mockDeployAll(deployer common.Address) error {
 func (g *generatorBuilder) deployAll() error {
 	deployer := types.NewAccount(false)
 	if g.config.MockDeploy {
-		return g.mockDeployAll(deployer.Address)
+		return g.mockDeployAll()
 	}
 
 	// Deploy sequentially to ensure proper nonce management
@@ -173,7 +174,7 @@ type EthClient interface {
 // Generate generates 1 transaction.
 func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender) error {
 	counter := 0
-	for {
+	for ctx.Err() == nil {
 		g := w.scenarios[int(counter)%len(w.scenarios)]
 		counter++
 		sender := g.Accounts.NextAccount(rng)
@@ -196,6 +197,7 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender)
 			return err
 		}
 	}
+	return ctx.Err()
 }
 
 // createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
