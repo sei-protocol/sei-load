@@ -310,6 +310,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			// Start the sender (starts all workers)
 			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
+			snd = sharedSender
 		}
 
 		// Set up prewarming if enabled
