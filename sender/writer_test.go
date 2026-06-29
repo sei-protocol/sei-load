@@ -1,12 +1,18 @@
 package sender
 
 import (
+	"encoding/json"
+	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/types"
+	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,4 +68,60 @@ func testWriterTx(t *testing.T, nonce uint64) *types.LoadTx {
 		Sender:   sender,
 		Receiver: receiver,
 	})
+}
+
+func TestTxsWriter_WithGeneratorFinalFiles(t *testing.T) {
+	tests := []struct {
+		name           string
+		accountCount   int
+		newAccountRate float64
+	}{
+		{name: "tracked_only", accountCount: 5, newAccountRate: 0},
+		{name: "mixed_tracked_untracked", accountCount: 5, newAccountRate: 0.25},
+		{name: "only_untracked", accountCount: 0, newAccountRate: 1.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const (
+				totalTxs         = 500
+				gasPerTx   uint64 = 21_000
+				txsPerFile       = 10
+				expectedFiles    = totalTxs / txsPerFile
+			)
+
+			cfg := testGeneratorConfigWithAccounts(nil, tt.accountCount, tt.newAccountRate)
+			rngSource := generator.ResolveSeed(cfg)
+			rng := rngSource.Rand(rngutil.StreamLoadGeneration)
+			gen, err := generator.NewGenerator(rng, cfg)
+			require.NoError(t, err)
+
+			outDir := t.TempDir()
+			writer := NewTxsWriter(gasPerTx*txsPerFile, outDir, 1, expectedFiles-1)
+
+			err = gen.Run(t.Context(), rng, writer)
+			require.EqualError(t, err, fmt.Sprintf("reached max number of blocks: %d", expectedFiles-1))
+
+			entries, err := os.ReadDir(outDir)
+			require.NoError(t, err)
+			require.Len(t, entries, expectedFiles)
+
+			totalPayloads := 0
+			for i := 1; i <= expectedFiles; i++ {
+				path := filepath.Join(outDir, fileNameForHeight(uint64(i)))
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+
+				var txData TxWriteData
+				require.NoError(t, json.Unmarshal(data, &txData))
+				require.Len(t, txData.TxPayloads, txsPerFile)
+				totalPayloads += len(txData.TxPayloads)
+			}
+			require.Equal(t, totalTxs, totalPayloads)
+		})
+	}
+}
+
+func fileNameForHeight(height uint64) string {
+	return fmt.Sprintf("%d_txs.json", height)
 }
