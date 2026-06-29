@@ -7,9 +7,8 @@
 //
 // A Distribution is a tagged sampler that draws an index in [0, n) from some
 // keyspace distribution (see distribution.go). It is selected on the JSON wire
-// by a "Name" discriminator and bound at run time to a deterministic
-// pseudo-random sub-stream (utils/rng) so that two runs at the same seed draw
-// the same multiset of indices.
+// by a "Name" discriminator and bound at run time to an explicit seeded PRNG so
+// that two runs at the same seed draw the same sequence of indices.
 //
 // # Wire format (FROZEN one-way door)
 //
@@ -81,17 +80,7 @@
 //
 // # Seeded-stream reproducibility (FROZEN inputs)
 //
-// Draws go through an explicitly supplied *rand.Rand: a per-scenario
-// substream-derived PRNG from the run seed. This is what gives the workload its
-// reproducibility contract — same seed + same config yields the same per-stream
-// draw multiset (see package utils/rng for the precise contract and its limits
-// above one worker).
-//
-// The stream ids feeding the samplers — "dist:%d:key" and "dist:%d:size" — are
-// FROZEN, append-only inputs: a stream id is hashed to seed its sub-stream, so
-// renaming one reseeds that stream and invalidates every saved replay for the
-// same config_sha256. New ids may be added (they hash to their own sub-streams
-// and do not perturb existing ones); existing ids must never be renamed. The
-// canonical list and the full frozen-derivation note live in
-// utils/rng/streams.go and utils/rng/rng.go — this is a one-way door.
+// Draws go through an explicitly supplied *rand.Rand seeded from the run seed.
+// This is what gives the workload its reproducibility contract: same seed +
+// same config yields the same draw sequence for the same call order.
 package config

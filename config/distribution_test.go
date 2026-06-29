@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/sei-protocol/sei-load/config"
-	"github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
+
+func newDistributionTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 func TestDistribution(t *testing.T) {
 	t.Parallel()
@@ -20,7 +23,7 @@ func TestDistribution(t *testing.T) {
 		var subject config.Distribution
 		require.NoError(t, subject.UnmarshalJSON([]byte(`{}`)))
 		require.Empty(t, subject.Name())
-		idx, err := subject.SampleIndex(rng.NewSource(1).Rand("config:distribution:test"), 100)
+		idx, err := subject.SampleIndex(newDistributionTestRng(1), 100)
 		require.NoError(t, err)
 		require.Zero(t, idx)
 	})
@@ -74,7 +77,7 @@ func sample(t *testing.T, d *config.Distribution, rng *mrand.Rand, n uint64, cou
 func TestSampleIndexEmptyKeyspace(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{`{"Name":"uniform"}`, `{"Name":"zipfian","theta":0.9}`} {
-		_, err := distribution(t, raw).SampleIndex(rng.NewSource(1).Rand("config:distribution:test"), 0)
+		_, err := distribution(t, raw).SampleIndex(newDistributionTestRng(1), 0)
 		require.Error(t, err, raw)
 	}
 }
@@ -85,8 +88,8 @@ func TestSampleIndexDeterminism(t *testing.T) {
 	t.Parallel()
 	const seed, n, count = 99, 1000, 256
 	for _, raw := range []string{`{"Name":"uniform"}`, `{"Name":"zipfian","theta":0.8}`} {
-		a := sample(t, distribution(t, raw), rng.NewSource(seed).Rand(rng.KeyDistributionStream(0)), n, count)
-		b := sample(t, distribution(t, raw), rng.NewSource(seed).Rand(rng.KeyDistributionStream(0)), n, count)
+		a := sample(t, distribution(t, raw), newDistributionTestRng(seed), n, count)
+		b := sample(t, distribution(t, raw), newDistributionTestRng(seed), n, count)
 		require.Equal(t, a, b, "same seed must reproduce the draw sequence: %s", raw)
 	}
 }
@@ -99,7 +102,7 @@ func TestUniformIsUniform(t *testing.T) {
 	const n, buckets, perBucket = 1000, 20, 5000
 	const draws = buckets * perBucket // 100k draws, expected 5k per bucket.
 
-	got := sample(t, distribution(t, `{"Name":"uniform"}`), rng.NewSource(1).Rand("x"), n, draws)
+	got := sample(t, distribution(t, `{"Name":"uniform"}`), newDistributionTestRng(1), n, draws)
 	counts := make([]float64, buckets)
 	width := uint64(n / buckets)
 	for _, v := range got {
@@ -125,7 +128,7 @@ func TestZipfianSkewRisesWithTheta(t *testing.T) {
 
 	topKMass := func(theta float64) float64 {
 		raw := fmt.Sprintf(`{"Name":"zipfian","theta":%v}`, theta)
-		got := sample(t, distribution(t, raw), rng.NewSource(5).Rand("x"), n, draws)
+		got := sample(t, distribution(t, raw), newDistributionTestRng(5), n, draws)
 		var hot int
 		for _, v := range got {
 			if v < topK {
@@ -161,7 +164,7 @@ func TestZipfianInitCostBounded(t *testing.T) {
 	t.Parallel()
 	const n = 1_000_000
 	d := distribution(t, `{"Name":"zipfian","theta":0.99}`)
-	rand := rng.NewSource(1).Rand("x")
+	rand := newDistributionTestRng(1)
 
 	// Warmup outside the timer: pay the one-time O(n) zeta precompute here so the
 	// timed window measures only steady-state per-draw cost.
@@ -187,7 +190,7 @@ func TestZipfianInitCostBounded(t *testing.T) {
 func TestZipfianRecomputesOnNChange(t *testing.T) {
 	t.Parallel()
 	d := distribution(t, `{"Name":"zipfian","theta":0.9}`)
-	rand := rng.NewSource(1).Rand("x")
+	rand := newDistributionTestRng(1)
 
 	// Same seed + same draw index against two different keyspaces: if the cache
 	// ignored the n change, the second n would reuse the first's zetaN/eta and the
@@ -213,7 +216,7 @@ func TestZipfianNoNaNAcrossThetaRange(t *testing.T) {
 		for _, n := range []uint64{2, 3, 100, 1000} {
 			raw := fmt.Sprintf(`{"Name":"zipfian","theta":%v}`, theta)
 			d := distribution(t, raw)
-			rand := rng.NewSource(1).Rand("x")
+			rand := newDistributionTestRng(1)
 			for i := 0; i < 100; i++ {
 				v, err := d.SampleIndex(rand, n)
 				require.NoError(t, err)

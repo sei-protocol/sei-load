@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	mrand "math/rand/v2"
 	"net/http/httptest"
 	"testing"
 
@@ -21,7 +22,6 @@ import (
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
-	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
@@ -171,8 +171,7 @@ func TestShardedSender_WithGeneratorAndNonceRewinds(t *testing.T) {
 			endpoints := state.newRPCServers(t, 2)
 
 			cfg := testGeneratorConfigWithAccounts(endpoints, tt.accountCount, tt.newAccountRate)
-			rngSource := generator.ResolveSeed(cfg)
-			rng := rngSource.Rand(rngutil.StreamLoadGeneration)
+			rng := mrand.New(mrand.NewPCG(1, 2))
 			gen, err := generator.NewGenerator(rng, cfg)
 			require.NoError(t, err)
 			ss := newTestShardedSender(endpoints)

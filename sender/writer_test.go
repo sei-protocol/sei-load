@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	mrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,6 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/types"
-	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,8 +91,7 @@ func TestTxsWriter_WithGeneratorFinalFiles(t *testing.T) {
 			)
 
 			cfg := testGeneratorConfigWithAccounts(nil, tt.accountCount, tt.newAccountRate)
-			rngSource := generator.ResolveSeed(cfg)
-			rng := rngSource.Rand(rngutil.StreamLoadGeneration)
+			rng := mrand.New(mrand.NewPCG(5, 6))
 			gen, err := generator.NewGenerator(rng, cfg)
 			require.NoError(t, err)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mrand "math/rand/v2"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -13,7 +14,6 @@ import (
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
 	"github.com/sei-protocol/sei-load/utils/require"
-	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 var errStopGeneration = errors.New("stop generation")
@@ -61,10 +61,14 @@ func (s *collectingSender) Nonce(acc types.Account) uint64 {
 	panic("unreachable")
 }
 
-func generateN(t *testing.T, src *rngutil.Source, gen *generator.Generator, n int) []*types.LoadTx {
+func newTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
+
+func generateN(t *testing.T, rng *mrand.Rand, gen *generator.Generator, n int) []*types.LoadTx {
 	t.Helper()
 	sender := newCollectingSender(n)
-	err := gen.Run(t.Context(), src.Rand("generator:test:draws"), sender)
+	err := gen.Run(t.Context(), rng, sender)
 	require.ErrorIs(t, err, errStopGeneration)
 	for inner := range sender.inner.Lock() {
 		return inner.txs
@@ -97,13 +101,13 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 		},
 	}
 
-	rngSource := generator.ResolveSeed(cfg)
-	gen, err := generator.NewGenerator(rngSource.Rand(rngutil.StreamWeightedShuffle), cfg)
+	rng := newTestRng(1)
+	gen, err := generator.NewGenerator(rng, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 
 	totalTxs := 100
-	txs := generateN(t, rngSource, gen, totalTxs)
+	txs := generateN(t, rng, gen, totalTxs)
 	require.Len(t, txs, totalTxs)
 
 	// Count occurrences per scenario

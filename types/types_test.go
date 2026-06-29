@@ -2,6 +2,7 @@ package types
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 	"testing"
 	"time"
 
@@ -9,9 +10,11 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
-
-	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
+
+func newTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 func TestNewAccount(t *testing.T) {
 	account := NewAccount(true)
@@ -39,7 +42,7 @@ func TestGenerateAccounts(t *testing.T) {
 func TestAccountPoolRoundRobin(t *testing.T) {
 	pool := NewAccountPool(3, 0)
 	accounts := pool.Accounts()
-	rng := testrng.NewSource(1).Rand("types:test")
+	rng := newTestRng(1)
 
 	require.Len(t, accounts, 3)
 	require.Equal(t, accounts[1].Address, pool.NextAccount(rng).Address)
@@ -54,7 +57,7 @@ func TestAccountPoolAlwaysCreatesNewAccounts(t *testing.T) {
 		original[account.Address] = true
 	}
 
-	rng := testrng.NewSource(1).Rand("types:test")
+	rng := newTestRng(1)
 	for range 10 {
 		account := pool.NextAccount(rng)
 		require.False(t, account.Tracked)
@@ -72,7 +75,7 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	const iterations = 100
 	originalCount := 0
 	newCount := 0
-	rng := testrng.NewSource(1).Rand("accounts:test")
+	rng := newTestRng(1)
 
 	for i := 0; i < iterations; i++ {
 		account := pool.NextAccount(rng)
@@ -86,7 +89,7 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	// Seeded: the split is exact and reproducible, not probabilistic. Re-running
 	// the same seeded pool must reproduce these counts. If the frozen derivation
 	// changes, these expected values change with it.
-	const expectedNew = 51
+	const expectedNew = 52
 	require.Equal(t, expectedNew, newCount, "seeded new-account count is not reproducible")
 	require.Equal(t, iterations, originalCount+newCount, "Total accounts don't match iterations")
 }

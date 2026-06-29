@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	mrand "math/rand/v2"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,8 +10,11 @@ import (
 	"github.com/sei-protocol/sei-load/generator/bindings"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
-	testrng "github.com/sei-protocol/sei-load/utils/rng"
 )
+
+func newTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 // rmwSelector is the 4-byte function selector for StorageRWv1.rmw(uint256,bytes).
 // It is the ABI-derived discriminator the produced calldata must start with.
@@ -48,7 +52,7 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 		Sender: sender,
 	}
 
-	tx, err := gen.Generate(testrng.NewSource(1).Rand("generator:storagerw:test"), txScenario)
+	tx, err := gen.Generate(newTestRng(1), txScenario)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 

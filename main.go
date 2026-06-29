@@ -209,7 +209,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
-	rng := generator.ResolveSeed(cfg).Rand("")
+	rng := generator.ResolveSeed(cfg)
 	var ramper *sender.Ramper
 	inclusion := utils.None[*stats.InclusionTracker]()
 

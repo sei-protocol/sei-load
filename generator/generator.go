@@ -2,6 +2,8 @@ package generator
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -15,7 +17,6 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // scenarioInstance represents a scenario instance with its configuration
@@ -222,17 +223,32 @@ func (b *generatorBuilder) build(rng *mrand.Rand) (*Generator, error) {
 	return &Generator{scenarios: gens}, nil
 }
 
-// resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
-// random seed. The resolved seed is written back to cfg.Seed and logged so any
-// run is replayable after the fact; the run summary (PLT-467) reads it there.
-func ResolveSeed(cfg *config.LoadConfig) *rng.Source {
-	if cfg.Seed != nil {
-		return rng.NewSource(*cfg.Seed)
+func newSeededRand(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
+
+func randomSeed() (uint64, error) {
+	var buf [8]byte
+	if _, err := cryptorand.Read(buf[:]); err != nil {
+		return 0, err
 	}
-	src, seed := rng.NewRandomSource()
+	return binary.LittleEndian.Uint64(buf[:]), nil
+}
+
+// ResolveSeed returns the run's PRNG, defaulting an unseeded config to a random
+// seed. The resolved seed is written back to cfg.Seed and logged so any run is
+// replayable after the fact; the run summary (PLT-467) reads it there.
+func ResolveSeed(cfg *config.LoadConfig) *mrand.Rand {
+	if cfg.Seed != nil {
+		return newSeededRand(*cfg.Seed)
+	}
+	seed, err := randomSeed()
+	if err != nil {
+		panic(fmt.Errorf("randomSeed(): %w", err))
+	}
 	cfg.Seed = &seed
 	log.Printf("🎲 No seed configured; generated random seed %d (set \"seed\" to replay)", seed)
-	return src
+	return newSeededRand(seed)
 }
 
 // NewConfigBasedGenerator is a convenience method that combines all steps.
