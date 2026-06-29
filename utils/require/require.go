@@ -78,7 +78,7 @@ var NoFileExists = require.NoFileExists
 var FileExists = require.FileExists
 
 func InDelta(t TestingT, expected float64, actual float64, delta float64, msgAndArgs ...any) {
-	require.InDelta(t,expected,actual,delta,msgAndArgs...)
+	require.InDelta(t, expected, actual, delta, msgAndArgs...)
 }
 
 // Positive .

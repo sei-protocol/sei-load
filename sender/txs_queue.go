@@ -30,7 +30,7 @@ func newQueue[T any]() *queue[T] {
 }
 
 func (q *queue[T]) Len() uint64 {
-	return q.next-q.first
+	return q.next - q.first
 }
 
 func (q *queue[T]) Push(v T) {
@@ -109,7 +109,7 @@ func (q *TxsQueue) Reset(addr common.Address, nonce uint64) {
 
 func (q *TxsQueue) PopReady(ctx context.Context) (*types.LoadTx, error) {
 	for inner, ctrl := range q.inner.Lock() {
-		if err := ctrl.WaitUntil(ctx, func() bool { return inner.ready.Len()>0 }); err != nil {
+		if err := ctrl.WaitUntil(ctx, func() bool { return inner.ready.Len() > 0 }); err != nil {
 			return nil, err
 		}
 		addr := inner.ready.Pop()

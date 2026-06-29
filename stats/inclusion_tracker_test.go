@@ -73,11 +73,11 @@ func loadTx(nonce uint64, intended time.Time) *types.LoadTx {
 		Value:    big.NewInt(0),
 	})
 	return &types.LoadTx{
-		EthTx:            eth,
-		Scenario:         &types.TxScenario{
-			Name: "test",
-			Nonce: nonce,
-			Sender: types.NewAccount(false),
+		EthTx: eth,
+		Scenario: &types.TxScenario{
+			Name:     "test",
+			Nonce:    nonce,
+			Sender:   types.NewAccount(false),
 			Receiver: receiver,
 		},
 		IntendedSendTime: intended,

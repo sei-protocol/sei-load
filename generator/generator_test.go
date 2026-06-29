@@ -3,18 +3,17 @@ package generator_test
 import (
 	"context"
 	"errors"
-	"testing"
 	"fmt"
-
+	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
-	rngutil "github.com/sei-protocol/sei-load/utils/rng"
-	"github.com/sei-protocol/sei-load/utils/require"
 	"github.com/sei-protocol/sei-load/utils"
+	"github.com/sei-protocol/sei-load/utils/require"
+	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 )
 
 var errStopGeneration = errors.New("stop generation")
@@ -25,14 +24,14 @@ type inner struct {
 }
 
 type collectingSender struct {
-	limit  int
+	limit int
 	inner utils.Mutex[*inner]
 }
 
 func newCollectingSender(limit int) *collectingSender {
 	return &collectingSender{
-		limit:  limit,
-		inner: utils.NewMutex(&inner {
+		limit: limit,
+		inner: utils.NewMutex(&inner{
 			nonces: map[common.Address]uint64{},
 		}),
 	}
@@ -42,7 +41,7 @@ func (s *collectingSender) Send(_ context.Context, tx *types.LoadTx) error {
 	for inner := range s.inner.Lock() {
 		inner.txs = append(inner.txs, tx)
 		addr := tx.Scenario.Sender.Address
-		if tx.Scenario.Nonce!=inner.nonces[addr] {
+		if tx.Scenario.Nonce != inner.nonces[addr] {
 			return fmt.Errorf("bad nonce")
 		}
 		inner.nonces[addr] += 1

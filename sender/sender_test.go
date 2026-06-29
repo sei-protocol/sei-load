@@ -17,9 +17,11 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
+	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
 	"github.com/sei-protocol/sei-load/utils"
+	rngutil "github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
@@ -70,10 +72,10 @@ func TestShardDistribution(t *testing.T) {
 }
 
 func TestShardedSender_TrackedReset(t *testing.T) {
-	state := newFakeChainState()
+	state := newChainState(chainConfig{})
 	account := types.NewAccount(true)
 	state.SetNonce(account.Address, 5)
-	endpoints := newFakeRPCEndpoints(t, state, 2)
+	endpoints := state.newRPCServers(t, 2)
 	ss := newTestShardedSender(endpoints)
 
 	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
@@ -106,10 +108,10 @@ func TestShardedSender_TrackedReset(t *testing.T) {
 }
 
 func TestShardedSender_UntrackedReset(t *testing.T) {
-	state := newFakeChainState()
+	state := newChainState(chainConfig{})
 	account := types.NewAccount(false)
 	state.SetNonce(account.Address, 5)
-	endpoints := newFakeRPCEndpoints(t, state, 2)
+	endpoints := state.newRPCServers(t, 2)
 	ss := newTestShardedSender(endpoints)
 
 	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
@@ -136,44 +138,98 @@ func TestShardedSender_UntrackedReset(t *testing.T) {
 	}))
 }
 
-type fakeChainState struct {
-	inner        utils.Watch[*fakeChainStateInner]
+func TestShardedSender_WithGeneratorAndNonceRewinds(t *testing.T) {
+	state := newChainState(chainConfig{
+		failNonceRPCEvery: 3,
+		resetNonceAfter:   10,
+		resetNonceRange:   5,
+	})
+	endpoints := state.newRPCServers(t, 2)
+
+	cfg := testGeneratorConfig(endpoints)
+	rngSource := generator.ResolveSeed(cfg)
+	rng := rngSource.Rand(rngutil.StreamLoadGeneration)
+	gen, err := generator.NewGenerator(rng, cfg)
+	require.NoError(t, err)
+	ss := newTestShardedSender(endpoints)
+
+	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
+		s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
+		s.SpawnBg(func() error { return utils.IgnoreCancel(gen.Run(ctx, rng, ss)) })
+		for inner, ctrl := range state.inner.Lock() {
+			return ctrl.WaitUntil(ctx, func() bool {
+				total := uint64(0)
+				for _, a := range inner.accounts {
+					total += a.nonce
+				}
+				return total > 500
+			})
+		}
+		panic("unreachable")
+	}))
 }
 
-type fakeChainStateInner struct {
-	nonces map[common.Address]uint64
+type chainState struct {
+	cfg   chainConfig
+	inner utils.Watch[*chainStateInner]
 }
 
-func newFakeChainState() *fakeChainState {
-	return &fakeChainState{
-		inner: utils.NewWatch(&fakeChainStateInner{
-			nonces: map[common.Address]uint64{},
+type accountState struct {
+	nonce       uint64
+	nextResetAt uint64
+}
+
+type chainStateInner struct {
+	nonceRPCs uint64
+	accounts  map[common.Address]*accountState
+}
+
+type chainConfig struct {
+	failNonceRPCEvery uint64
+	resetNonceAfter   uint64
+	resetNonceRange   uint64
+}
+
+func newChainState(cfg chainConfig) *chainState {
+	return &chainState{
+		cfg: cfg,
+		inner: utils.NewWatch(&chainStateInner{
+			accounts: map[common.Address]*accountState{},
 		}),
 	}
 }
 
-func (s *fakeChainState) SetNonce(addr common.Address, nonce uint64) {
+func (s *chainState) ensure(inner *chainStateInner, addr common.Address) *accountState {
+	acc, ok := inner.accounts[addr]
+	if !ok {
+		acc = &accountState{}
+		inner.accounts[addr] = acc
+	}
+	return acc
+}
+
+func (s *chainState) SetNonce(addr common.Address, nonce uint64) {
 	for inner, ctrl := range s.inner.Lock() {
-		inner.nonces[addr] = nonce
+		s.ensure(inner, addr).nonce = nonce
 		ctrl.Updated()
 	}
 }
 
-func (s *fakeChainState) Nonce(addr common.Address) uint64 {
+func (s *chainState) Nonce(addr common.Address) uint64 {
 	for inner := range s.inner.Lock() {
-		return inner.nonces[addr]
+		return s.ensure(inner, addr).nonce
 	}
 	panic("unreachable")
 }
 
-func (s *fakeChainState) WaitForNonce(ctx context.Context, addr common.Address, want uint64) error {
+func (s *chainState) WaitForNonce(ctx context.Context, addr common.Address, want uint64) error {
 	for inner, ctrl := range s.inner.Lock() {
-		return ctrl.WaitUntil(ctx, func() bool { return inner.nonces[addr] == want })
+		return ctrl.WaitUntil(ctx, func() bool { return s.ensure(inner, addr).nonce == want })
 	}
 	panic("unreachable")
 }
 
-func (s *fakeChainState) HandleSendRawTransaction(rawTx hexutil.Bytes) (common.Hash, error) {
+func (s *chainState) SendRawTransaction(rawTx hexutil.Bytes) (common.Hash, error) {
 	tx := new(ethtypes.Transaction)
 	if err := tx.UnmarshalBinary(rawTx); err != nil {
 		return common.Hash{}, err
@@ -185,40 +241,38 @@ func (s *fakeChainState) HandleSendRawTransaction(rawTx hexutil.Bytes) (common.H
 	}
 
 	for inner, ctrl := range s.inner.Lock() {
-		wantNonce := inner.nonces[sender]
-		if tx.Nonce() != wantNonce {
+		acc := s.ensure(inner, sender)
+		if acc.nonce != tx.Nonce() {
 			return common.Hash{}, errors.New("nonce too low")
 		}
-		inner.nonces[sender] = wantNonce + 1
+		acc.nonce += 1
+		if acc.nonce == acc.nextResetAt {
+			acc.nonce -= s.cfg.resetNonceRange
+			acc.nextResetAt = acc.nonce + s.cfg.resetNonceAfter
+		}
 		ctrl.Updated()
 		return tx.Hash(), nil
 	}
 	panic("unreachable")
 }
 
-func (s *fakeChainState) HandleGetTransactionCount(addr common.Address) hexutil.Uint64 {
+func (s *chainState) GetTransactionCount(_ context.Context, addr common.Address, _ string) (hexutil.Uint64, error) {
 	for inner := range s.inner.Lock() {
-		return hexutil.Uint64(inner.nonces[addr])
+		inner.nonceRPCs += 1
+		if s.cfg.failNonceRPCEvery > 0 && inner.nonceRPCs%s.cfg.failNonceRPCEvery == 0 {
+			return 0, fmt.Errorf("internal error")
+		}
+		return hexutil.Uint64(s.ensure(inner, addr).nonce), nil
 	}
 	panic("unreachable")
 }
 
-type fakeEthAPI struct{ state *fakeChainState }
-
-func (a fakeEthAPI) SendRawTransaction(_ context.Context, rawTx hexutil.Bytes) (common.Hash, error) {
-	return a.state.HandleSendRawTransaction(rawTx)
-}
-
-func (a fakeEthAPI) GetTransactionCount(_ context.Context, addr common.Address, _ string) (hexutil.Uint64, error) {
-	return a.state.HandleGetTransactionCount(addr), nil
-}
-
-func newFakeRPCEndpoints(t *testing.T, state *fakeChainState, n int) []string {
+func (s *chainState) newRPCServers(t *testing.T, n int) []string {
 	t.Helper()
 	endpoints := make([]string, 0, n)
 	for range n {
 		srv := rpc.NewServer()
-		require.NoError(t, srv.RegisterName("eth", fakeEthAPI{state: state}))
+		require.NoError(t, srv.RegisterName("eth", s))
 		ts := httptest.NewServer(srv)
 		t.Cleanup(ts.Close)
 		endpoints = append(endpoints, ts.URL)
@@ -234,6 +288,26 @@ func newTestShardedSender(endpoints []string) *ShardedSender {
 		Endpoints:  endpoints,
 		Settings:   &settings,
 	}, rate.NewLimiter(rate.Inf, 1), stats.NewCollector(), utils.None[*stats.InclusionTracker]())
+}
+
+func testGeneratorConfig(endpoints []string) *config.LoadConfig {
+	settings := config.DefaultSettings()
+	settings.MaxInFlight = 10
+	return &config.LoadConfig{
+		ChainID:    1,
+		SeiChainID: "test-chain",
+		Endpoints:  endpoints,
+		Accounts: &config.AccountConfig{
+			Accounts:       5,
+			NewAccountRate: 0,
+		},
+		Scenarios: []config.Scenario{{
+			Name:   "evmtransfer",
+			Weight: 1,
+		}},
+		MockDeploy: true,
+		Settings:   &settings,
+	}
 }
 
 func signedLoadTx(t *testing.T, account types.Account, nonce uint64) *types.LoadTx {
