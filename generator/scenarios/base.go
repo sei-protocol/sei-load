@@ -228,17 +228,20 @@ func describeFailedDeployment(
 	}
 
 	callMsg := ethereum.CallMsg{
-		From:      deployerAddress(tx),
-		To:        tx.To(),
-		Gas:       tx.Gas(),
-		GasPrice:  tx.GasPrice(),
-		GasFeeCap: tx.GasFeeCap(),
-		GasTipCap: tx.GasTipCap(),
-		Value:     tx.Value(),
-		Data:      tx.Data(),
+		From:  deployerAddress(tx),
+		To:    tx.To(),
+		Gas:   tx.Gas(),
+		Value: tx.Value(),
+		Data:  tx.Data(),
 	}
 	if tx.Type() == ethtypes.AccessListTxType {
 		callMsg.AccessList = tx.AccessList()
+	}
+	if tx.Type() == ethtypes.LegacyTxType || tx.Type() == ethtypes.AccessListTxType {
+		callMsg.GasPrice = tx.GasPrice()
+	} else {
+		callMsg.GasFeeCap = tx.GasFeeCap()
+		callMsg.GasTipCap = tx.GasTipCap()
 	}
 
 	prevBlock := new(big.Int).Sub(receipt.BlockNumber, common.Big1)
@@ -247,6 +250,9 @@ func describeFailedDeployment(
 	}
 	if _, err := client.CallContract(ctx, callMsg, prevBlock); err != nil {
 		msg += fmt.Sprintf(" [eth_call replay: %v]", err)
+	}
+	if txErr := fetchTransactionErrorByHash(ctx, client, tx.Hash()); txErr != "" {
+		msg += fmt.Sprintf(" [eth_getTransactionErrorByHash: %s]", txErr)
 	}
 
 	return msg
@@ -259,6 +265,19 @@ func deployerAddress(tx *ethtypes.Transaction) common.Address {
 		return common.Address{}
 	}
 	return from
+}
+
+func fetchTransactionErrorByHash(ctx context.Context, client *ethclient.Client, hash common.Hash) string {
+	rpcClient := client.Client()
+	if rpcClient == nil {
+		return ""
+	}
+
+	var result string
+	if err := rpcClient.CallContext(ctx, &result, "eth_getTransactionErrorByHash", hash); err != nil {
+		return fmt.Sprintf("rpc error: %v", err)
+	}
+	return result
 }
 
 // CreateTransaction implements ScenarioDeployer interface for contract scenarios
