@@ -8,6 +8,7 @@ import (
 	mrand "math/rand/v2"
 	"time"
 
+	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -189,7 +190,7 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 
 	// Check if deployment was successful
 	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		panic(fmt.Sprintf("Deployment transaction failed with status %d (tx: %s)", receipt.Status, tx.Hash().Hex()))
+		panic(describeFailedDeployment(ctx, client, tx, receipt))
 	}
 
 	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
@@ -204,6 +205,60 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	// Store the contract instance
 	c.deployer.SetContract(contract)
 	return address
+}
+
+func describeFailedDeployment(
+	ctx context.Context,
+	client *ethclient.Client,
+	tx *ethtypes.Transaction,
+	receipt *ethtypes.Receipt,
+) string {
+	msg := fmt.Sprintf(
+		"Deployment transaction failed with status %d (tx: %s, block: %d, gas used: %d/%d, contract: %s)",
+		receipt.Status,
+		tx.Hash().Hex(),
+		receipt.BlockNumber.Uint64(),
+		receipt.GasUsed,
+		tx.Gas(),
+		receipt.ContractAddress.Hex(),
+	)
+
+	if receipt.GasUsed == tx.Gas() {
+		msg += " [gas used hit gas limit]"
+	}
+
+	callMsg := ethereum.CallMsg{
+		From:      deployerAddress(tx),
+		To:        tx.To(),
+		Gas:       tx.Gas(),
+		GasPrice:  tx.GasPrice(),
+		GasFeeCap: tx.GasFeeCap(),
+		GasTipCap: tx.GasTipCap(),
+		Value:     tx.Value(),
+		Data:      tx.Data(),
+	}
+	if tx.Type() == ethtypes.AccessListTxType {
+		callMsg.AccessList = tx.AccessList()
+	}
+
+	prevBlock := new(big.Int).Sub(receipt.BlockNumber, common.Big1)
+	if prevBlock.Sign() < 0 {
+		prevBlock = big.NewInt(0)
+	}
+	if _, err := client.CallContract(ctx, callMsg, prevBlock); err != nil {
+		msg += fmt.Sprintf(" [eth_call replay: %v]", err)
+	}
+
+	return msg
+}
+
+func deployerAddress(tx *ethtypes.Transaction) common.Address {
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, tx)
+	if err != nil {
+		return common.Address{}
+	}
+	return from
 }
 
 // CreateTransaction implements ScenarioDeployer interface for contract scenarios
