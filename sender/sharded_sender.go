@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -53,7 +52,7 @@ func (ss *ShardedSender) Flush(ctx context.Context) error {
 }
 
 func (ss *ShardedSender) getNonce(ctx context.Context, client *ethClient, addr common.Address) (uint64, error) {
-	for {
+	for ctx.Err() == nil {
 		if err := ss.limiter.Wait(ctx); err != nil {
 			return 0, err
 		}
@@ -65,6 +64,7 @@ func (ss *ShardedSender) getNonce(ctx context.Context, client *ethClient, addr c
 		}
 		return nonce, nil
 	}
+	return 0, ctx.Err()
 }
 
 // Start initializes and starts all workers
@@ -80,6 +80,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 		ChainID:   ss.cfg.SeiChainID,
 		Endpoints: ss.cfg.Endpoints,
 		Collector: ss.collector,
+		DryRun:    ss.cfg.Settings.DryRun,
 	})
 	if err != nil {
 		return fmt.Errorf("newEthClient(): %w", err)
@@ -106,19 +107,6 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 					return fmt.Errorf("sign tx: %w", err)
 				}
 				tx.EthTx = signedTx
-
-				if ss.cfg.Settings.DryRun {
-					// In dry-run mode, simulate processing time and mark as successful
-					// Use very minimal delay to avoid channel overflow
-					if err := utils.Sleep(ctx, 10*time.Millisecond); err != nil {
-						return err
-					}
-					if inclusion, ok := ss.inclusion.Get(); ok {
-						inclusion.Register(tx)
-					}
-					ss.queue.PopSent(addr)
-					return nil
-				}
 
 				// Send the transaction.
 				if err := client.Send(ctx, tx); err != nil {

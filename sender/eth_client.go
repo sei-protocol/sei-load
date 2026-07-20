@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/sei-protocol/sei-load/stats"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -24,6 +25,7 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type ethClientConfig struct {
+	DryRun    bool
 	ChainID   string
 	Endpoints []string
 	Collector *stats.Collector
@@ -115,7 +117,13 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	// This goroutine solely owns tx between dequeue and the sentTxs hand-off,
 	// so stamping the actual send-attempt time here is race-free (see LoadTx).
 	tx.AttemptedSendTime = start
-	err := c.clients[id].SendTransaction(ctx, tx.EthTx)
+	var err error
+	if c.cfg.DryRun {
+		// In dry-run mode, simulate processing time and mark as successful
+		err = utils.Sleep(ctx, 10*time.Millisecond)
+	} else {
+		err = c.clients[id].SendTransaction(ctx, tx.EthTx)
+	}
 	// Record inside the span ctx so exemplars link to the trace.
 	sendLatency.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(
