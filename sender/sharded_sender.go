@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/time/rate"
 
 	"github.com/sei-protocol/sei-load/config"
@@ -48,14 +52,10 @@ func (ss *ShardedSender) Flush(ctx context.Context) error {
 	return ss.queue.WaitUntilEmpty(ctx)
 }
 
-func (ss *ShardedSender) handleSendFailure(ctx context.Context, client *ethClient, tx *types.LoadTx) error {
-	if !tx.Scenario.Sender.Tracked {
-		return nil
-	}
-	addr := tx.Scenario.Sender.Address
+func (ss *ShardedSender) getNonce(ctx context.Context, client *ethClient, addr common.Address) (uint64, error) {
 	for {
 		if err := ss.limiter.Wait(ctx); err != nil {
-			return err
+			return 0, err
 		}
 		// Nonce lookup is expected to succeed eventually.
 		nonce, err := client.Nonce(ctx, addr)
@@ -63,8 +63,7 @@ func (ss *ShardedSender) handleSendFailure(ctx context.Context, client *ethClien
 			log.Printf("client.Nonce(): %v", err)
 			continue
 		}
-		ss.queue.Reset(addr, nonce)
-		return nil
+		return nonce, nil
 	}
 }
 
@@ -75,6 +74,8 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 	}
 	cancel := meteredSenders.MustRegister(ss)
 	defer cancel()
+	signer := ethtypes.LatestSignerForChainID(ss.cfg.GetChainID())
+	signing := semaphore.NewWeighted(int64(runtime.GOMAXPROCS(0)))
 	client, err := newEthClient(ctx, &ethClientConfig{
 		ChainID:   ss.cfg.SeiChainID,
 		Endpoints: ss.cfg.Endpoints,
@@ -95,7 +96,17 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 			}
 			addr := tx.Scenario.Sender.Address
 			s.Spawn(func() error {
-				defer ss.queue.PopSent(addr)
+				// Sign the transaction.
+				if err := signing.Acquire(ctx, 1); err != nil {
+					return err
+				}
+				signedTx, err := ethtypes.SignTx(tx.EthTx, signer, tx.Scenario.Sender.PrivKey)
+				signing.Release(1)
+				if err != nil {
+					return fmt.Errorf("sign tx: %w", err)
+				}
+				tx.EthTx = signedTx
+
 				if ss.cfg.Settings.DryRun {
 					// In dry-run mode, simulate processing time and mark as successful
 					// Use very minimal delay to avoid channel overflow
@@ -105,18 +116,30 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 					if inclusion, ok := ss.inclusion.Get(); ok {
 						inclusion.Register(tx)
 					}
+					ss.queue.PopSent(addr)
 					return nil
 				}
+
+				// Send the transaction.
 				if err := client.Send(ctx, tx); err != nil {
 					log.Printf("client.Send(): %v", err)
-					if err := ss.handleSendFailure(ctx, client, tx); err != nil {
+					if !tx.Scenario.Sender.Tracked {
+						ss.queue.PopSent(addr)
+						return nil
+					}
+					nonce, err := ss.getNonce(ctx, client, addr)
+					if err != nil {
 						return err
 					}
+					ss.queue.Reset(addr, nonce)
 					return nil
 				}
+
+				// Queue for inclusion check.
 				if inclusion, ok := ss.inclusion.Get(); ok {
 					inclusion.Register(tx)
 				}
+				ss.queue.PopSent(addr)
 				return nil
 			})
 		}

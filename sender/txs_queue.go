@@ -17,6 +17,7 @@ type addrNonce struct {
 type accState struct {
 	firstNonce uint64
 	nextNonce  uint64
+	ready      bool // whether the account is present in the ready queue.
 	track      bool
 }
 
@@ -73,13 +74,14 @@ func NewTxsQueue(capacity int) *TxsQueue {
 func (q *TxsQueue) PopSent(addr common.Address) {
 	for inner, ctrl := range q.inner.Lock() {
 		state, ok := inner.byAddr[addr]
-		if !ok || state.firstNonce == state.nextNonce {
+		if !ok || state.ready || state.firstNonce == state.nextNonce {
 			return
 		}
 		ctrl.Updated()
 		delete(inner.txs, addrNonce{addr, state.firstNonce})
 		state.firstNonce += 1
 		if state.firstNonce < state.nextNonce {
+			state.ready = true
 			inner.ready.Push(addr)
 		} else if !state.track {
 			delete(inner.byAddr, addr)
@@ -90,7 +92,7 @@ func (q *TxsQueue) PopSent(addr common.Address) {
 func (q *TxsQueue) Reset(addr common.Address, nonce uint64) {
 	for inner, ctrl := range q.inner.Lock() {
 		state, ok := inner.byAddr[addr]
-		if !ok {
+		if !ok || state.ready {
 			return
 		}
 		ctrl.Updated()
@@ -107,6 +109,7 @@ func (q *TxsQueue) Reset(addr common.Address, nonce uint64) {
 	}
 }
 
+// Correct flow: PopReady -> PopSent/Reset
 func (q *TxsQueue) PopReady(ctx context.Context) (*types.LoadTx, error) {
 	for inner, ctrl := range q.inner.Lock() {
 		if err := ctrl.WaitUntil(ctx, func() bool { return inner.ready.Len() > 0 }); err != nil {
@@ -114,6 +117,7 @@ func (q *TxsQueue) PopReady(ctx context.Context) (*types.LoadTx, error) {
 		}
 		addr := inner.ready.Pop()
 		state := inner.byAddr[addr]
+		state.ready = false
 		an := addrNonce{addr, state.firstNonce}
 		tx := inner.txs[an]
 		ctrl.Updated()
@@ -142,6 +146,7 @@ func (q *TxsQueue) Push(ctx context.Context, tx *types.LoadTx) error {
 		inner.byAddr[addr] = state
 		inner.txs[addrNonce{addr, nonce}] = tx
 		if state.firstNonce == nonce {
+			state.ready = true
 			inner.ready.Push(addr)
 			ctrl.Updated()
 		}

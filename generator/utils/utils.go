@@ -4,6 +4,8 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	loadtypes "github.com/sei-protocol/sei-load/types"
 )
@@ -36,9 +38,15 @@ func CreateDeploymentOpts(chainID *big.Int, client *ethclient.Client, account lo
 
 // CreateTransactionOpts creates transaction options for regular contract interactions
 func CreateTransactionOpts(chainID *big.Int, scenario *loadtypes.TxScenario) *bind.TransactOpts {
-	opts, err := createTransactOpts(chainID, scenario.Sender, 200000, scenario.Nonce, true) // 200k gas limit for transactions
+	opts, err := createTransactOpts(chainID, scenario.Sender, 200000, scenario.Nonce, true)
 	if err != nil {
 		panic("Failed to create transaction options: " + err.Error())
+	}
+	opts.Signer = func(address common.Address, tx *ethtypes.Transaction) (*ethtypes.Transaction, error) {
+		if address != scenario.Sender.Address {
+			return nil, bind.ErrNotAuthorized
+		}
+		return tx, nil
 	}
 	return opts
 }

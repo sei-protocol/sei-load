@@ -44,6 +44,7 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 	defer span.End()
 
 	tx := testLoadTx(t)
+	signer := ethtypes.LatestSignerForChainID(big.NewInt(1))
 	client, err := newEthClient(ctx, &ethClientConfig{
 		ChainID:   "test-chain",
 		Endpoints: []string{ts.URL},
@@ -53,6 +54,9 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 	defer client.Close()
 
 	require.NoError(t, client.Send(ctx, tx))
+	from, err := ethtypes.Sender(signer, tx.EthTx)
+	require.NoError(t, err)
+	require.Equal(t, tx.Scenario.Sender.Address, from)
 	require.Contains(t, traceparent, span.SpanContext().TraceID().String())
 }
 

@@ -80,12 +80,5 @@ func (s *EVMTransferScenario) CreateTransaction(rng *mrand.Rand, config *config.
 		tx.GasFeeCap = big.NewInt(int64(gasFeeCap))
 	}
 
-	// Sign the transaction
-	signer := ethtypes.NewCancunSigner(config.GetChainID())
-	signedTx, err := ethtypes.SignTx(ethtypes.NewTx(tx), signer, scenario.Sender.PrivKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return signedTx, nil
+	return ethtypes.NewTx(tx), nil
 }

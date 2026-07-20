@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	mrand "math/rand/v2"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
@@ -108,6 +110,11 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 
 	totalTxs := 100
 	txs := generateN(t, rng, gen, totalTxs)
+	signer := ethtypes.LatestSignerForChainID(big.NewInt(cfg.ChainID))
+	for _, tx := range txs {
+		_, err := ethtypes.Sender(signer, tx.EthTx)
+		require.Error(t, err)
+	}
 	require.Len(t, txs, totalTxs)
 
 	// Count occurrences per scenario

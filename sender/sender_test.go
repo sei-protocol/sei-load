@@ -2,7 +2,6 @@ package sender
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
@@ -81,10 +80,10 @@ func TestShardedSender_TrackedReset(t *testing.T) {
 	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
 		s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
 
-		if err := ss.Send(ctx, signedLoadTx(t, account, 0)); err != nil {
+		if err := ss.Send(ctx, unsignedLoadTx(account, 0)); err != nil {
 			return fmt.Errorf("send tracked tx nonce 0: %w", err)
 		}
-		if err := ss.Send(ctx, signedLoadTx(t, account, 1)); err != nil {
+		if err := ss.Send(ctx, unsignedLoadTx(account, 1)); err != nil {
 			return fmt.Errorf("send tracked tx nonce 1: %w", err)
 		}
 		if err := ss.Flush(ctx); err != nil {
@@ -94,7 +93,7 @@ func TestShardedSender_TrackedReset(t *testing.T) {
 			return fmt.Errorf("tracked nonce after reset = %d, want 5", got)
 		}
 
-		if err := ss.Send(ctx, signedLoadTx(t, account, 5)); err != nil {
+		if err := ss.Send(ctx, unsignedLoadTx(account, 5)); err != nil {
 			return fmt.Errorf("send tracked tx nonce 5: %w", err)
 		}
 		if err := state.WaitForNonce(ctx, account.Address, 6); err != nil {
@@ -117,10 +116,10 @@ func TestShardedSender_UntrackedReset(t *testing.T) {
 	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
 		s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
 
-		if err := ss.Send(ctx, signedLoadTx(t, account, 0)); err != nil {
+		if err := ss.Send(ctx, unsignedLoadTx(account, 0)); err != nil {
 			return fmt.Errorf("send untracked tx nonce 0: %w", err)
 		}
-		if err := ss.Send(ctx, signedLoadTx(t, account, 1)); err != nil {
+		if err := ss.Send(ctx, unsignedLoadTx(account, 1)); err != nil {
 			return fmt.Errorf("send untracked tx nonce 1: %w", err)
 		}
 
@@ -321,6 +320,7 @@ func newTestShardedSender(endpoints []string) *ShardedSender {
 	settings.MaxInFlight = 16
 	return NewShardedSender(&config.LoadConfig{
 		SeiChainID: "test-chain",
+		ChainID:    1,
 		Endpoints:  endpoints,
 		Settings:   &settings,
 	}, rate.NewLimiter(rate.Inf, 1), stats.NewCollector(), utils.None[*stats.InclusionTracker]())
@@ -346,11 +346,9 @@ func testGeneratorConfigWithAccounts(endpoints []string, accountCount int, newAc
 	}
 }
 
-func signedLoadTx(t *testing.T, account types.Account, nonce uint64) *types.LoadTx {
-	t.Helper()
+func unsignedLoadTx(account types.Account, nonce uint64) *types.LoadTx {
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	tx := ethtypes.NewTx(&ethtypes.DynamicFeeTx{
-		ChainID:   big.NewInt(1),
 		Nonce:     nonce,
 		To:        &to,
 		Value:     big.NewInt(1),
@@ -358,16 +356,10 @@ func signedLoadTx(t *testing.T, account types.Account, nonce uint64) *types.Load
 		GasTipCap: big.NewInt(1),
 		GasFeeCap: big.NewInt(1),
 	})
-	signed, err := signTx(tx, account.PrivKey)
-	require.NoError(t, err)
-	return types.CreateTxFromEthTx(signed, &types.TxScenario{
+	return types.CreateTxFromEthTx(tx, &types.TxScenario{
 		Name:     "test",
 		Nonce:    nonce,
 		Sender:   account,
 		Receiver: to,
 	})
-}
-
-func signTx(tx *ethtypes.Transaction, key *ecdsa.PrivateKey) (*ethtypes.Transaction, error) {
-	return ethtypes.SignTx(tx, ethtypes.LatestSignerForChainID(big.NewInt(1)), key)
 }
