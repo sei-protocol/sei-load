@@ -226,7 +226,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Create the shared rate authority for the whole run.
 		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
 		if cfg.Settings.TPS > 0 {
-			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), int(cfg.Settings.TPS))
+			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), max(1,int(cfg.Settings.TPS)))
 			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
 		}
 
