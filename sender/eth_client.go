@@ -104,11 +104,19 @@ func (c *ethClient) Nonce(ctx context.Context, addr common.Address) (uint64, err
 	return c.clients[c.shardID(addr)].NonceAt(ctx, addr, nil)
 }
 
+func (c *ethClient) endpointFor(addr common.Address) (int, string) {
+	if c.cfg.DryRun && len(c.cfg.Endpoints) == 0 {
+		return 0, "dry-run"
+	}
+	id := c.shardID(addr)
+	return id, c.cfg.Endpoints[id]
+}
+
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
-	id := c.shardID(tx.Scenario.Sender.Address)
+	id, endpoint := c.endpointFor(tx.Scenario.Sender.Address)
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", c.cfg.Endpoints[id]),
+		attribute.String("seiload.endpoint", endpoint),
 		attribute.Int("seiload.worker_id", id),
 		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
@@ -128,23 +136,23 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	sendLatency.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(
 			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("endpoint", c.cfg.Endpoints[id]),
+			attribute.String("endpoint", endpoint),
 			attribute.String("chain_id", c.cfg.ChainID),
 			statusAttrFromError(err)),
 	)
 	if err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", c.cfg.Endpoints[id]),
+			attribute.String("endpoint", endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "rpc"),
 		))
 		span.RecordError(err)
 	} else {
 		txsAccepted.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", c.cfg.Endpoints[id]),
+			attribute.String("endpoint", endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 		))
 	}
-	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, c.cfg.Endpoints[id], time.Since(start), err == nil)
+	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, endpoint, time.Since(start), err == nil)
 	return err
 }

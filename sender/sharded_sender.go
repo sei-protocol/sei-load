@@ -69,7 +69,7 @@ func (ss *ShardedSender) getNonce(ctx context.Context, client *ethClient, addr c
 
 // Start initializes and starts all workers
 func (ss *ShardedSender) Run(ctx context.Context) error {
-	if len(ss.cfg.Endpoints) == 0 {
+	if len(ss.cfg.Endpoints) == 0 && !ss.cfg.Settings.DryRun {
 		return fmt.Errorf("no endpoints configured")
 	}
 	cancel := meteredSenders.MustRegister(ss)

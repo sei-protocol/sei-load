@@ -137,6 +137,29 @@ func TestShardedSender_UntrackedReset(t *testing.T) {
 	}))
 }
 
+func TestShardedSender_DryRunWithoutEndpoints(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.DryRun = true
+	settings.MaxInFlight = 16
+	ss := NewShardedSender(&config.LoadConfig{
+		ChainID:    1,
+		SeiChainID: "test-chain",
+		Settings:   &settings,
+	}, rate.NewLimiter(rate.Inf, 1), stats.NewCollector(), utils.None[*stats.InclusionTracker]())
+	account := types.NewAccount(true)
+
+	require.NoError(t, scope.Run(t.Context(), func(ctx context.Context, s scope.Scope) error {
+		s.SpawnBg(func() error { return utils.IgnoreCancel(ss.Run(ctx)) })
+		if err := ss.Send(ctx, unsignedLoadTx(account, 0)); err != nil {
+			return fmt.Errorf("send dry-run tx: %w", err)
+		}
+		if err := ss.Flush(ctx); err != nil {
+			return fmt.Errorf("flush dry-run tx: %w", err)
+		}
+		return nil
+	}))
+}
+
 func TestShardedSender_WithGeneratorAndNonceRewinds(t *testing.T) {
 	tests := []struct {
 		name           string

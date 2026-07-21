@@ -85,6 +85,19 @@ func TestEthClientSendTx_WS(t *testing.T) {
 	require.Equal(t, [][]byte{payload}, api.RawTransactions())
 }
 
+func TestEthClientSendTx_DryRunWithoutEndpoints(t *testing.T) {
+	client, err := newEthClient(t.Context(), &ethClientConfig{
+		DryRun:    true,
+		ChainID:   "test-chain",
+		Collector: stats.NewCollector(),
+	})
+	require.NoError(t, err)
+	defer client.Close()
+
+	tx := testLoadTx(t)
+	require.NoError(t, client.Send(t.Context(), tx))
+}
+
 type mockEthAPI struct {
 	rawTxs utils.Mutex[*[][]byte]
 }

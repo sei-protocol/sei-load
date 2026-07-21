@@ -114,6 +114,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	if err := cfg.Settings.Validate(); err != nil {
 		return fmt.Errorf("invalid settings: %w", err)
 	}
+	if len(cfg.Endpoints) == 0 && !cfg.Settings.DryRun {
+		return fmt.Errorf("no endpoints specified in config")
+	}
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")
@@ -223,7 +226,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Create the shared rate authority for the whole run.
 		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
 		if cfg.Settings.TPS > 0 {
-			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), 1)
+			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), int(cfg.Settings.TPS))
 			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
 		}
 
@@ -237,7 +240,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		if cfg.Settings.RampUp {
+		if len(cfg.Endpoints) > 0 && cfg.Settings.RampUp {
 			ramperBlockCollector := stats.NewBlockCollector(cfg.SeiChainID)
 			s.SpawnBgNamed("ramper block collector", func() error {
 				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
@@ -280,6 +283,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// TODO: MaxInFlight should have a sensible default.
 		var snd generator.TxSender
 		if cfg.Settings.TxsDir != "" {
+			if len(cfg.Endpoints) == 0 {
+				return fmt.Errorf("tx writer requires at least one endpoint")
+			}
 			// get latest height
 			eth, err := ethclient.Dial(cfg.Endpoints[0])
 			if err != nil {
@@ -421,11 +427,6 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 	var cfg config.LoadConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config json: %w", err)
-	}
-
-	// Validate configuration
-	if len(cfg.Endpoints) == 0 {
-		return nil, fmt.Errorf("no endpoints specified in config")
 	}
 
 	if len(cfg.Scenarios) == 0 {
