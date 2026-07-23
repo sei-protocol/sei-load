@@ -80,21 +80,18 @@ func gasSeq(t *testing.T, seed uint64, n int) []gasDraw {
 	return out
 }
 
-// Same seed + config => identical ordered gas draw sequence at a single worker
-// (GenerateN drains serially). This pins the ordered guarantee.
+// Same seed + config => identical ordered gas draw sequence.
 func TestSeededRunReplaysIdentically(t *testing.T) {
 	require.Equal(t, gasSeq(t, 123, 200), gasSeq(t, 123, 200))
 }
 
-// TestSingleWorkerOrderedReplay pins the real ordered guarantee: at one worker
-// the ordered draw/tx sequence is reproducible across two same-seed runs. (The
-// multiset — not the order — is what survives above one worker; see
-// TestWorkerCountMultisetInvariant.)
+// TestSingleWorkerOrderedReplay pins the ordered guarantee: the draw/tx sequence
+// is reproducible across two same-seed runs.
 func TestSingleWorkerOrderedReplay(t *testing.T) {
 	const seed, total = 55, 300
 	a := gasSeq(t, seed, total)
 	b := gasSeq(t, seed, total)
-	require.Equal(t, a, b, "single-worker ordered draw sequence is not reproducible")
+	require.Equal(t, a, b, "ordered draw sequence is not reproducible")
 }
 
 // Different seeds must diverge (otherwise the seed is ignored).

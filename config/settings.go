@@ -12,9 +12,8 @@ import (
 
 // Settings holds all CLI-configurable parameters
 type Settings struct {
-	TasksPerEndpoint int      `json:"workers,omitempty"`
-	TPS              float64  `json:"tps,omitempty"`
-	StatsInterval    Duration `json:"statsInterval,omitempty"`
+	TPS           float64  `json:"tps,omitempty"`
+	StatsInterval Duration `json:"statsInterval,omitempty"`
 	// InclusionReapAfter bounds how long an un-included tx stays in the inclusion
 	// registry before it is reaped as expired. Tune to expected inclusion time on
 	// congested chains: too short reaps slow inclusions as expired (inflated
@@ -63,7 +62,6 @@ func (s Settings) Validate() error {
 // DefaultSettings returns the default configuration values
 func DefaultSettings() Settings {
 	return Settings{
-		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
 		InclusionReapAfter:    Duration(30 * time.Second),
@@ -99,7 +97,6 @@ func InitializeViper(cmd *cobra.Command) error {
 		"trackBlocks":           "track-blocks",
 		"prewarm":               "prewarm",
 		"trackUserLatency":      "track-user-latency",
-		"workers":               "workers",
 		"rampUp":                "ramp-up",
 		"reportPath":            "report-path",
 		"txsDir":                "txs-dir",
@@ -128,7 +125,6 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("trackBlocks", defaults.TrackBlocks)
 	viper.SetDefault("prewarm", defaults.Prewarm)
 	viper.SetDefault("trackUserLatency", defaults.TrackUserLatency)
-	viper.SetDefault("workers", defaults.TasksPerEndpoint)
 	viper.SetDefault("rampUp", defaults.RampUp)
 	viper.SetDefault("reportPath", defaults.ReportPath)
 	viper.SetDefault("txsDir", defaults.TxsDir)
@@ -163,7 +159,6 @@ func LoadSettings(settings *Settings) error {
 // ResolveSettings gets the final resolved settings from Viper
 func ResolveSettings() *Settings {
 	return &Settings{
-		TasksPerEndpoint:      viper.GetInt("workers"),
 		TPS:                   viper.GetFloat64("tps"),
 		StatsInterval:         Duration(viper.GetDuration("statsInterval")),
 		InclusionReapAfter:    Duration(viper.GetDuration("inclusionReapAfter")),

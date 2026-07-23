@@ -39,7 +39,7 @@ type RunSummary struct {
 	// DroppedAtCap is the count of successful sends rejected at the in-flight cap;
 	// excluded from the inclusion denominator (they were never registered).
 	DroppedAtCap uint64
-	// InflightAtShutdown is len(inflight) read after workers and tracker joined.
+	// InflightAtShutdown is len(inflight) read after sender and tracker joined.
 	InflightAtShutdown uint64
 }
 

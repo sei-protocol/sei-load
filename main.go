@@ -56,7 +56,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
 	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
-	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
+	rootCmd.Flags().IntP("buffer-size", "b", 0, "Sender queue size")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
 	rootCmd.Flags().Bool("debug", false, "Log each request")
@@ -64,7 +64,6 @@ func init() {
 	rootCmd.Flags().Bool("track-blocks", false, "Track blocks")
 	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
-	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
 	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
@@ -132,11 +131,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
 	log.Printf("📁 Config file: %s", configFile)
 	log.Printf("🎯 Endpoints: %d", len(cfg.Endpoints))
-	log.Printf("👥 Tasks per endpoint: %d", cfg.Settings.TasksPerEndpoint)
-	log.Printf("🔧 Total tasks: %d", len(cfg.Endpoints)*cfg.Settings.TasksPerEndpoint)
 	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
 	log.Printf("⏱️  Stats interval: %v", cfg.Settings.StatsInterval.ToDuration())
-	log.Printf("📦 Buffer size per worker: %d", cfg.Settings.BufferSize)
+	log.Printf("📦 Sender queue size: %d", cfg.Settings.BufferSize)
 	if cfg.Settings.TPS > 0 {
 		log.Printf("📈 Transactions per second: %.2f", cfg.Settings.TPS)
 	}
@@ -227,7 +224,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
 		if cfg.Settings.TPS > 0 {
 			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), max(1, int(cfg.Settings.TPS)))
-			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
+			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across the sender", cfg.Settings.TPS)
 		}
 
 		// Create and start block collector if endpoints are available
@@ -313,7 +310,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			}
 			// Create the sender from the config struct
 			sharedSender := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
-			// Start the sender (starts all workers)
+			// Start the sender.
 			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
 			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
 			snd = sharedSender
@@ -372,7 +369,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		ramper.LogFinalStats()
 	}
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
-	// Read AFTER service.Run returns: both workers and the tracker have joined,
+	// Read AFTER service.Run returns: both sender and the tracker have joined,
 	// so inflightAtShutdown is final and the conservation identity holds.
 	if inclusionTracker, ok := inclusion.Get(); ok {
 		incl := inclusionTracker.Summary()

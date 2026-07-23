@@ -15,7 +15,6 @@
       }
     ],
     "settings": {
-      "workers": 500,
       "tps": 0,
       "statsInterval": "5s",
       "bufferSize": 1000,

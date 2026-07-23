@@ -109,7 +109,7 @@ func newInclusionTrackerWithSource(t *InclusionTracker, source blockSource) *Inc
 }
 
 // Register hands ownership of tx's InclusionTime to the tracker. Caller must
-// invoke it only for successful sends, at send-completion (see worker.go), so
+// invoke it only for successful sends, at send-completion, so
 // registered ⊆ succeeded holds. At cap the tx is dropped and counted.
 func (t *InclusionTracker) Register(tx *types.LoadTx) {
 	hash := tx.EthTx.Hash()
@@ -259,7 +259,7 @@ func (t *InclusionTracker) reap() {
 	}
 }
 
-// InclusionSummary is the conservation tally. Read only after both workers and
+// InclusionSummary is the conservation tally. Read only after both sender and
 // the tracker have joined, so inflightAtShutdown is final.
 type InclusionSummary struct {
 	Included           uint64

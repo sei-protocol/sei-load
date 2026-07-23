@@ -38,66 +38,12 @@ var (
 // Return values are discarded because OTel invokes the callbacks on each
 // collection; we never read the instrument handles.
 func init() {
-	utils.OrPanic1(meter.Int64ObservableGauge(
-		"worker_queue_length",
-		metric.WithDescription("Length of the worker's queue"),
-		metric.WithUnit("{count}"),
-		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
-			for _, ss := range meteredSenders.Get() {
-				_ = ss
-				/*for _, stats := range ss.ShardStats() {
-					observer.Observe(int64(stats.TxsQueued), metric.WithAttributes(
-						attribute.String("endpoint", stats.Endpoint),
-						attribute.Int("worker_id", stats.ID),
-						attribute.String("chain_id", stats.ChainID),
-					))
-				}*/
-			}
-			return nil
-		})))
-
 	utils.OrPanic1(meter.Float64ObservableGauge(
 		"tps_achieved",
 		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
 		metric.WithUnit("{transactions}/s"),
 		metric.WithFloat64Callback(observeTPS)))
 }
-
-type Registry[T comparable] struct {
-	r utils.RWMutex[map[T]struct{}]
-}
-
-func (r *Registry[T]) Get() []T {
-	for r := range r.r.RLock() {
-		var vs []T
-		for v := range r {
-			vs = append(vs, v)
-		}
-		return vs
-	}
-	panic("unreachable")
-}
-
-func NewRegistry[T comparable]() *Registry[T] {
-	return &Registry[T]{r: utils.NewRWMutex(map[T]struct{}{})}
-}
-
-func (r *Registry[T]) MustRegister(val T) (cancel func()) {
-	for r := range r.r.Lock() {
-		if _, ok := r[val]; ok {
-			panic("already registered")
-		}
-		r[val] = struct{}{}
-	}
-	return func() {
-		for r := range r.r.Lock() {
-			delete(r, val)
-		}
-	}
-}
-
-// meteredChainWorkers is the registry the worker_queue_length callback reads.
-var meteredSenders = NewRegistry[*ShardedSender]()
 
 var tpsObserverRegistry = utils.NewRWMutex(map[tpsSampleKey]float64{})
 

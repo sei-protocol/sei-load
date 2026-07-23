@@ -117,7 +117,7 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
 		attribute.String("seiload.endpoint", endpoint),
-		attribute.Int("seiload.worker_id", id),
+		attribute.Int("seiload.endpoint_id", id),
 		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
 	defer span.End()

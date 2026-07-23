@@ -30,7 +30,6 @@ Edit `my-config.json`:
     "newAccountRate": 0.1
   },
   "settings": {
-    "workers": 5,
     "tps": 100,
     "statsInterval": "10s",
     "bufferSize": 1000,
@@ -50,10 +49,9 @@ Edit `my-config.json`:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config, -c` | | Config file path (required) |
-| `--workers, -w` | 1 | Workers per endpoint |
 | `--tps, -t` | 0 | Transactions per second (0 = unlimited) |
 | `--stats-interval, -s` | 10s | Stats logging interval |
-| `--buffer-size, -b` | 1000 | Buffer size per worker |
+| `--buffer-size, -b` | 1000 | Sender queue size |
 | `--dry-run` | false | Simulate without sending |
 | `--debug` | false | Log each transaction |
 | `--track-receipts` | false | Enable the block-indexed tx→inclusion tracker (stamps InclusionTime; reports included/expired/inflight-at-shutdown) |
@@ -66,12 +64,12 @@ Edit `my-config.json`:
 
 ### Basic Load Test
 ```bash
-./seiload --config my-config.json --workers 5 --tps 100
+./seiload --config my-config.json --tps 100
 ```
 
 ### High Throughput Test
 ```bash
-./seiload --config my-config.json --workers 20 --buffer-size 2000
+./seiload --config my-config.json --buffer-size 2000 --max-in-flight 20000
 ```
 
 ### Debug Mode
@@ -122,7 +120,6 @@ Edit `my-config.json`:
 ### Settings
 ```json
 "settings": {
-  "workers": 5,
   "tps": 100,
   "statsInterval": "10s",
   "bufferSize": 1000,
@@ -133,10 +130,9 @@ Edit `my-config.json`:
 **Settings Precedence**: CLI flags > Config file settings > Default values
 
 Available settings:
-- `workers`: Number of workers per endpoint
 - `tps`: Transactions per second (0 = unlimited)
 - `statsInterval`: Stats logging interval (e.g., "10s", "5m")
-- `bufferSize`: Buffer size per worker
+- `bufferSize`: Sender queue size
 - `dryRun`: Simulate without sending transactions
 - `debug`: Enable debug logging
 - `trackReceipts`: Track transaction receipts
@@ -225,10 +221,10 @@ make clean
 - Try `--dry-run` to test config
 
 ### Low Performance
-- Increase `--workers`
 - Increase `--buffer-size`
+- Increase `--max-in-flight` for open-loop runs
 
 ### Memory Issues
 - Reduce `--buffer-size`
-- Reduce worker count
+- Reduce `--max-in-flight` for open-loop runs
 - Disable receipt tracking

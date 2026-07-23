@@ -18,7 +18,7 @@ import (
 	"github.com/sei-protocol/sei-load/utils/scope"
 )
 
-// ShardedSender implements TxSender with multiple workers, one per endpoint
+// ShardedSender implements TxSender across multiple endpoints.
 type ShardedSender struct {
 	cfg       *config.LoadConfig
 	queue     *TxsQueue
@@ -67,13 +67,11 @@ func (ss *ShardedSender) getNonce(ctx context.Context, client *ethClient, addr c
 	return 0, ctx.Err()
 }
 
-// Start initializes and starts all workers
+// Run initializes the sender loop.
 func (ss *ShardedSender) Run(ctx context.Context) error {
 	if len(ss.cfg.Endpoints) == 0 && !ss.cfg.Settings.DryRun {
 		return fmt.Errorf("no endpoints configured")
 	}
-	cancel := meteredSenders.MustRegister(ss)
-	defer cancel()
 	signer := ethtypes.LatestSignerForChainID(ss.cfg.GetChainID())
 	signing := semaphore.NewWeighted(int64(runtime.GOMAXPROCS(0)))
 	client, err := newEthClient(ctx, &ethClientConfig{
