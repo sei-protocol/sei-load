@@ -11,20 +11,17 @@ import (
 type Collector struct {
 	mu sync.RWMutex
 
-	// Transaction counts by scenario and endpoint
-	txCounts map[string]map[string]uint64 // [scenario][endpoint] -> count
+	// Transaction counts by scenario
+	txCounts map[string]uint64
 
-	// Latency tracking per endpoint
-	latencies map[string][]time.Duration // [endpoint] -> []latency
+	// Latency tracking
+	latencies []time.Duration
 
 	// TPS tracking with 10-second windows
-	tpsWindows map[string]*TPSWindow // [endpoint] -> TPS window
-
-	// Overall TPS tracking across all endpoints
-	overallTpsWindow *TPSWindow
+	tpsWindow *TPSWindow
 
 	// Window-based tracking for periodic reporting
-	windowStats map[string]*WindowStats // [endpoint] -> window stats
+	windowStats *WindowStats
 
 	// Block data collector
 	blockCollector *BlockCollector
@@ -48,75 +45,51 @@ type TPSWindow struct {
 // NewCollector creates a new statistics collector
 func NewCollector() *Collector {
 	return &Collector{
-		txCounts:          make(map[string]map[string]uint64),
-		latencies:         make(map[string][]time.Duration),
-		tpsWindows:        make(map[string]*TPSWindow),
-		windowStats:       make(map[string]*WindowStats),
-		overallTpsWindow:  &TPSWindow{timestamps: make([]time.Time, 0)},
+		txCounts:          make(map[string]uint64),
+		latencies:         make([]time.Duration, 0),
+		tpsWindow:         &TPSWindow{timestamps: make([]time.Time, 0)},
+		windowStats:       &WindowStats{windowStart: time.Now()},
 		startTime:         time.Now(),
 		lastWindowTime:    time.Now(),
-		maxLatencyHistory: 10000, // Keep last 10k latencies per endpoint
+		maxLatencyHistory: 10000, // Keep last 10k latencies
 	}
 }
 
 // RecordTransaction records a transaction attempt
-func (c *Collector) RecordTransaction(scenario, endpoint string, latency time.Duration, success bool) {
+func (c *Collector) RecordTransaction(scenario string, latency time.Duration, success bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Initialize maps if needed
-	if c.txCounts[scenario] == nil {
-		c.txCounts[scenario] = make(map[string]uint64)
-	}
-	if c.latencies[endpoint] == nil {
-		c.latencies[endpoint] = make([]time.Duration, 0)
-	}
-	if c.tpsWindows[endpoint] == nil {
-		c.tpsWindows[endpoint] = &TPSWindow{
-			timestamps: make([]time.Time, 0),
-		}
-	}
-	if c.windowStats[endpoint] == nil {
-		c.windowStats[endpoint] = &WindowStats{
-			windowStart: time.Now(),
-		}
-	}
-
 	// Record transaction count
-	c.txCounts[scenario][endpoint]++
+	c.txCounts[scenario]++
 	c.totalTxs++
 
 	// Record latency (only for successful transactions)
 	if success {
-		c.recordLatency(endpoint, latency)
+		c.recordLatency(latency)
 	}
 
 	// Record TPS
-	c.recordTPS(endpoint)
-	c.recordOverallTPS()
+	c.recordTPS()
 
 	// Record window stats
-	c.recordWindowStats(endpoint, latency)
+	c.recordWindowStats(latency)
 }
 
 // recordLatency adds a latency measurement, maintaining history limit
-func (c *Collector) recordLatency(endpoint string, latency time.Duration) {
-	latencyList := c.latencies[endpoint]
-
+func (c *Collector) recordLatency(latency time.Duration) {
 	// Add new latency
-	latencyList = append(latencyList, latency)
+	c.latencies = append(c.latencies, latency)
 
 	// Trim if over limit (keep most recent)
-	if len(latencyList) > c.maxLatencyHistory {
-		latencyList = latencyList[len(latencyList)-c.maxLatencyHistory:]
+	if len(c.latencies) > c.maxLatencyHistory {
+		c.latencies = c.latencies[len(c.latencies)-c.maxLatencyHistory:]
 	}
-
-	c.latencies[endpoint] = latencyList
 }
 
-// recordTPS updates the TPS window for an endpoint
-func (c *Collector) recordTPS(endpoint string) {
-	window := c.tpsWindows[endpoint]
+// recordTPS updates the TPS window
+func (c *Collector) recordTPS() {
+	window := c.tpsWindow
 	window.mu.Lock()
 	defer window.mu.Unlock()
 
@@ -141,35 +114,9 @@ func (c *Collector) recordTPS(endpoint string) {
 	}
 }
 
-// recordOverallTPS updates the overall TPS window
-func (c *Collector) recordOverallTPS() {
-	now := time.Now()
-	c.overallTpsWindow.mu.Lock()
-	defer c.overallTpsWindow.mu.Unlock()
-
-	c.overallTpsWindow.timestamps = append(c.overallTpsWindow.timestamps, now)
-
-	// Remove timestamps older than 10 seconds
-	cutoff := now.Add(-10 * time.Second)
-	validIndex := 0
-	for i, ts := range c.overallTpsWindow.timestamps {
-		if ts.After(cutoff) {
-			validIndex = i
-			break
-		}
-	}
-	c.overallTpsWindow.timestamps = c.overallTpsWindow.timestamps[validIndex:]
-
-	// Calculate current TPS and update max
-	currentTPS := float64(len(c.overallTpsWindow.timestamps)) / 10.0
-	if currentTPS > c.overallTpsWindow.maxTPS {
-		c.overallTpsWindow.maxTPS = currentTPS
-	}
-}
-
-// recordWindowStats updates the window stats for an endpoint
-func (c *Collector) recordWindowStats(endpoint string, latency time.Duration) {
-	windowStats := c.windowStats[endpoint]
+// recordWindowStats updates the window stats
+func (c *Collector) recordWindowStats(latency time.Duration) {
+	windowStats := c.windowStats
 
 	// Update tx count
 	windowStats.txCount++
@@ -198,23 +145,21 @@ func (c *Collector) recordWindowStats(endpoint string, latency time.Duration) {
 	}
 }
 
-// ResetWindowStats resets the window statistics for all endpoints
+// ResetWindowStats resets the window statistics
 func (c *Collector) ResetWindowStats() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	now := time.Now()
-	for endpoint, windowStats := range c.windowStats {
-		// Preserve cumulative maximums
-		cumulativeMaxTPS := windowStats.cumulativeMaxTPS
-		cumulativeMaxLatency := windowStats.cumulativeMaxLatency
+	// Preserve cumulative maximums
+	cumulativeMaxTPS := c.windowStats.cumulativeMaxTPS
+	cumulativeMaxLatency := c.windowStats.cumulativeMaxLatency
 
-		// Reset window stats
-		c.windowStats[endpoint] = &WindowStats{
-			windowStart:          now,
-			cumulativeMaxTPS:     cumulativeMaxTPS,
-			cumulativeMaxLatency: cumulativeMaxLatency,
-		}
+	// Reset window stats
+	c.windowStats = &WindowStats{
+		windowStart:          now,
+		cumulativeMaxTPS:     cumulativeMaxTPS,
+		cumulativeMaxLatency: cumulativeMaxLatency,
 	}
 	c.lastWindowTime = now
 }
@@ -225,83 +170,53 @@ func (c *Collector) GetStats() Stats {
 	defer c.mu.RUnlock()
 
 	stats := Stats{
-		StartTime:     c.startTime,
-		TotalTxs:      c.totalTxs,
-		TxCounts:      make(map[string]map[string]uint64),
-		EndpointStats: make(map[string]EndpointStats),
+		StartTime: c.startTime,
+		TotalTxs:  c.totalTxs,
+		TxCounts:  make(map[string]uint64),
 	}
 
 	// Copy transaction counts
-	for scenario, endpoints := range c.txCounts {
-		stats.TxCounts[scenario] = make(map[string]uint64)
-		for endpoint, count := range endpoints {
-			stats.TxCounts[scenario][endpoint] = count
-		}
+	for scenario, count := range c.txCounts {
+		stats.TxCounts[scenario] = count
 	}
 
-	// Calculate endpoint statistics
-	for endpoint, latencyList := range c.latencies {
-		endpointStats := EndpointStats{
-			Endpoint: endpoint,
-		}
+	// Calculate transaction statistics
+	transactionStats := TransactionStats{}
+	if len(c.latencies) > 0 {
+		sortedLatencies := make([]time.Duration, len(c.latencies))
+		copy(sortedLatencies, c.latencies)
+		sort.Slice(sortedLatencies, func(i, j int) bool {
+			return sortedLatencies[i] < sortedLatencies[j]
+		})
 
-		// Calculate latency percentiles
-		if len(latencyList) > 0 {
-			sortedLatencies := make([]time.Duration, len(latencyList))
-			copy(sortedLatencies, latencyList)
-			sort.Slice(sortedLatencies, func(i, j int) bool {
-				return sortedLatencies[i] < sortedLatencies[j]
-			})
-
-			endpointStats.P50Latency = calculatePercentile(sortedLatencies, 50)
-			endpointStats.P99Latency = calculatePercentile(sortedLatencies, 99)
-			endpointStats.SampleCount = len(sortedLatencies)
-		}
-
-		// Get TPS data
-		if window := c.tpsWindows[endpoint]; window != nil {
-			window.mu.RLock()
-			endpointStats.MaxTPS = window.maxTPS
-			// Calculate current TPS
-			now := time.Now()
-			cutoff := now.Add(-10 * time.Second)
-			currentCount := 0
-			for _, ts := range window.timestamps {
-				if ts.After(cutoff) {
-					currentCount++
-				}
-			}
-			endpointStats.CurrentTPS = float64(currentCount) / 10.0
-			window.mu.RUnlock()
-		}
-
-		// Get window stats
-		if windowStats := c.windowStats[endpoint]; windowStats != nil {
-			endpointStats.WindowTxCount = windowStats.txCount
-			endpointStats.WindowLatencySum = windowStats.latencySum
-			endpointStats.WindowLatencyCount = windowStats.latencyCount
-			endpointStats.WindowMaxLatency = windowStats.maxLatency
-			endpointStats.WindowMinLatency = windowStats.minLatency
-			endpointStats.CumulativeMaxTPS = windowStats.cumulativeMaxTPS
-			endpointStats.CumulativeMaxLatency = windowStats.cumulativeMaxLatency
-		}
-
-		stats.EndpointStats[endpoint] = endpointStats
+		transactionStats.P50Latency = calculatePercentile(sortedLatencies, 50)
+		transactionStats.P99Latency = calculatePercentile(sortedLatencies, 99)
+		transactionStats.SampleCount = len(sortedLatencies)
 	}
 
-	// Get overall TPS
-	c.overallTpsWindow.mu.RLock()
-	stats.OverallMaxTPS = c.overallTpsWindow.maxTPS
+	c.tpsWindow.mu.RLock()
+	transactionStats.MaxTPS = c.tpsWindow.maxTPS
 	now := time.Now()
 	cutoff := now.Add(-10 * time.Second)
 	currentCount := 0
-	for _, ts := range c.overallTpsWindow.timestamps {
+	for _, ts := range c.tpsWindow.timestamps {
 		if ts.After(cutoff) {
 			currentCount++
 		}
 	}
-	stats.OverallCurrentTPS = float64(currentCount) / 10.0
-	c.overallTpsWindow.mu.RUnlock()
+	transactionStats.CurrentTPS = float64(currentCount) / 10.0
+	c.tpsWindow.mu.RUnlock()
+
+	transactionStats.WindowTxCount = c.windowStats.txCount
+	transactionStats.WindowLatencySum = c.windowStats.latencySum
+	transactionStats.WindowLatencyCount = c.windowStats.latencyCount
+	transactionStats.WindowMaxLatency = c.windowStats.maxLatency
+	transactionStats.WindowMinLatency = c.windowStats.minLatency
+	transactionStats.CumulativeMaxTPS = c.windowStats.cumulativeMaxTPS
+	transactionStats.CumulativeMaxLatency = c.windowStats.cumulativeMaxLatency
+	stats.TransactionStats = transactionStats
+	stats.OverallMaxTPS = transactionStats.MaxTPS
+	stats.OverallCurrentTPS = transactionStats.CurrentTPS
 
 	// Get block stats
 	if c.blockCollector != nil {
@@ -342,16 +257,15 @@ func calculatePercentile(sorted []time.Duration, percentile int) time.Duration {
 type Stats struct {
 	StartTime         time.Time
 	TotalTxs          uint64
-	TxCounts          map[string]map[string]uint64 // [scenario][endpoint] -> count
-	EndpointStats     map[string]EndpointStats
+	TxCounts          map[string]uint64 // [scenario] -> count
+	TransactionStats  TransactionStats
 	OverallMaxTPS     float64
 	OverallCurrentTPS float64
 	BlockStats        *BlockStats // Block-related statistics
 }
 
-// EndpointStats represents statistics for a specific endpoint
-type EndpointStats struct {
-	Endpoint    string
+// TransactionStats represents transaction performance statistics.
+type TransactionStats struct {
 	P50Latency  time.Duration
 	P99Latency  time.Duration
 	MaxTPS      float64
@@ -406,32 +320,27 @@ func (s *Stats) FormatStats() string {
 
 	// Transaction counts by scenario
 	result += "Transaction Counts by Scenario:\n"
-	for scenario, endpoints := range s.TxCounts {
-		result += fmt.Sprintf("  %s:\n", scenario)
-		for endpoint, count := range endpoints {
-			result += fmt.Sprintf("    %s: %d\n", endpoint, count)
-		}
+	for scenario, count := range s.TxCounts {
+		result += fmt.Sprintf("  %s: %d\n", scenario, count)
 	}
 
-	// Endpoint statistics
-	result += "\nEndpoint Performance:\n"
-	for endpoint, stats := range s.EndpointStats {
-		result += fmt.Sprintf("  %s:\n", endpoint)
-		result += fmt.Sprintf("    Latency P50: %v | P99: %v (samples: %d)\n",
-			stats.P50Latency.Round(time.Millisecond),
-			stats.P99Latency.Round(time.Millisecond),
-			stats.SampleCount)
-		result += fmt.Sprintf("    TPS Current: %.2f | Max (10s): %.2f\n",
-			stats.CurrentTPS, stats.MaxTPS)
-
-		// Window stats
-		result += fmt.Sprintf("    Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
-			stats.WindowTxCount, stats.WindowLatencySum.Round(time.Millisecond), stats.WindowLatencyCount)
-		result += fmt.Sprintf("    Window Max Latency: %v | Window Min Latency: %v\n",
-			stats.WindowMaxLatency.Round(time.Millisecond), stats.WindowMinLatency.Round(time.Millisecond))
-		result += fmt.Sprintf("    Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
-			stats.CumulativeMaxTPS, stats.CumulativeMaxLatency.Round(time.Millisecond))
-	}
+	result += "\nTransaction Performance:\n"
+	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
+		s.TransactionStats.P50Latency.Round(time.Millisecond),
+		s.TransactionStats.P99Latency.Round(time.Millisecond),
+		s.TransactionStats.SampleCount)
+	result += fmt.Sprintf("  TPS Current: %.2f | Max (10s): %.2f\n",
+		s.TransactionStats.CurrentTPS, s.TransactionStats.MaxTPS)
+	result += fmt.Sprintf("  Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
+		s.TransactionStats.WindowTxCount,
+		s.TransactionStats.WindowLatencySum.Round(time.Millisecond),
+		s.TransactionStats.WindowLatencyCount)
+	result += fmt.Sprintf("  Window Max Latency: %v | Window Min Latency: %v\n",
+		s.TransactionStats.WindowMaxLatency.Round(time.Millisecond),
+		s.TransactionStats.WindowMinLatency.Round(time.Millisecond))
+	result += fmt.Sprintf("  Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
+		s.TransactionStats.CumulativeMaxTPS,
+		s.TransactionStats.CumulativeMaxLatency.Round(time.Millisecond))
 
 	// Overall TPS
 	result += fmt.Sprintf("\nOverall TPS: Current: %.2f | Max (10s): %.2f\n",

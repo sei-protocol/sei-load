@@ -48,7 +48,9 @@ func (c *Collector) EmitRunSummary(ctx context.Context, summary RunSummary) {
 	c.mu.RLock()
 	duration := time.Since(c.startTime)
 	totalTxs := c.totalTxs
-	finalTPS := c.overallTpsWindow.maxTPS
+	c.tpsWindow.mu.RLock()
+	finalTPS := c.tpsWindow.maxTPS
+	c.tpsWindow.mu.RUnlock()
 	c.mu.RUnlock()
 
 	runDurationSeconds.Record(ctx, duration.Seconds())

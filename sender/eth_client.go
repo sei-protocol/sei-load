@@ -25,10 +25,11 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type ethClientConfig struct {
-	DryRun    bool
-	ChainID   string
-	Endpoints []string
-	Collector *stats.Collector
+	DryRun           bool
+	ChainID          string
+	Endpoints        []string
+	ConnsPerEndpoint int
+	Collector        *stats.Collector
 }
 
 type ethClient struct {
@@ -44,6 +45,10 @@ func (c *ethClient) Close() {
 
 func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient, err error) {
 	var clients []*ethclient.Client
+	connsPerEndpoint := cfg.ConnsPerEndpoint
+	if connsPerEndpoint <= 0 {
+		return nil, fmt.Errorf("ConnsPerEndpoint = %d, want > 0", connsPerEndpoint)
+	}
 	defer func() {
 		if err != nil {
 			for _, eth := range clients {
@@ -61,11 +66,13 @@ func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient, err 
 		case "http", "https":
 			opts = append(opts, rpc.WithHTTPClient(newHttpClient()))
 		}
-		rpcClient, err := rpc.DialOptions(ctx, endpoint, opts...)
-		if err != nil {
-			return nil, fmt.Errorf("rpc.Dial(%q): %w", endpoint, err)
+		for range connsPerEndpoint {
+			rpcClient, err := rpc.DialOptions(ctx, endpoint, opts...)
+			if err != nil {
+				return nil, fmt.Errorf("rpc.Dial(%q): %w", endpoint, err)
+			}
+			clients = append(clients, ethclient.NewClient(rpcClient))
 		}
-		clients = append(clients, ethclient.NewClient(rpcClient))
 	}
 	return &ethClient{cfg: cfg, clients: clients}, nil
 }
@@ -92,32 +99,27 @@ func newHttpClient() *http.Client {
 	}
 }
 
-// Addresses are sharded across endpoints so that each account is handled by a single RPC nonce.
-// TODO: make this stickiness optional
-func (c *ethClient) shardID(addr common.Address) int {
+// Addresses are sharded across client connections so each account is handled by
+// a single RPC connection.
+// TODO: make this stickiness optional.
+func (c *ethClient) clientID(addr common.Address) int {
+	if len(c.clients) <= 0 {
+		return 0
+	}
 	addressBigInt := new(big.Int).SetBytes(addr.Bytes())
-	mod := new(big.Int).Mod(addressBigInt, big.NewInt(int64(len(c.cfg.Endpoints))))
+	mod := new(big.Int).Mod(addressBigInt, big.NewInt(int64(len(c.clients))))
 	return int(mod.Int64())
 }
 
 func (c *ethClient) Nonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return c.clients[c.shardID(addr)].NonceAt(ctx, addr, nil)
-}
-
-func (c *ethClient) endpointFor(addr common.Address) (int, string) {
-	if c.cfg.DryRun && len(c.cfg.Endpoints) == 0 {
-		return 0, "dry-run"
-	}
-	id := c.shardID(addr)
-	return id, c.cfg.Endpoints[id]
+	return c.clients[c.clientID(addr)].NonceAt(ctx, addr, nil)
 }
 
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
-	id, endpoint := c.endpointFor(tx.Scenario.Sender.Address)
+	id := c.clientID(tx.Scenario.Sender.Address)
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
-		attribute.String("seiload.endpoint", endpoint),
-		attribute.Int("seiload.endpoint_id", id),
+		attribute.Int("seiload.client_id", id),
 		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
 	defer span.End()
@@ -136,23 +138,20 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	sendLatency.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(
 			attribute.String("scenario", tx.Scenario.Name),
-			attribute.String("endpoint", endpoint),
 			attribute.String("chain_id", c.cfg.ChainID),
 			statusAttrFromError(err)),
 	)
 	if err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 			attribute.String("reason", "rpc"),
 		))
 		span.RecordError(err)
 	} else {
 		txsAccepted.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("endpoint", endpoint),
 			attribute.String("scenario", tx.Scenario.Name),
 		))
 	}
-	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, endpoint, time.Since(start), err == nil)
+	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, time.Since(start), err == nil)
 	return err
 }

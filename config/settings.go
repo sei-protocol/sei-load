@@ -20,6 +20,7 @@ type Settings struct {
 	// un-included), too long inflates the in-flight map.
 	InclusionReapAfter    Duration `json:"inclusionReapAfter,omitempty"`
 	BufferSize            int      `json:"bufferSize,omitempty"`
+	ConnsPerEndpoint      int      `json:"connsPerEndpoint,omitempty"`
 	DryRun                bool     `json:"dryRun,omitempty"`
 	Debug                 bool     `json:"debug,omitempty"`
 	TrackReceipts         bool     `json:"trackReceipts,omitempty"`
@@ -56,6 +57,9 @@ func (s Settings) Validate() error {
 	if s.MaxInFlight <= 0 {
 		return fmt.Errorf("MaxInFlight = %v, want > 0", s.MaxInFlight)
 	}
+	if s.ConnsPerEndpoint <= 0 {
+		return fmt.Errorf("ConnsPerEndpoint = %v, want > 0", s.ConnsPerEndpoint)
+	}
 	return nil
 }
 
@@ -66,6 +70,7 @@ func DefaultSettings() Settings {
 		StatsInterval:         Duration(10 * time.Second),
 		InclusionReapAfter:    Duration(30 * time.Second),
 		BufferSize:            1000,
+		ConnsPerEndpoint:      1,
 		DryRun:                false,
 		Debug:                 false,
 		TrackReceipts:         false,
@@ -90,6 +95,7 @@ func InitializeViper(cmd *cobra.Command) error {
 		"statsInterval":         "stats-interval",
 		"inclusionReapAfter":    "inclusion-reap-after",
 		"bufferSize":            "buffer-size",
+		"connsPerEndpoint":      "conns-per-endpoint",
 		"tps":                   "tps",
 		"dryRun":                "dry-run",
 		"debug":                 "debug",
@@ -118,6 +124,7 @@ func InitializeViper(cmd *cobra.Command) error {
 	viper.SetDefault("statsInterval", defaults.StatsInterval.ToDuration())
 	viper.SetDefault("inclusionReapAfter", defaults.InclusionReapAfter.ToDuration())
 	viper.SetDefault("bufferSize", defaults.BufferSize)
+	viper.SetDefault("connsPerEndpoint", defaults.ConnsPerEndpoint)
 	viper.SetDefault("tps", defaults.TPS)
 	viper.SetDefault("dryRun", defaults.DryRun)
 	viper.SetDefault("debug", defaults.Debug)
@@ -163,6 +170,7 @@ func ResolveSettings() *Settings {
 		StatsInterval:         Duration(viper.GetDuration("statsInterval")),
 		InclusionReapAfter:    Duration(viper.GetDuration("inclusionReapAfter")),
 		BufferSize:            viper.GetInt("bufferSize"),
+		ConnsPerEndpoint:      viper.GetInt("connsPerEndpoint"),
 		DryRun:                viper.GetBool("dryRun"),
 		Debug:                 viper.GetBool("debug"),
 		TrackReceipts:         viper.GetBool("trackReceipts"),

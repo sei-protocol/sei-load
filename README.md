@@ -33,6 +33,7 @@ Edit `my-config.json`:
     "tps": 100,
     "statsInterval": "10s",
     "bufferSize": 1000,
+    "connsPerEndpoint": 1,
     "trackUserLatency": true
   }
 }
@@ -52,6 +53,7 @@ Edit `my-config.json`:
 | `--tps, -t` | 0 | Transactions per second (0 = unlimited) |
 | `--stats-interval, -s` | 10s | Stats logging interval |
 | `--buffer-size, -b` | 1000 | Sender queue size |
+| `--conns-per-endpoint` | 1 | RPC connections to open per endpoint |
 | `--dry-run` | false | Simulate without sending |
 | `--debug` | false | Log each transaction |
 | `--track-receipts` | false | Enable the block-indexed tx→inclusion tracker (stamps InclusionTime; reports included/expired/inflight-at-shutdown) |
@@ -69,7 +71,7 @@ Edit `my-config.json`:
 
 ### High Throughput Test
 ```bash
-./seiload --config my-config.json --buffer-size 2000 --max-in-flight 20000
+./seiload --config my-config.json --buffer-size 2000 --max-in-flight 20000 --conns-per-endpoint 4
 ```
 
 ### Debug Mode
@@ -123,6 +125,7 @@ Edit `my-config.json`:
   "tps": 100,
   "statsInterval": "10s",
   "bufferSize": 1000,
+  "connsPerEndpoint": 1,
   "trackUserLatency": true
 }
 ```
@@ -133,6 +136,7 @@ Available settings:
 - `tps`: Transactions per second (0 = unlimited)
 - `statsInterval`: Stats logging interval (e.g., "10s", "5m")
 - `bufferSize`: Sender queue size
+- `connsPerEndpoint`: RPC connections to open per endpoint
 - `dryRun`: Simulate without sending transactions
 - `debug`: Enable debug logging
 - `trackReceipts`: Track transaction receipts
