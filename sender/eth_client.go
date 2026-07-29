@@ -112,7 +112,7 @@ func (c *ethClient) clientID(addr common.Address) int {
 }
 
 func (c *ethClient) Nonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return c.clients[c.clientID(addr)].NonceAt(ctx, addr, nil)
+	return c.clients[c.clientID(addr)].PendingNonceAt(ctx, addr)
 }
 
 func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {

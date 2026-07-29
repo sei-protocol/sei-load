@@ -101,6 +101,29 @@ func TestEthClientSendTx_DryRunWithoutEndpoints(t *testing.T) {
 	require.NoError(t, client.Send(t.Context(), tx))
 }
 
+func TestEthClientNonceUsesPending(t *testing.T) {
+	api := newMockEthAPI()
+	srv := rpc.NewServer()
+	require.NoError(t, srv.RegisterName("eth", api))
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client, err := newEthClient(t.Context(), &ethClientConfig{
+		ChainID:          "test-chain",
+		Endpoints:        []string{ts.URL},
+		ConnsPerEndpoint: 1,
+		Collector:        stats.NewCollector(),
+	})
+	require.NoError(t, err)
+	defer client.Close()
+
+	nonce, err := client.Nonce(t.Context(), common.HexToAddress("0x0000000000000000000000000000000000000123"))
+	require.NoError(t, err)
+	require.EqualValues(t, 7, nonce)
+	require.Equal(t, []rpc.BlockNumber{rpc.PendingBlockNumber}, api.TransactionCountRequests())
+}
+
 func TestNewEthClientRejectsZeroConnsPerEndpoint(t *testing.T) {
 	client, err := newEthClient(t.Context(), &ethClientConfig{
 		ChainID:          "test-chain",
@@ -113,12 +136,17 @@ func TestNewEthClientRejectsZeroConnsPerEndpoint(t *testing.T) {
 }
 
 type mockEthAPI struct {
-	rawTxs utils.Mutex[*[][]byte]
+	rawTxs               utils.Mutex[*[][]byte]
+	transactionCountReqs utils.Mutex[*[]rpc.BlockNumber]
 }
 
 func newMockEthAPI() *mockEthAPI {
 	rawTxs := [][]byte{}
-	return &mockEthAPI{rawTxs: utils.NewMutex(&rawTxs)}
+	transactionCountReqs := []rpc.BlockNumber{}
+	return &mockEthAPI{
+		rawTxs:               utils.NewMutex(&rawTxs),
+		transactionCountReqs: utils.NewMutex(&transactionCountReqs),
+	}
 }
 
 func (m *mockEthAPI) SendRawTransaction(_ context.Context, rawTx hexutil.Bytes) (common.Hash, error) {
@@ -132,6 +160,20 @@ func (m *mockEthAPI) SendRawTransaction(_ context.Context, rawTx hexutil.Bytes) 
 func (m *mockEthAPI) RawTransactions() [][]byte {
 	for rawTxs := range m.rawTxs.Lock() {
 		return slices.Clone(*rawTxs)
+	}
+	panic("unreachable")
+}
+
+func (m *mockEthAPI) GetTransactionCount(_ context.Context, _ common.Address, block rpc.BlockNumber) (hexutil.Uint64, error) {
+	for reqs := range m.transactionCountReqs.Lock() {
+		*reqs = append(*reqs, block)
+	}
+	return hexutil.Uint64(7), nil
+}
+
+func (m *mockEthAPI) TransactionCountRequests() []rpc.BlockNumber {
+	for reqs := range m.transactionCountReqs.Lock() {
+		return slices.Clone(*reqs)
 	}
 	panic("unreachable")
 }
