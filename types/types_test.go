@@ -45,6 +45,9 @@ func TestAccountPoolRoundRobin(t *testing.T) {
 	rng := newTestRng(1)
 
 	require.Len(t, accounts, 3)
+	for _, account := range accounts {
+		require.True(t, account.Tracked)
+	}
 	require.Equal(t, accounts[1].Address, pool.NextAccount(rng).Address)
 	require.Equal(t, accounts[2].Address, pool.NextAccount(rng).Address)
 	require.Equal(t, accounts[0].Address, pool.NextAccount(rng).Address)
@@ -80,8 +83,10 @@ func TestAccountPoolMixedRate(t *testing.T) {
 	for i := 0; i < iterations; i++ {
 		account := pool.NextAccount(rng)
 		if original[account.Address] {
+			require.True(t, account.Tracked)
 			originalCount++
 		} else {
+			require.False(t, account.Tracked)
 			newCount++
 		}
 	}

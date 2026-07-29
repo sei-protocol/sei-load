@@ -109,7 +109,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 
 				// Send the transaction.
 				if err := client.Send(ctx, tx); err != nil {
-					log.Printf("client.Send(): %v", err)
+					log.Printf("client.Send(%v): %v", addr, err)
 					if !tx.Scenario.Sender.Tracked {
 						ss.queue.PopSent(addr)
 						return nil
@@ -118,6 +118,7 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 					if err != nil {
 						return err
 					}
+					log.Printf("resetting %v nonce to %v", addr, nonce)
 					ss.queue.Reset(addr, nonce)
 					return nil
 				}
