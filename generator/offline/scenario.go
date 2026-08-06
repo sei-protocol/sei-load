@@ -66,10 +66,16 @@ func validateConfig(cfg Config) error {
 		return fmt.Errorf("chain ID must be positive")
 	case cfg.GasPrice == nil || cfg.GasPrice.Sign() < 0:
 		return fmt.Errorf("gas price must be non-negative")
+	case cfg.GasPrice.BitLen() > 256:
+		return fmt.Errorf("gas price must fit in 256 bits")
 	case cfg.SenderBalance == nil || cfg.SenderBalance.Sign() < 0:
 		return fmt.Errorf("sender balance must be non-negative")
+	case cfg.SenderBalance.BitLen() > 256:
+		return fmt.Errorf("sender balance must fit in 256 bits")
 	case cfg.TransferValue == nil || cfg.TransferValue.Sign() < 0:
 		return fmt.Errorf("transfer value must be non-negative")
+	case cfg.TransferValue.BitLen() > 256:
+		return fmt.Errorf("transfer value must fit in 256 bits")
 	case cfg.GasLimit == 0:
 		return fmt.Errorf("gas limit must be positive")
 	default:

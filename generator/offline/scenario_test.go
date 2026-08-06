@@ -124,3 +124,50 @@ func TestNewScenarioRejectsInvalidConfig(t *testing.T) {
 	_, err = NewScenario("unknown", testConfig())
 	require.ErrorContains(t, err, "unsupported")
 }
+
+func TestNewScenarioValidatesUint256Values(t *testing.T) {
+	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+	cfg := testConfig()
+	cfg.GasPrice = new(big.Int).Set(maxUint256)
+	cfg.SenderBalance = new(big.Int).Set(maxUint256)
+	cfg.TransferValue = new(big.Int).Set(maxUint256)
+	_, err := NewScenario(Transfer, cfg)
+	require.NoError(t, err)
+
+	overflow := new(big.Int).Add(maxUint256, big.NewInt(1))
+	tests := []struct {
+		name        string
+		field       string
+		setOverflow func(*Config)
+	}{
+		{
+			name:  "gas price",
+			field: "gas price",
+			setOverflow: func(cfg *Config) {
+				cfg.GasPrice = overflow
+			},
+		},
+		{
+			name:  "sender balance",
+			field: "sender balance",
+			setOverflow: func(cfg *Config) {
+				cfg.SenderBalance = overflow
+			},
+		},
+		{
+			name:  "transfer value",
+			field: "transfer value",
+			setOverflow: func(cfg *Config) {
+				cfg.TransferValue = overflow
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := testConfig()
+			test.setOverflow(&cfg)
+			_, err := NewScenario(Transfer, cfg)
+			require.ErrorContains(t, err, test.field+" must fit in 256 bits")
+		})
+	}
+}
