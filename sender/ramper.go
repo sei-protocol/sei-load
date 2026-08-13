@@ -112,7 +112,7 @@ func (r *Ramper) WatchSLO(ctx context.Context) <-chan struct{} {
 	return ch
 }
 
-// Start initializes and starts all workers
+// Run runs the ramper.
 func (r *Ramper) Run(ctx context.Context) error {
 	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// TODO: Implement ramping logic

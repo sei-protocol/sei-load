@@ -15,7 +15,6 @@
     { "name": "EVMTransfer", "weight": 1 }
   ],
   "settings": {
-    "workers": 50,
     "tps": 19,
     "statsInterval": "10s",
     "bufferSize": 1000,

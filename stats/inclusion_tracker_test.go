@@ -64,16 +64,22 @@ func newTestTrackerLoop(t *testing.T, reapAfter time.Duration, maxInflight int, 
 // loadTx builds a LoadTx with a deterministic hash from nonce and an intended
 // send time, so latency math is exact.
 func loadTx(nonce uint64, intended time.Time) *types.LoadTx {
+	receiver := common.Address{}
 	eth := ethtypes.NewTx(&ethtypes.LegacyTx{
 		Nonce:    nonce,
 		GasPrice: big.NewInt(1),
 		Gas:      21000,
-		To:       &common.Address{},
+		To:       &receiver,
 		Value:    big.NewInt(0),
 	})
 	return &types.LoadTx{
-		EthTx:            eth,
-		Scenario:         &types.TxScenario{Name: "test"},
+		EthTx: eth,
+		Scenario: &types.TxScenario{
+			Name:     "test",
+			Nonce:    nonce,
+			Sender:   types.NewAccount(false),
+			Receiver: receiver,
+		},
 		IntendedSendTime: intended,
 	}
 }

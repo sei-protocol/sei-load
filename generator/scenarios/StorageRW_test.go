@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	mrand "math/rand/v2"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,6 +11,10 @@ import (
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
 )
+
+func newTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 // rmwSelector is the 4-byte function selector for StorageRWv1.rmw(uint256,bytes).
 // It is the ABI-derived discriminator the produced calldata must start with.
@@ -36,26 +41,27 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
 
 	// Mirror generator.mockDeployAll: attach the bound contract at a known address.
-	contractAddr := types.GenerateAccounts(1)[0].Address
+	contractAddr := types.GenerateAccounts(1, false)[0].Address
 	require.NoError(t, gen.Attach(cfg, contractAddr))
 
 	// Build the tx scenario the way the weighted generator does: a funded sender.
-	sender := types.GenerateAccounts(1)[0]
+	sender := types.GenerateAccounts(1, true)[0]
 	txScenario := &types.TxScenario{
 		Name:   scenarios.StorageRW,
+		Nonce:  0,
 		Sender: sender,
 	}
 
-	loadTx := gen.Generate(txScenario)
-	require.NotNil(t, loadTx)
-	require.NotNil(t, loadTx.EthTx)
+	tx, err := gen.Generate(newTestRng(1), txScenario)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
 
 	// The produced tx must target the deployed contract...
-	require.NotNil(t, loadTx.EthTx.To())
-	require.Equal(t, contractAddr, *loadTx.EthTx.To())
+	require.NotNil(t, tx.To())
+	require.Equal(t, contractAddr, *tx.To())
 
 	// ...and carry rmw calldata against the fixed slot 0.
-	data := loadTx.EthTx.Data()
+	data := tx.Data()
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 

@@ -1,8 +1,6 @@
 package sender
 
 import (
-	"context"
-
 	"github.com/sei-protocol/sei-load/utils"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,7 +23,7 @@ var (
 
 	txsAccepted = utils.OrPanic1(meter.Int64Counter(
 		"txs_accepted",
-		metric.WithDescription("Transactions successfully submitted to an endpoint"),
+		metric.WithDescription("Transactions successfully submitted"),
 		metric.WithUnit("{transactions}")))
 
 	txsRejected = utils.OrPanic1(meter.Int64Counter(
@@ -33,98 +31,6 @@ var (
 		metric.WithDescription("Transactions rejected by the target or local client, by reason"),
 		metric.WithUnit("{transactions}")))
 )
-
-// Observable instruments — registered in init for their callback side effect.
-// Return values are discarded because OTel invokes the callbacks on each
-// collection; we never read the instrument handles.
-func init() {
-	utils.OrPanic1(meter.Int64ObservableGauge(
-		"worker_queue_length",
-		metric.WithDescription("Length of the worker's queue"),
-		metric.WithUnit("{count}"),
-		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
-			for _, ss := range meteredSenders.Get() {
-				for _, stats := range ss.ShardStats() {
-					observer.Observe(int64(stats.TxsQueued), metric.WithAttributes(
-						attribute.String("endpoint", stats.Endpoint),
-						attribute.Int("worker_id", stats.ID),
-						attribute.String("chain_id", stats.ChainID),
-					))
-				}
-			}
-			return nil
-		})))
-
-	utils.OrPanic1(meter.Float64ObservableGauge(
-		"tps_achieved",
-		metric.WithDescription("Most recent TPS sample observed by the sender, per endpoint/scenario"),
-		metric.WithUnit("{transactions}/s"),
-		metric.WithFloat64Callback(observeTPS)))
-}
-
-type Registry[T comparable] struct {
-	r utils.RWMutex[map[T]struct{}]
-}
-
-func (r *Registry[T]) Get() []T {
-	for r := range r.r.RLock() {
-		var vs []T
-		for v := range r {
-			vs = append(vs, v)
-		}
-		return vs
-	}
-	panic("unreachable")
-}
-
-func NewRegistry[T comparable]() *Registry[T] {
-	return &Registry[T]{r: utils.NewRWMutex(map[T]struct{}{})}
-}
-
-func (r *Registry[T]) MustRegister(val T) (cancel func()) {
-	for r := range r.r.Lock() {
-		if _, ok := r[val]; ok {
-			panic("already registered")
-		}
-		r[val] = struct{}{}
-	}
-	return func() {
-		for r := range r.r.Lock() {
-			delete(r, val)
-		}
-	}
-}
-
-// meteredChainWorkers is the registry the worker_queue_length callback reads.
-var meteredSenders = NewRegistry[*ShardedSender]()
-
-var tpsObserverRegistry = utils.NewRWMutex(map[tpsSampleKey]float64{})
-
-type tpsSampleKey struct {
-	endpoint string
-	chainID  string
-	scenario string
-}
-
-// RecordTPSSample publishes the latest TPS sample read by the tps_achieved gauge.
-func RecordTPSSample(endpoint, chainID, scenario string, tps float64) {
-	for r := range tpsObserverRegistry.Lock() {
-		r[tpsSampleKey{endpoint, chainID, scenario}] = tps
-	}
-}
-
-func observeTPS(_ context.Context, observer metric.Float64Observer) error {
-	for r := range tpsObserverRegistry.RLock() {
-		for k, v := range r {
-			observer.Observe(v, metric.WithAttributes(
-				attribute.String("endpoint", k.endpoint),
-				attribute.String("chain_id", k.chainID),
-				attribute.String("scenario", k.scenario),
-			))
-		}
-	}
-	return nil
-}
 
 func statusAttrFromError(err error) attribute.KeyValue {
 	const key = "status"

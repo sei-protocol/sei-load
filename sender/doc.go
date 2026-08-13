@@ -3,8 +3,9 @@
 // The send path is a pipeline: a [generator.Generator] produces transactions;
 // the [Dispatcher] times their arrival and hands each off to a [TxSender]; the
 // [ShardedSender] routes each tx to one of N per-endpoint [ethClient]s by shard;
-// the sender loop stamps the attempt and calls the go-ethereum client
-// (eth_sendRawTransaction). Inclusion, when tracked, is observed by the
+// the sender queue contains unsigned transactions; the sender loop stamps the
+// attempt, signs the tx, and calls the go-ethereum client (eth_sendRawTransaction).
+// Inclusion, when tracked, is observed by the
 // block-indexed [stats.InclusionTracker] (see Inclusion stage below), not by
 // per-tx receipt polling. A shared [golang.org/x/time/rate.Limiter] is
 // the single rate authority for the whole pipeline; the [Ramper] drives its

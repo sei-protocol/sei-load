@@ -39,7 +39,7 @@ type RunSummary struct {
 	// DroppedAtCap is the count of successful sends rejected at the in-flight cap;
 	// excluded from the inclusion denominator (they were never registered).
 	DroppedAtCap uint64
-	// InflightAtShutdown is len(inflight) read after workers and tracker joined.
+	// InflightAtShutdown is len(inflight) read after sender and tracker joined.
 	InflightAtShutdown uint64
 }
 
@@ -48,7 +48,9 @@ func (c *Collector) EmitRunSummary(ctx context.Context, summary RunSummary) {
 	c.mu.RLock()
 	duration := time.Since(c.startTime)
 	totalTxs := c.totalTxs
-	finalTPS := c.overallTpsWindow.maxTPS
+	c.tpsWindow.mu.RLock()
+	finalTPS := c.tpsWindow.maxTPS
+	c.tpsWindow.mu.RUnlock()
 	c.mu.RUnlock()
 
 	runDurationSeconds.Record(ctx, duration.Seconds())

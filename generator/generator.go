@@ -1,86 +1,61 @@
 package generator
 
 import (
+	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
-	"sync"
+	"maps"
+	mrand "math/rand/v2"
+	"slices"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
-
-// Generator interface defines the contract for transaction generators
-type Generator interface {
-	Generate() (*types.LoadTx, bool) // Returns transaction and true if more available, nil/false when done
-	GenerateN(n int) []*types.LoadTx
-	GetAccountPools() []types.AccountPool
-}
 
 // scenarioInstance represents a scenario instance with its configuration
 type scenarioInstance struct {
 	Name     string
 	Weight   int
 	Scenario scenarios.TxGenerator
-	Accounts types.AccountPool
-	Deployed bool
+	Accounts *types.AccountPool
 }
 
-// configBasedGenerator manages scenario creation and deployment from config
-type configBasedGenerator struct {
-	config         *config.LoadConfig
-	rng            *rng.Source
-	instances      []*scenarioInstance
-	deployer       *types.Account
-	sharedAccounts types.AccountPool   // Shared account pool when using top-level config
-	accountPools   []types.AccountPool // All account pools (shared + scenario-specific)
-	mu             sync.RWMutex
+// generatorBuilder manages scenario creation and deployment from config
+type generatorBuilder struct {
+	config    *config.LoadConfig
+	instances []*scenarioInstance
 }
 
 // CreateScenarios creates scenario instances based on the configuration
 // Each scenario entry in config creates a separate instance, even if same name
-func (g *configBasedGenerator) createScenarios() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Create shared account pool if top-level account config exists
+func (g *generatorBuilder) createScenarios() error {
+	var sharedAccounts *types.AccountPool
 	if g.config.Accounts != nil {
-		accounts := types.GenerateAccounts(g.config.Accounts.Accounts)
-		g.sharedAccounts = types.NewAccountPool(&types.AccountConfig{
-			Accounts:       accounts,
-			NewAccountRate: g.config.Accounts.NewAccountRate,
-			Stream:         g.rng.Stream(rng.StreamAccountsShared),
-		})
-		g.accountPools = append(g.accountPools, g.sharedAccounts)
+		sharedAccounts = types.NewAccountPool(
+			g.config.Accounts.Accounts,
+			g.config.Accounts.NewAccountRate,
+		)
 	}
 
 	for i, scenarioCfg := range g.config.Scenarios {
 		// Create scenario instance using factory
 		scenario := scenarios.CreateScenario(scenarioCfg)
-		g.bindGasStreams(i, scenarioCfg)
-		g.bindDistributionStreams(i, scenarioCfg)
 
 		// Determine account pool to use
-		var accountPool types.AccountPool
-		if scenarioCfg.Accounts != nil {
+		var accountPool *types.AccountPool
+		if cfg := scenarioCfg.Accounts; cfg != nil {
 			// Scenario defines its own account settings - create separate pool
-			accountCount := scenarioCfg.Accounts.Accounts
-			newAccountRate := scenarioCfg.Accounts.NewAccountRate
-
-			accounts := types.GenerateAccounts(accountCount)
-			accountPool = types.NewAccountPool(&types.AccountConfig{
-				Accounts:       accounts,
-				NewAccountRate: newAccountRate,
-				Stream:         g.rng.Stream(rng.AccountsScenarioStream(i)),
-			})
-			g.accountPools = append(g.accountPools, accountPool)
-		} else if g.sharedAccounts != nil {
+			accountPool = types.NewAccountPool(cfg.Accounts, cfg.NewAccountRate)
+		} else if sharedAccounts != nil {
 			// Use shared account pool from top-level config
-			accountPool = g.sharedAccounts
+			accountPool = sharedAccounts
 		} else {
 			return errors.New("no accounts config defined")
 		}
@@ -108,7 +83,6 @@ func (g *configBasedGenerator) createScenarios() error {
 			Weight:   scenarioCfg.Weight,
 			Scenario: scenario,
 			Accounts: accountPool,
-			Deployed: false,
 		}
 
 		g.instances = append(g.instances, instance)
@@ -117,71 +91,30 @@ func (g *configBasedGenerator) createScenarios() error {
 	return nil
 }
 
-// bindGasStreams binds each configured gas picker for a scenario to its own
-// deterministic sub-stream. The stream ids are keyed by the scenario's config
-// index so they stay stable across runs of the same config.
-//
-// cfg is a value copy, but its *GasPicker fields are pointers shared with the
-// copy the scenario stores, so SetStream reaches the picker the scenario draws
-// through. A shallow copy is safe precisely because GasPicker.delegate is a
-// *RandomGasGenerator shared by both copies; only a copy that ALSO clones the
-// gas delegate would break the aliasing silently — see
-// TestRandomGasPickerStreamSeeds, which fails loudly if the binding stops
-// reaching the live picker.
-func (g *configBasedGenerator) bindGasStreams(i int, cfg config.Scenario) {
-	if cfg.GasPicker != nil {
-		cfg.GasPicker.SetStream(g.rng.Stream(rng.GasBaseStream(i)))
-	}
-	if cfg.GasTipCapPicker != nil {
-		cfg.GasTipCapPicker.SetStream(g.rng.Stream(rng.GasTipStream(i)))
-	}
-	if cfg.GasFeeCapPicker != nil {
-		cfg.GasFeeCapPicker.SetStream(g.rng.Stream(rng.GasFeeCapStream(i)))
-	}
-}
-
-// bindDistributionStreams binds each configured keyspace distribution for a
-// scenario to its own deterministic sub-stream, keyed by the scenario's config
-// index. The pointer-aliasing reasoning in bindGasStreams applies verbatim: cfg
-// is a value copy but its *Distribution fields are pointers shared with the
-// scenario's copy, so SetStream reaches the live sampler.
-func (g *configBasedGenerator) bindDistributionStreams(i int, cfg config.Scenario) {
-	if cfg.KeyDistribution != nil {
-		cfg.KeyDistribution.SetStream(g.rng.Stream(rng.KeyDistributionStream(i)))
-	}
-	if cfg.SizeDistribution != nil {
-		cfg.SizeDistribution.SetStream(g.rng.Stream(rng.SizeDistributionStream(i)))
-	}
-}
-
 // mockDeployAll deploys all scenario instances that require deployment (for unit tests).
-func (g *configBasedGenerator) mockDeployAll() error {
+func (g *generatorBuilder) mockDeployAll() error {
 	for _, instance := range g.instances {
-		addr := types.GenerateAccounts(1)[0].Address
+		addr := types.NewAccount(false).Address
 		if err := instance.Scenario.Attach(g.config, addr); err != nil {
 			return err
 		}
-		instance.Deployed = true
 	}
 	return nil
 }
 
 // DeployAll deploys all scenario instances that require deployment
-func (g *configBasedGenerator) deployAll() error {
+func (g *generatorBuilder) deployAll() error {
+	deployer := types.NewAccount(false)
 	if g.config.MockDeploy {
 		return g.mockDeployAll()
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
 
 	// Deploy sequentially to ensure proper nonce management
-	for _, instance := range g.instances {
+	for i, instance := range g.instances {
 		// Deploy the scenario
 		log.Printf("Deploying scenario %s", instance.Name)
-		address := instance.Scenario.Deploy(g.config, g.deployer)
-		instance.Deployed = true
-
-		if address.Cmp(common.Address{}) != 0 {
+		address := instance.Scenario.Deploy(g.config, deployer, uint64(i))
+		if address != (common.Address{}) {
 			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
 	}
@@ -189,92 +122,158 @@ func (g *configBasedGenerator) deployAll() error {
 	return nil
 }
 
-// createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
-func (g *configBasedGenerator) createWeightedGenerator() (Generator, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+type Generator struct{ scenarios []*scenarioInstance }
 
-	if len(g.instances) == 0 {
-		return nil, fmt.Errorf("no scenario instances created")
-	}
-
-	// Check that all scenarios are deployed
-	for _, instance := range g.instances {
-		if !instance.Deployed {
-			return nil, fmt.Errorf("scenario %s is not deployed", instance.Name)
+func (g *Generator) Accounts() []types.Account {
+	accs := map[common.Address]types.Account{}
+	for _, s := range g.scenarios {
+		for _, a := range s.Accounts.Accounts() {
+			accs[a.Address] = a
 		}
 	}
+	return slices.Collect(maps.Values(accs))
+}
 
+type TxSender interface {
+	Send(ctx context.Context, tx *types.LoadTx) error
+	Flush(ctx context.Context) error
+	Nonce(acc types.Account) uint64
+}
+
+// NewPrewarmGenerator creates a new prewarm generator using all account pools from the registry.
+func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, txSender TxSender) error {
+	// Create EVMTransfer scenario for prewarming
+	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
+	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
+	evmScenario.Deploy(cfg, types.NewAccount(false), 0)
+	for _, account := range g.Accounts() {
+		// Create self-transfer transaction
+		scenario := &types.TxScenario{
+			Name:     "EVMTransfer",
+			Nonce:    txSender.Nonce(account),
+			Sender:   account,
+			Receiver: account.Address, // Send to self
+		}
+		tx, err := evmScenario.Generate(rng, scenario)
+		if err != nil {
+			return fmt.Errorf("evmScenario.Generate(): %w", err)
+		}
+		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		if err := txSender.Send(ctx, ltx); err != nil {
+			return err
+		}
+	}
+	return txSender.Flush(ctx)
+}
+
+type EthClient interface {
+	Send(ctx context.Context, tx *types.LoadTx) error
+	Nonce(ctx context.Context, acc types.Account) (uint64, error)
+}
+
+// Generate generates 1 transaction.
+func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender) error {
+	counter := 0
+	for ctx.Err() == nil {
+		g := w.scenarios[int(counter)%len(w.scenarios)]
+		counter++
+		sender := g.Accounts.NextAccount(rng)
+		receiver := g.Accounts.NextAccount(rng)
+		// TODO: This should probably hold a lock on sender.
+		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
+		// the back-pressured enqueue time, not a true schedule instant.
+		scenario := &types.TxScenario{
+			Name:     g.Scenario.Name(),
+			Nonce:    txSender.Nonce(sender),
+			Sender:   sender,
+			Receiver: receiver.Address,
+		}
+		tx, err := g.Scenario.Generate(rng, scenario)
+		if err != nil {
+			return fmt.Errorf("g.Scenario.Generate(): %w", err)
+		}
+		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		if err := txSender.Send(ctx, ltx); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+// createWeightedGenerator creates a weighted scenarioGenerator from deployed scenarios
+func (b *generatorBuilder) build(rng *mrand.Rand) (*Generator, error) {
 	// Create weighted configurations
-	var weightedConfigs []*WeightedCfg
-	for _, instance := range g.instances {
+	var gens []*scenarioInstance
+	for _, instance := range b.instances {
 		if instance.Weight == 0 {
 			log.Printf("Skipping scenario %s with weight 0", instance.Name)
 			continue
 		}
 		// Create a scenarioGenerator for this scenario instance
-		gen := NewScenarioGenerator(instance.Accounts, instance.Scenario)
-
-		// Add to weighted config with the specified weight
-		weightedConfigs = append(weightedConfigs, WeightedConfig(instance.Weight, gen))
+		for range instance.Weight {
+			gens = append(gens, instance)
+		}
 	}
 
-	if len(weightedConfigs) == 0 {
+	if len(gens) == 0 {
 		return nil, fmt.Errorf("no scenario instances created (define some scenarios)")
 	}
-
-	// Create and return the weighted scenarioGenerator
-	return NewWeightedGenerator(g.rng.Stream(rng.StreamWeightedShuffle), weightedConfigs...), nil
+	rng.Shuffle(len(gens), func(i, j int) {
+		gens[i], gens[j] = gens[j], gens[i]
+	})
+	return &Generator{scenarios: gens}, nil
 }
 
-// GetAccountPools returns all account pools managed by this generator
-func (g *configBasedGenerator) GetAccountPools() []types.AccountPool {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	// Return a copy of the slice to prevent external modification
-	pools := make([]types.AccountPool, len(g.accountPools))
-	copy(pools, g.accountPools)
-	return pools
+func newSeededRand(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 }
 
-// resolveSeed returns the run's PRNG source, defaulting an unseeded config to a
-// random seed. The resolved seed is written back to cfg.Seed and logged so any
-// run is replayable after the fact; the run summary (PLT-467) reads it there.
-func resolveSeed(cfg *config.LoadConfig) *rng.Source {
-	if cfg.Seed != nil {
-		return rng.NewSource(*cfg.Seed)
+func randomSeed() (uint64, error) {
+	var buf [8]byte
+	if _, err := cryptorand.Read(buf[:]); err != nil {
+		return 0, err
 	}
-	src, seed := rng.NewRandomSource()
+	return binary.LittleEndian.Uint64(buf[:]), nil
+}
+
+// ResolveSeed returns the run's PRNG, defaulting an unseeded config to a random
+// seed. The resolved seed is written back to cfg.Seed and logged so any run is
+// replayable after the fact; the run summary (PLT-467) reads it there.
+func ResolveSeed(cfg *config.LoadConfig) *mrand.Rand {
+	if cfg.Seed != nil {
+		return newSeededRand(*cfg.Seed)
+	}
+	seed, err := randomSeed()
+	if err != nil {
+		panic(fmt.Errorf("randomSeed(): %w", err))
+	}
 	cfg.Seed = &seed
 	log.Printf("🎲 No seed configured; generated random seed %d (set \"seed\" to replay)", seed)
-	return src
+	return newSeededRand(seed)
 }
 
-// NewConfigBasedGenerator is a convenience method that combines all steps
-func NewConfigBasedGenerator(cfg *config.LoadConfig) (Generator, error) {
-	generator := &configBasedGenerator{
+// NewConfigBasedGenerator is a convenience method that combines all steps.
+func NewGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (*Generator, error) {
+	b := &generatorBuilder{
 		config:    cfg,
-		rng:       resolveSeed(cfg),
 		instances: make([]*scenarioInstance, 0),
-		deployer:  types.GenerateAccounts(1)[0],
 	}
 
 	// Step 1: Create scenarios
-	if err := generator.createScenarios(); err != nil {
+	if err := b.createScenarios(); err != nil {
 		return nil, fmt.Errorf("failed to create scenarios: %w", err)
 	}
 
 	// Step 2: Deploy all scenarios
-	if err := generator.deployAll(); err != nil {
+	if err := b.deployAll(); err != nil {
 		return nil, fmt.Errorf("failed to deploy scenarios: %w", err)
 	}
 
 	// Step 3: Create weighted scenarioGenerator
-	weightedGen, err := generator.createWeightedGenerator()
+	g, err := b.build(rng)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create weighted scenarioGenerator: %w", err)
 	}
 
-	return weightedGen, nil
+	return g, nil
 }

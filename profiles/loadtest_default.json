@@ -31,7 +31,6 @@
       }
     ],
     "settings": {
-      "workers": 1,
       "tps": 0,
       "statsInterval": "5s",
       "bufferSize": 1000,

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -55,7 +56,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (required)")
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
 	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
-	rootCmd.Flags().IntP("buffer-size", "b", 0, "Buffer size per worker")
+	rootCmd.Flags().IntP("buffer-size", "b", 0, "Sender queue size")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
 	rootCmd.Flags().Bool("debug", false, "Log each request")
@@ -63,7 +64,6 @@ func init() {
 	rootCmd.Flags().Bool("track-blocks", false, "Track blocks")
 	rootCmd.Flags().Bool("prewarm", false, "Prewarm accounts with self-transactions")
 	rootCmd.Flags().Bool("track-user-latency", false, "Track user latency")
-	rootCmd.Flags().IntP("workers", "w", 0, "Number of workers")
 	rootCmd.Flags().IntP("nodes", "n", 0, "Number of nodes/endpoints to use (0 = use all)")
 	rootCmd.Flags().String("metricsListenAddr", "0.0.0.0:9090", "The ip:port on which to export prometheus metrics.")
 	rootCmd.Flags().Bool("ramp-up", false, "Ramp up loadtest")
@@ -113,6 +113,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	if err := cfg.Settings.Validate(); err != nil {
 		return fmt.Errorf("invalid settings: %w", err)
 	}
+	if len(cfg.Endpoints) == 0 && !cfg.Settings.DryRun {
+		return fmt.Errorf("no endpoints specified in config")
+	}
 
 	// Handle --nodes flag to limit number of endpoints
 	nodes, _ := cmd.Flags().GetInt("nodes")
@@ -128,11 +131,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	log.Printf("🚀 Starting Sei Chain Load Test v2")
 	log.Printf("📁 Config file: %s", configFile)
 	log.Printf("🎯 Endpoints: %d", len(cfg.Endpoints))
-	log.Printf("👥 Tasks per endpoint: %d", cfg.Settings.TasksPerEndpoint)
-	log.Printf("🔧 Total tasks: %d", len(cfg.Endpoints)*cfg.Settings.TasksPerEndpoint)
 	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
 	log.Printf("⏱️  Stats interval: %v", cfg.Settings.StatsInterval.ToDuration())
-	log.Printf("📦 Buffer size per worker: %d", cfg.Settings.BufferSize)
+	log.Printf("📦 Sender queue size: %d", cfg.Settings.BufferSize)
 	if cfg.Settings.TPS > 0 {
 		log.Printf("📈 Transactions per second: %.2f", cfg.Settings.TPS)
 	}
@@ -208,13 +209,13 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	// Create statistics collector and logger
 	collector := stats.NewCollector()
 	logger := stats.NewLogger(collector, cfg.Settings.StatsInterval.ToDuration(), cfg.Settings.ReportPath, cfg.Settings.Debug)
+	rng := generator.ResolveSeed(cfg)
 	var ramper *sender.Ramper
-	var dispatcher *sender.Dispatcher
-	var inclusionTracker *stats.InclusionTracker
+	inclusion := utils.None[*stats.InclusionTracker]()
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Create the generator from the config struct
-		gen, err := generator.NewConfigBasedGenerator(cfg)
+		gen, err := generator.NewGenerator(rng, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
@@ -222,8 +223,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// Create the shared rate authority for the whole run.
 		sharedLimiter := rate.NewLimiter(rate.Inf, 1)
 		if cfg.Settings.TPS > 0 {
-			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), 1)
-			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across all workers", cfg.Settings.TPS)
+			sharedLimiter = rate.NewLimiter(rate.Limit(cfg.Settings.TPS), max(1, int(cfg.Settings.TPS)))
+			log.Printf("📈 Rate limiting enabled: %.2f TPS shared across the sender", cfg.Settings.TPS)
 		}
 
 		// Create and start block collector if endpoints are available
@@ -236,7 +237,7 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		if cfg.Settings.RampUp {
+		if len(cfg.Endpoints) > 0 && cfg.Settings.RampUp {
 			ramperBlockCollector := stats.NewBlockCollector(cfg.SeiChainID)
 			s.SpawnBgNamed("ramper block collector", func() error {
 				return ramperBlockCollector.Run(ctx, cfg.Endpoints[0])
@@ -262,10 +263,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		// tracker (the lossy per-tx receipt path is retired).
 		// Not wired under --dry-run: simulated sends never hit the chain, so they
 		// would all reap as expired and pollute the inclusion stats.
-		inclusion := utils.None[*stats.InclusionTracker]()
 		if len(cfg.Endpoints) > 0 && cfg.Settings.TrackReceipts && !cfg.Settings.DryRun {
 			reapAfter := cfg.Settings.InclusionReapAfter.ToDuration()
-			inclusionTracker = stats.NewInclusionTracker(
+			inclusionTracker := stats.NewInclusionTracker(
 				cfg.SeiChainID,
 				reapAfter,
 				inclusionRegistryCap(cfg.Settings.MaxInFlight, cfg.Settings.TPS, reapAfter),
@@ -277,85 +277,52 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			})
 		}
 
-		// Open-loop owns the arrival clock in the scheduler, so the sender must
-		// not add a second finite gate. Prewarm and the scheduler still use the
-		// real shared limiter.
-		senderLimiter := sharedLimiter
-		if cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop && cfg.Settings.TxsDir == "" {
-			senderLimiter = rate.NewLimiter(rate.Inf, 1)
-		}
-
-		// Create the sender from the config struct
-		snd, err := sender.NewShardedSender(cfg, senderLimiter, collector, inclusion)
-		if err != nil {
-			return fmt.Errorf("failed to create sender: %w", err)
-		}
-
-		// Fund the pool before prewarm/dispatch — both spend gas the accounts
-		// don't have until funded.
-		if cfg.Funding != nil && !cfg.Settings.DryRun {
-			if err := funder.FundAccounts(ctx, cfg, gen.GetAccountPools()); err != nil {
-				return fmt.Errorf("failed to fund accounts: %w", err)
-			}
-		}
-
-		// Create dispatcher
+		// TODO: MaxInFlight should have a sensible default.
+		var snd generator.TxSender
 		if cfg.Settings.TxsDir != "" {
+			if len(cfg.Endpoints) == 0 {
+				return fmt.Errorf("tx writer requires at least one endpoint")
+			}
 			// get latest height
-			ethclient, err := ethclient.Dial(cfg.Endpoints[0])
+			eth, err := ethclient.Dial(cfg.Endpoints[0])
 			if err != nil {
 				return fmt.Errorf("failed to create ethclient: %w", err)
 			}
-			latestHeight, err := ethclient.BlockNumber(ctx)
+			latestHeight, err := eth.BlockNumber(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get latest height: %w", err)
 			}
 			numBlocksToWrite := cfg.Settings.NumBlocksToWrite
 			writerHeight := latestHeight + 10 // some buffer
 			log.Printf("🔍 Latest height: %d, writer start height: %d", latestHeight, writerHeight)
-			writer := sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
-			dispatcher = sender.NewDispatcher(gen, writer)
+			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 		} else {
-			dispatcher = sender.NewDispatcher(gen, snd)
-		}
-
-		// Set statistics collector for dispatcher
-		dispatcher.SetStatsCollector(collector)
-
-		// Open-loop drives arrivals from the scheduler (see sender doc); the
-		// txs-writer path has no arrival clock, so it stays closed-loop.
-		openLoop := cfg.Settings.ArrivalModel == config.ArrivalModelOpenLoop
-		switch {
-		case openLoop && cfg.Settings.TxsDir == "":
-			dispatcher.SetOpenLoop(sharedLimiter, cfg.Settings.MaxInFlight)
-			log.Printf("📤 Arrival model: open_loop (max in-flight: %d)", cfg.Settings.MaxInFlight)
-		case openLoop:
-			// open_loop was requested but the txs-writer path has no arrival clock,
-			// so the run falls back to closed_loop. Surface the downgrade.
-			log.Printf("📤 Arrival model: closed_loop (txs-writer path; --arrival-model open_loop ignored)")
-		default:
-			log.Printf("📤 Arrival model: closed_loop")
+			// Fund the pool before prewarm/dispatch — both spend gas the accounts
+			// don't have until funded.
+			if cfg.Funding != nil && !cfg.Settings.DryRun {
+				var addrs []common.Address
+				for _, a := range gen.Accounts() {
+					addrs = append(addrs, a.Address)
+				}
+				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
+					return fmt.Errorf("failed to fund accounts: %w", err)
+				}
+			}
+			// Create the sender from the config struct
+			sharedSender := sender.NewShardedSender(cfg, sharedLimiter, collector, inclusion)
+			// Start the sender.
+			s.SpawnBgNamed("sender", func() error { return sharedSender.Run(ctx) })
+			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
+			snd = sharedSender
 		}
 
 		// Set up prewarming if enabled
 		if cfg.Settings.Prewarm {
 			log.Printf("🔥 Creating prewarm generator...")
-			prewarmGen := generator.NewPrewarmGenerator(cfg, gen)
-			dispatcher.SetPrewarmGenerator(prewarmGen)
-			log.Printf("✅ Prewarm generator ready")
-			log.Printf("📝 Prewarm mode: Accounts will be prewarmed")
-		}
-
-		if cfg.Settings.TxsDir == "" {
-			// Start the sender (starts all workers)
-			s.SpawnBgNamed("sender", func() error { return snd.Run(ctx) })
-			log.Printf("✅ Connected to %d endpoints", len(cfg.Endpoints))
-		}
-		// Perform prewarming if enabled (before starting logger to avoid logging prewarm transactions)
-		if cfg.Settings.Prewarm {
-			if err := dispatcher.Prewarm(ctx); err != nil {
-				return fmt.Errorf("failed to prewarm accounts: %w", err)
+			if err := gen.Prewarm(ctx, rng, cfg, snd); err != nil {
+				return fmt.Errorf("gen.Prewarm(): %w", err)
 			}
+			log.Printf("🔥 Prewarming complete!")
 		}
 
 		// Start logger (after prewarming to capture only main load test metrics)
@@ -363,7 +330,8 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		log.Printf("✅ Started statistics logger")
 
 		// Start dispatcher for main load test
-		s.SpawnBgNamed("dispatcher", func() error { return dispatcher.Run(ctx) })
+		s.SpawnBgNamed("generator", func() error { return gen.Run(ctx, rng, snd) })
+
 		log.Printf("✅ Started dispatcher")
 
 		// Set up signal handling for graceful shutdown
@@ -401,21 +369,9 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		ramper.LogFinalStats()
 	}
 	summary := stats.RunSummary{ArrivalModel: config.ArrivalModelClosedLoop}
-	if dispatcher != nil {
-		summary.ArrivalModel = string(dispatcher.ArrivalModel())
-		dstats := dispatcher.GetStats()
-		summary.Dropped = dstats.Dropped
-		summary.Failed = dstats.Failed
-		if summary.Dropped > 0 {
-			log.Printf("⚠️  Open-loop dropped %d txs (in-flight saturated; not throttled)", summary.Dropped)
-		}
-		if summary.Failed > 0 {
-			log.Printf("⚠️  Open-loop %d txs failed to send (admitted but errored; not lost)", summary.Failed)
-		}
-	}
-	// Read AFTER service.Run returns: both workers and the tracker have joined,
+	// Read AFTER service.Run returns: both sender and the tracker have joined,
 	// so inflightAtShutdown is final and the conservation identity holds.
-	if inclusionTracker != nil {
+	if inclusionTracker, ok := inclusion.Get(); ok {
 		incl := inclusionTracker.Summary()
 		summary.InclusionTracked = true
 		summary.Included = incl.Included
@@ -468,11 +424,6 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 	var cfg config.LoadConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config json: %w", err)
-	}
-
-	// Validate configuration
-	if len(cfg.Endpoints) == 0 {
-		return nil, fmt.Errorf("no endpoints specified in config")
 	}
 
 	if len(cfg.Scenarios) == 0 {

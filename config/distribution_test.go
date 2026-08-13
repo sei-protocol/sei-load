@@ -3,15 +3,19 @@ package config_test
 import (
 	"encoding/json"
 	"fmt"
+	mrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/sei-protocol/sei-load/config"
-	"github.com/sei-protocol/sei-load/utils/rng"
 	"github.com/stretchr/testify/require"
 )
+
+func newDistributionTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 func TestDistribution(t *testing.T) {
 	t.Parallel()
@@ -19,7 +23,7 @@ func TestDistribution(t *testing.T) {
 		var subject config.Distribution
 		require.NoError(t, subject.UnmarshalJSON([]byte(`{}`)))
 		require.Empty(t, subject.Name())
-		idx, err := subject.SampleIndex(100)
+		idx, err := subject.SampleIndex(newDistributionTestRng(1), 100)
 		require.NoError(t, err)
 		require.Zero(t, idx)
 	})
@@ -55,13 +59,12 @@ func distribution(t *testing.T, raw string) *config.Distribution {
 	return &d
 }
 
-// sample binds d to stream and pulls count draws over keyspace n.
-func sample(t *testing.T, d *config.Distribution, s *rng.Stream, n uint64, count int) []uint64 {
+// sample binds d to a PRNG and pulls count draws over keyspace n.
+func sample(t *testing.T, d *config.Distribution, rng *mrand.Rand, n uint64, count int) []uint64 {
 	t.Helper()
-	d.SetStream(s)
 	out := make([]uint64, count)
 	for i := range out {
-		v, err := d.SampleIndex(n)
+		v, err := d.SampleIndex(rng, n)
 		require.NoError(t, err)
 		require.Less(t, v, n, "draw out of range [0, n)")
 		out[i] = v
@@ -74,7 +77,7 @@ func sample(t *testing.T, d *config.Distribution, s *rng.Stream, n uint64, count
 func TestSampleIndexEmptyKeyspace(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{`{"Name":"uniform"}`, `{"Name":"zipfian","theta":0.9}`} {
-		_, err := distribution(t, raw).SampleIndex(0)
+		_, err := distribution(t, raw).SampleIndex(newDistributionTestRng(1), 0)
 		require.Error(t, err, raw)
 	}
 }
@@ -85,24 +88,9 @@ func TestSampleIndexDeterminism(t *testing.T) {
 	t.Parallel()
 	const seed, n, count = 99, 1000, 256
 	for _, raw := range []string{`{"Name":"uniform"}`, `{"Name":"zipfian","theta":0.8}`} {
-		a := sample(t, distribution(t, raw), rng.NewSource(seed).Stream(rng.KeyDistributionStream(0)), n, count)
-		b := sample(t, distribution(t, raw), rng.NewSource(seed).Stream(rng.KeyDistributionStream(0)), n, count)
+		a := sample(t, distribution(t, raw), newDistributionTestRng(seed), n, count)
+		b := sample(t, distribution(t, raw), newDistributionTestRng(seed), n, count)
 		require.Equal(t, a, b, "same seed must reproduce the draw sequence: %s", raw)
-	}
-}
-
-// TestSampleIndexSeededDiffersFromUnseeded guards the binding the way
-// TestRandomGasPickerStreamSeeds does for gas: a bound sampler draws
-// seed-determined values that differ from the unseeded global RNG path. If a
-// refactor silently broke the binding, the seeded and unseeded sequences would
-// match by accident only with probability ~0.
-func TestSampleIndexSeededDiffersFromUnseeded(t *testing.T) {
-	t.Parallel()
-	const seed, n, count = 7, 1000, 128
-	for _, raw := range []string{`{"Name":"uniform"}`, `{"Name":"zipfian","theta":0.8}`} {
-		seeded := sample(t, distribution(t, raw), rng.NewSource(seed).Stream(rng.KeyDistributionStream(0)), n, count)
-		unseeded := sample(t, distribution(t, raw), nil, n, count)
-		require.NotEqual(t, seeded, unseeded, "seeded draws must differ from the unseeded global RNG: %s", raw)
 	}
 }
 
@@ -114,7 +102,7 @@ func TestUniformIsUniform(t *testing.T) {
 	const n, buckets, perBucket = 1000, 20, 5000
 	const draws = buckets * perBucket // 100k draws, expected 5k per bucket.
 
-	got := sample(t, distribution(t, `{"Name":"uniform"}`), rng.NewSource(1).Stream("x"), n, draws)
+	got := sample(t, distribution(t, `{"Name":"uniform"}`), newDistributionTestRng(1), n, draws)
 	counts := make([]float64, buckets)
 	width := uint64(n / buckets)
 	for _, v := range got {
@@ -140,7 +128,7 @@ func TestZipfianSkewRisesWithTheta(t *testing.T) {
 
 	topKMass := func(theta float64) float64 {
 		raw := fmt.Sprintf(`{"Name":"zipfian","theta":%v}`, theta)
-		got := sample(t, distribution(t, raw), rng.NewSource(5).Stream("x"), n, draws)
+		got := sample(t, distribution(t, raw), newDistributionTestRng(5), n, draws)
 		var hot int
 		for _, v := range got {
 			if v < topK {
@@ -176,17 +164,17 @@ func TestZipfianInitCostBounded(t *testing.T) {
 	t.Parallel()
 	const n = 1_000_000
 	d := distribution(t, `{"Name":"zipfian","theta":0.99}`)
-	d.SetStream(rng.NewSource(1).Stream("x"))
+	rand := newDistributionTestRng(1)
 
 	// Warmup outside the timer: pay the one-time O(n) zeta precompute here so the
 	// timed window measures only steady-state per-draw cost.
-	warm, err := d.SampleIndex(n)
+	warm, err := d.SampleIndex(rand, n)
 	require.NoError(t, err)
 	require.Less(t, warm, uint64(n))
 
 	start := time.Now()
 	for i := 0; i < 1000; i++ {
-		v, err := d.SampleIndex(n)
+		v, err := d.SampleIndex(rand, n)
 		require.NoError(t, err)
 		require.Less(t, v, uint64(n))
 	}
@@ -202,18 +190,18 @@ func TestZipfianInitCostBounded(t *testing.T) {
 func TestZipfianRecomputesOnNChange(t *testing.T) {
 	t.Parallel()
 	d := distribution(t, `{"Name":"zipfian","theta":0.9}`)
-	d.SetStream(rng.NewSource(1).Stream("x"))
+	rand := newDistributionTestRng(1)
 
 	// Same seed + same draw index against two different keyspaces: if the cache
 	// ignored the n change, the second n would reuse the first's zetaN/eta and the
 	// draw could fall outside [0, n2). The in-range check is the recompute witness.
 	const n1, n2 = 1_000_000, 10
-	v1, err := d.SampleIndex(n1)
+	v1, err := d.SampleIndex(rand, n1)
 	require.NoError(t, err)
 	require.Less(t, v1, uint64(n1))
 
 	for i := 0; i < 1000; i++ {
-		v2, err := d.SampleIndex(n2)
+		v2, err := d.SampleIndex(rand, n2)
 		require.NoError(t, err)
 		require.Less(t, v2, uint64(n2), "draw must be in [0, n2) after n change; stale cache would overshoot")
 	}
@@ -228,9 +216,9 @@ func TestZipfianNoNaNAcrossThetaRange(t *testing.T) {
 		for _, n := range []uint64{2, 3, 100, 1000} {
 			raw := fmt.Sprintf(`{"Name":"zipfian","theta":%v}`, theta)
 			d := distribution(t, raw)
-			d.SetStream(rng.NewSource(1).Stream("x"))
+			rand := newDistributionTestRng(1)
 			for i := 0; i < 100; i++ {
-				v, err := d.SampleIndex(n)
+				v, err := d.SampleIndex(rand, n)
 				require.NoError(t, err)
 				// v is a uint64 index; the in-range check is the real guard that
 				// the internal zeta/eta math never produced a bad (NaN-derived) draw.

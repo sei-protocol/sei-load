@@ -12,13 +12,13 @@ import (
 
 // FinalStats represents the complete final statistics that can be marshaled to JSON
 type FinalStats struct {
-	LoadTestStatistics   LoadTestStatistics             `json:"load_test_statistics"`
-	ScenarioDistribution map[string]uint64              `json:"scenario_distribution"`
-	EndpointPerformance  map[string]EndpointPerformance `json:"endpoint_performance"`
-	OverallTPS           OverallTPS                     `json:"overall_tps"`
-	BlockStatistics      *BlockStats                    `json:"block_statistics,omitempty"`
-	OverallPerformance   OverallPerformance             `json:"overall_performance"`
-	GasStatistics        *BlockStats                    `json:"gas_statistics,omitempty"`
+	LoadTestStatistics   LoadTestStatistics `json:"load_test_statistics"`
+	ScenarioDistribution map[string]uint64  `json:"scenario_distribution"`
+	TransactionStats     PerformanceStats   `json:"transaction_stats"`
+	OverallTPS           OverallTPS         `json:"overall_tps"`
+	BlockStatistics      *BlockStats        `json:"block_statistics,omitempty"`
+	OverallPerformance   OverallPerformance `json:"overall_performance"`
+	GasStatistics        *BlockStats        `json:"gas_statistics,omitempty"`
 }
 
 // LoadTestStatistics represents basic load test metrics
@@ -29,8 +29,8 @@ type LoadTestStatistics struct {
 	StartTime time.Time     `json:"start_time"`
 }
 
-// EndpointPerformance represents detailed performance metrics for an endpoint
-type EndpointPerformance struct {
+// PerformanceStats represents detailed transaction performance metrics.
+type PerformanceStats struct {
 	LatencyP50           time.Duration `json:"latency_p50"`
 	LatencyP99           time.Duration `json:"latency_p99"`
 	SampleCount          int           `json:"sample_count"`
@@ -80,27 +80,24 @@ func (fs *FinalStats) String() string {
 		result += fmt.Sprintf("  %s: %d\n", scenario, total)
 	}
 
-	// Endpoint performance
-	result += "\nEndpoint Performance:\n"
-	for endpoint, perf := range fs.EndpointPerformance {
-		result += fmt.Sprintf("  %s:\n", endpoint)
-		result += fmt.Sprintf("    Latency P50: %v | P99: %v (samples: %d)\n",
-			perf.LatencyP50.Round(time.Millisecond),
-			perf.LatencyP99.Round(time.Millisecond),
-			perf.SampleCount)
-		result += fmt.Sprintf("    TPS Current: %.2f | Max (10s): %.2f\n",
-			perf.CurrentTPS, perf.MaxTPS)
-		result += fmt.Sprintf("    Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
-			perf.WindowTxCount,
-			perf.WindowLatencySum.Round(time.Millisecond),
-			perf.WindowLatencyCount)
-		result += fmt.Sprintf("    Window Max Latency: %v | Window Min Latency: %v\n",
-			perf.WindowMaxLatency.Round(time.Millisecond),
-			perf.WindowMinLatency.Round(time.Millisecond))
-		result += fmt.Sprintf("    Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
-			perf.CumulativeMaxTPS,
-			perf.CumulativeMaxLatency.Round(time.Millisecond))
-	}
+	// Transaction performance
+	result += "\nTransaction Performance:\n"
+	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
+		fs.TransactionStats.LatencyP50.Round(time.Millisecond),
+		fs.TransactionStats.LatencyP99.Round(time.Millisecond),
+		fs.TransactionStats.SampleCount)
+	result += fmt.Sprintf("  TPS Current: %.2f | Max (10s): %.2f\n",
+		fs.TransactionStats.CurrentTPS, fs.TransactionStats.MaxTPS)
+	result += fmt.Sprintf("  Window TXs: %d | Latency Sum: %v | Latency Count: %d\n",
+		fs.TransactionStats.WindowTxCount,
+		fs.TransactionStats.WindowLatencySum.Round(time.Millisecond),
+		fs.TransactionStats.WindowLatencyCount)
+	result += fmt.Sprintf("  Window Max Latency: %v | Window Min Latency: %v\n",
+		fs.TransactionStats.WindowMaxLatency.Round(time.Millisecond),
+		fs.TransactionStats.WindowMinLatency.Round(time.Millisecond))
+	result += fmt.Sprintf("  Cumulative Max TPS: %.2f | Cumulative Max Latency: %v\n",
+		fs.TransactionStats.CumulativeMaxTPS,
+		fs.TransactionStats.CumulativeMaxLatency.Round(time.Millisecond))
 
 	// Overall TPS
 	result += fmt.Sprintf("\nOverall TPS: Current: %.2f | Max (10s): %.2f\n",
@@ -162,31 +159,23 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 
 	// Build scenario distribution (aggregate by scenario)
 	scenarioDistribution := make(map[string]uint64)
-	for scenario, endpoints := range stats.TxCounts {
-		total := uint64(0)
-		for _, count := range endpoints {
-			total += count
-		}
-		scenarioDistribution[scenario] = total
+	for scenario, count := range stats.TxCounts {
+		scenarioDistribution[scenario] = count
 	}
 
-	// Build endpoint performance
-	endpointPerformance := make(map[string]EndpointPerformance)
-	for endpoint, endpointStats := range stats.EndpointStats {
-		endpointPerformance[endpoint] = EndpointPerformance{
-			LatencyP50:           endpointStats.P50Latency,
-			LatencyP99:           endpointStats.P99Latency,
-			SampleCount:          endpointStats.SampleCount,
-			CurrentTPS:           endpointStats.CurrentTPS,
-			MaxTPS:               endpointStats.MaxTPS,
-			WindowTxCount:        endpointStats.WindowTxCount,
-			WindowLatencySum:     endpointStats.WindowLatencySum,
-			WindowLatencyCount:   endpointStats.WindowLatencyCount,
-			WindowMaxLatency:     endpointStats.WindowMaxLatency,
-			WindowMinLatency:     endpointStats.WindowMinLatency,
-			CumulativeMaxTPS:     endpointStats.CumulativeMaxTPS,
-			CumulativeMaxLatency: endpointStats.CumulativeMaxLatency,
-		}
+	transactionStats := PerformanceStats{
+		LatencyP50:           stats.TransactionStats.P50Latency,
+		LatencyP99:           stats.TransactionStats.P99Latency,
+		SampleCount:          stats.TransactionStats.SampleCount,
+		CurrentTPS:           stats.TransactionStats.CurrentTPS,
+		MaxTPS:               stats.TransactionStats.MaxTPS,
+		WindowTxCount:        stats.TransactionStats.WindowTxCount,
+		WindowLatencySum:     stats.TransactionStats.WindowLatencySum,
+		WindowLatencyCount:   stats.TransactionStats.WindowLatencyCount,
+		WindowMaxLatency:     stats.TransactionStats.WindowMaxLatency,
+		WindowMinLatency:     stats.TransactionStats.WindowMinLatency,
+		CumulativeMaxTPS:     stats.TransactionStats.CumulativeMaxTPS,
+		CumulativeMaxLatency: stats.TransactionStats.CumulativeMaxLatency,
 	}
 
 	// Build overall TPS
@@ -214,7 +203,7 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 	return &FinalStats{
 		LoadTestStatistics:   loadTestStats,
 		ScenarioDistribution: scenarioDistribution,
-		EndpointPerformance:  endpointPerformance,
+		TransactionStats:     transactionStats,
 		OverallTPS:           overallTPS,
 		BlockStatistics:      stats.BlockStats,
 		OverallPerformance:   overallPerformance,
@@ -257,86 +246,36 @@ func (l *Logger) Run(ctx context.Context) error {
 func (l *Logger) logCurrentStats() {
 	stats := l.collector.GetStats()
 
-	// Aggregate metrics for overall summary
-	var totalWindowTxs uint64
-	var totalTxs uint64
-	var totalWindowTPS float64
-	var totalCumulativeMaxTPS float64
-	var weightedLatencySum time.Duration
-	var totalLatencyCount int
-	var maxCumulativeLatency time.Duration
-	var maxP50, maxP99 time.Duration
-
-	// Log one line per endpoint with concise metrics
-	for endpoint, endpointStats := range stats.EndpointStats {
-		// Calculate window TPS based on actual window duration
-		var windowTPS float64
-		if endpointStats.WindowTxCount > 0 {
-			// Use the logging interval as the window duration
-			windowDuration := l.interval.Seconds()
-			windowTPS = float64(endpointStats.WindowTxCount) / windowDuration
-		}
-
-		// Calculate window average latency
-		var windowAvgLatency time.Duration
-		if endpointStats.WindowLatencyCount > 0 {
-			windowAvgLatency = endpointStats.WindowLatencySum / time.Duration(endpointStats.WindowLatencyCount)
-		}
-
-		// Get total transactions for this endpoint
-		totalTxsForEndpoint := uint64(0)
-		for _, endpoints := range stats.TxCounts {
-			if count, exists := endpoints[endpoint]; exists {
-				totalTxsForEndpoint += count
-			}
-		}
-
-		// Aggregate for overall summary
-		totalWindowTxs += endpointStats.WindowTxCount
-		totalTxs += totalTxsForEndpoint
-		totalWindowTPS += windowTPS
-		totalCumulativeMaxTPS += endpointStats.CumulativeMaxTPS
-		weightedLatencySum += endpointStats.WindowLatencySum
-		totalLatencyCount += endpointStats.WindowLatencyCount
-		if endpointStats.CumulativeMaxLatency > maxCumulativeLatency {
-			maxCumulativeLatency = endpointStats.CumulativeMaxLatency
-		}
-		if endpointStats.P50Latency > maxP50 {
-			maxP50 = endpointStats.P50Latency
-		}
-		if endpointStats.P99Latency > maxP99 {
-			maxP99 = endpointStats.P99Latency
-		}
-
-		if l.debug {
-			// Format: [timestamp] endpoint | TXs: total | TPS: window(max) | Latency: avg(max) | P50: x P99: x
-			log.Printf("[%s] %s | TXs: %d | TPS: %.1f(%.1f) | Lat: %v(%v) | P50: %v P99: %v",
-				time.Now().Format("15:04:05"),
-				endpoint,
-				totalTxsForEndpoint,
-				windowTPS,
-				endpointStats.CumulativeMaxTPS,
-				windowAvgLatency.Round(time.Millisecond),
-				endpointStats.CumulativeMaxLatency.Round(time.Millisecond),
-				endpointStats.P50Latency.Round(time.Millisecond),
-				endpointStats.P99Latency.Round(time.Millisecond))
-		}
+	txStats := stats.TransactionStats
+	windowTPS := 0.0
+	if txStats.WindowTxCount > 0 {
+		windowTPS = float64(txStats.WindowTxCount) / l.interval.Seconds()
+	}
+	var overallAvgLatency time.Duration
+	if txStats.WindowLatencyCount > 0 {
+		overallAvgLatency = txStats.WindowLatencySum / time.Duration(txStats.WindowLatencyCount)
 	}
 
-	// Calculate overall average latency
-	var overallAvgLatency time.Duration
-	if totalLatencyCount > 0 {
-		overallAvgLatency = weightedLatencySum / time.Duration(totalLatencyCount)
+	if l.debug {
+		log.Printf("[%s] TXs: %d | TPS: %.1f(%.1f) | Lat: %v(%v) | P50: %v P99: %v",
+			time.Now().Format("15:04:05"),
+			stats.TotalTxs,
+			windowTPS,
+			txStats.CumulativeMaxTPS,
+			overallAvgLatency.Round(time.Millisecond),
+			txStats.CumulativeMaxLatency.Round(time.Millisecond),
+			txStats.P50Latency.Round(time.Millisecond),
+			txStats.P99Latency.Round(time.Millisecond))
 	}
 
 	// Print overall summary line
 	log.Printf("throughput tps=%.2f, txs=%d,  latency(avg=%v p50=%v p99=%v max=%v)",
-		totalWindowTPS,
-		totalTxs,
+		windowTPS,
+		stats.TotalTxs,
 		overallAvgLatency.Round(time.Millisecond),
-		maxP50.Round(time.Millisecond),
-		maxP99.Round(time.Millisecond),
-		maxCumulativeLatency.Round(time.Millisecond))
+		txStats.P50Latency.Round(time.Millisecond),
+		txStats.P99Latency.Round(time.Millisecond),
+		txStats.CumulativeMaxLatency.Round(time.Millisecond))
 
 	// Print block statistics if available
 	if stats.BlockStats != nil && stats.BlockStats.SampleCount > 0 {
