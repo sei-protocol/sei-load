@@ -57,7 +57,6 @@ func init() {
 	rootCmd.Flags().DurationP("stats-interval", "s", 0, "Interval for logging statistics")
 	rootCmd.Flags().Duration("inclusion-reap-after", 30*time.Second, "How long an un-included tx stays in the inclusion registry before reaping as expired (tune to expected inclusion time on congested chains)")
 	rootCmd.Flags().IntP("buffer-size", "b", 0, "Sender queue size")
-	rootCmd.Flags().Int("conns-per-endpoint", 0, "RPC connections to open per endpoint")
 	rootCmd.Flags().Float64P("tps", "t", 0, "Transactions per second (0 = no limit)")
 	rootCmd.Flags().Bool("dry-run", false, "Mock deployment and requests")
 	rootCmd.Flags().Bool("debug", false, "Log each request")
@@ -135,7 +134,6 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	log.Printf("📊 Scenarios: %d", len(cfg.Scenarios))
 	log.Printf("⏱️  Stats interval: %v", cfg.Settings.StatsInterval.ToDuration())
 	log.Printf("📦 Sender queue size: %d", cfg.Settings.BufferSize)
-	log.Printf("🔌 Connections per endpoint: %d", cfg.Settings.ConnsPerEndpoint)
 	if cfg.Settings.TPS > 0 {
 		log.Printf("📈 Transactions per second: %.2f", cfg.Settings.TPS)
 	}

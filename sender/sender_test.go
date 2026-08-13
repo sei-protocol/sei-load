@@ -28,9 +28,8 @@ func TestClientDistribution(t *testing.T) {
 	state := newChainState(chainConfig{})
 	endpoints := state.newRPCServers(t, 2)
 	client, err := newEthClient(t.Context(), &ethClientConfig{
-		Endpoints:        endpoints,
-		ConnsPerEndpoint: 3,
-		Collector:        stats.NewCollector(),
+		Endpoints: endpoints,
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
@@ -56,19 +55,18 @@ func TestClientDistribution(t *testing.T) {
 	require.Len(t, seenClients, len(client.clients))
 }
 
-func TestNewEthClientConnsPerEndpoint(t *testing.T) {
+func TestNewEthClientOpensOneConnectionPerEndpoint(t *testing.T) {
 	state := newChainState(chainConfig{})
 	endpoints := state.newRPCServers(t, 2)
 
 	client, err := newEthClient(t.Context(), &ethClientConfig{
-		Endpoints:        endpoints,
-		ConnsPerEndpoint: 3,
-		Collector:        stats.NewCollector(),
+		Endpoints: endpoints,
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
 
-	require.Len(t, client.clients, 6)
+	require.Len(t, client.clients, len(endpoints))
 }
 
 func TestShardedSender_TrackedReset(t *testing.T) {

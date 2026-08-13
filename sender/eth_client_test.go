@@ -46,10 +46,9 @@ func TestEthClientSendTx_HTTP(t *testing.T) {
 	tx := testLoadTx(t)
 	signer := ethtypes.LatestSignerForChainID(big.NewInt(1))
 	client, err := newEthClient(ctx, &ethClientConfig{
-		ChainID:          "test-chain",
-		Endpoints:        []string{ts.URL},
-		ConnsPerEndpoint: 1,
-		Collector:        stats.NewCollector(),
+		ChainID:   "test-chain",
+		Endpoints: []string{ts.URL},
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
@@ -71,10 +70,9 @@ func TestEthClientSendTx_WS(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
 	client, err := newEthClient(t.Context(), &ethClientConfig{
-		ChainID:          "test-chain",
-		Endpoints:        []string{wsURL},
-		ConnsPerEndpoint: 1,
-		Collector:        stats.NewCollector(),
+		ChainID:   "test-chain",
+		Endpoints: []string{wsURL},
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
@@ -89,10 +87,9 @@ func TestEthClientSendTx_WS(t *testing.T) {
 
 func TestEthClientSendTx_DryRunWithoutEndpoints(t *testing.T) {
 	client, err := newEthClient(t.Context(), &ethClientConfig{
-		DryRun:           true,
-		ChainID:          "test-chain",
-		ConnsPerEndpoint: 1,
-		Collector:        stats.NewCollector(),
+		DryRun:    true,
+		ChainID:   "test-chain",
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
@@ -110,10 +107,9 @@ func TestEthClientNonceUsesPending(t *testing.T) {
 	defer ts.Close()
 
 	client, err := newEthClient(t.Context(), &ethClientConfig{
-		ChainID:          "test-chain",
-		Endpoints:        []string{ts.URL},
-		ConnsPerEndpoint: 1,
-		Collector:        stats.NewCollector(),
+		ChainID:   "test-chain",
+		Endpoints: []string{ts.URL},
+		Collector: stats.NewCollector(),
 	})
 	require.NoError(t, err)
 	defer client.Close()
@@ -122,17 +118,6 @@ func TestEthClientNonceUsesPending(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 7, nonce)
 	require.Equal(t, []rpc.BlockNumber{rpc.PendingBlockNumber}, api.TransactionCountRequests())
-}
-
-func TestNewEthClientRejectsZeroConnsPerEndpoint(t *testing.T) {
-	client, err := newEthClient(t.Context(), &ethClientConfig{
-		ChainID:          "test-chain",
-		Endpoints:        []string{"http://localhost:8545"},
-		ConnsPerEndpoint: 0,
-		Collector:        stats.NewCollector(),
-	})
-	require.Nil(t, client)
-	require.EqualError(t, err, "ConnsPerEndpoint = 0, want > 0")
 }
 
 type mockEthAPI struct {

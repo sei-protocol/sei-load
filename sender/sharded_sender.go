@@ -75,11 +75,10 @@ func (ss *ShardedSender) Run(ctx context.Context) error {
 	signer := ethtypes.LatestSignerForChainID(ss.cfg.GetChainID())
 	signing := semaphore.NewWeighted(int64(runtime.GOMAXPROCS(0)))
 	client, err := newEthClient(ctx, &ethClientConfig{
-		ChainID:          ss.cfg.SeiChainID,
-		Endpoints:        ss.cfg.Endpoints,
-		ConnsPerEndpoint: ss.cfg.Settings.ConnsPerEndpoint,
-		Collector:        ss.collector,
-		DryRun:           ss.cfg.Settings.DryRun,
+		ChainID:   ss.cfg.SeiChainID,
+		Endpoints: ss.cfg.Endpoints,
+		Collector: ss.collector,
+		DryRun:    ss.cfg.Settings.DryRun,
 	})
 	if err != nil {
 		return fmt.Errorf("newEthClient(): %w", err)

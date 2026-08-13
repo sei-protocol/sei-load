@@ -25,11 +25,10 @@ import (
 var tracer = otel.Tracer("github.com/sei-protocol/sei-load/sender")
 
 type ethClientConfig struct {
-	DryRun           bool
-	ChainID          string
-	Endpoints        []string
-	ConnsPerEndpoint int
-	Collector        *stats.Collector
+	DryRun    bool
+	ChainID   string
+	Endpoints []string
+	Collector *stats.Collector
 }
 
 type ethClient struct {
@@ -45,10 +44,6 @@ func (c *ethClient) Close() {
 
 func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient, err error) {
 	var clients []*ethclient.Client
-	connsPerEndpoint := cfg.ConnsPerEndpoint
-	if connsPerEndpoint <= 0 {
-		return nil, fmt.Errorf("ConnsPerEndpoint = %d, want > 0", connsPerEndpoint)
-	}
 	defer func() {
 		if err != nil {
 			for _, eth := range clients {
@@ -66,13 +61,11 @@ func newEthClient(ctx context.Context, cfg *ethClientConfig) (_ *ethClient, err 
 		case "http", "https":
 			opts = append(opts, rpc.WithHTTPClient(newHttpClient()))
 		}
-		for range connsPerEndpoint {
-			rpcClient, err := rpc.DialOptions(ctx, endpoint, opts...)
-			if err != nil {
-				return nil, fmt.Errorf("rpc.Dial(%q): %w", endpoint, err)
-			}
-			clients = append(clients, ethclient.NewClient(rpcClient))
+		rpcClient, err := rpc.DialOptions(ctx, endpoint, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("rpc.Dial(%q): %w", endpoint, err)
 		}
+		clients = append(clients, ethclient.NewClient(rpcClient))
 	}
 	return &ethClient{cfg: cfg, clients: clients}, nil
 }
