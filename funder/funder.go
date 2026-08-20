@@ -19,6 +19,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
 	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 const balanceCheckConcurrency = 16
@@ -170,15 +171,14 @@ func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.Tr
 
 // waitSuccess blocks until tx is mined and asserts it did not revert.
 func waitSuccess(ctx context.Context, client *ethclient.Client, tx *ethtypes.Transaction, what string) error {
-	ctx, cancel := context.WithTimeout(ctx, waitTimeout)
-	defer cancel()
-
-	receipt, err := bind.WaitMined(ctx, client, tx)
-	if err != nil {
-		return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
-	}
-	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		return fmt.Errorf("funder: %s reverted (tx %s)", what, tx.Hash().Hex())
-	}
-	return nil
+	return utils.WithinBudget(ctx, waitTimeout, "funder: "+what, func(ctx context.Context) error {
+		receipt, err := bind.WaitMined(ctx, client, tx)
+		if err != nil {
+			return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
+		}
+		if receipt.Status != ethtypes.ReceiptStatusSuccessful {
+			return fmt.Errorf("funder: %s reverted (tx %s)", what, tx.Hash().Hex())
+		}
+		return nil
+	})
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/utils"
 	"github.com/sei-protocol/sei-load/types"
+	loadutils "github.com/sei-protocol/sei-load/utils"
 )
 
 // bigOne is 1 in big.Int.
@@ -178,13 +179,12 @@ const deployTimeout = 30 * time.Second
 // as a successful run that did nothing. A sentinel from the caller's own context
 // is passed through, because that one really is a shutdown.
 func (c *ContractScenarioBase[T]) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error) {
-	deployCtx, cancel := context.WithTimeout(ctx, deployTimeout)
-	defer cancel()
-
-	address, err := c.deployWithin(deployCtx, config, deployer)
-	if err != nil && ctx.Err() == nil && deployCtx.Err() != nil {
-		return common.Address{}, fmt.Errorf("deployment exceeded its %s budget: %v", deployTimeout, err)
-	}
+	var address common.Address
+	err := loadutils.WithinBudget(ctx, deployTimeout, "deployment", func(ctx context.Context) error {
+		var err error
+		address, err = c.deployWithin(ctx, config, deployer)
+		return err
+	})
 	return address, err
 }
 
