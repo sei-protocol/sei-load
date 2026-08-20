@@ -63,10 +63,17 @@ type JSONRPCRequest struct {
 
 // TxScenario captures the scenario of this test transaction.
 type TxScenario struct {
-	Name     string
-	Nonce    uint64
-	Sender   Account
-	Receiver common.Address
+	Name  string
+	Nonce uint64
+	// Operation is the operation the scenario drew for this transaction, from
+	// the scenario's own weighted basket. The generator passes a TxScenario into
+	// Generate by pointer, so the scenario writes the drawn name here and every
+	// later stage reads which operation it was. A scenario with one implicit
+	// operation leaves it empty, and consumers omit the dimension rather than
+	// invent a value for it.
+	Operation string
+	Sender    Account
+	Receiver  common.Address
 }
 
 // CreateTxFromEthTx creates a LoadTx from an EthTx (pre-marshaled).

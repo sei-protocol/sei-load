@@ -389,3 +389,46 @@ func TestStorageRWCoversItsDeclaredOperations(t *testing.T) {
 		})
 	}
 }
+
+// TestStorageRWStampsTheDrawnOperation pins the operation dimension to the
+// transaction it describes: for every draw the name recorded on the TxScenario
+// must be the method the calldata actually calls. A stamp that disagrees would
+// attribute a sample to the wrong operation, and every per-operation number
+// downstream would be wrong while still looking plausible.
+func TestStorageRWStampsTheDrawnOperation(t *testing.T) {
+	gen, txs := newAttachedStorageRW(t, config.Scenario{
+		Operations: config.OperationMix{config.OpRead: 1, config.OpWrite: 1, config.OpRmw: 1},
+	})
+
+	rng := newTestRng(5)
+	seen := map[string]int{}
+	for i := 0; i < 600; i++ {
+		txs.Operation = ""
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+		method, _, _ := decodeStorageRW(t, tx.Data())
+		require.Equal(t, method, txs.Operation)
+		seen[txs.Operation]++
+	}
+	for _, op := range config.StorageRWOperations.Names() {
+		require.Positive(t, seen[op])
+	}
+}
+
+// TestStorageRWDefaultStampsItsDefaultOperation covers the scenario that
+// configures no mix. It still draws one operation — the set's default — so the
+// dimension is present rather than empty, and a default-profile run stays
+// separable from a weighted one.
+func TestStorageRWDefaultStampsItsDefaultOperation(t *testing.T) {
+	gen, txs := newAttachedStorageRW(t, config.Scenario{})
+
+	rng := newTestRng(9)
+	for i := 0; i < 16; i++ {
+		txs.Operation = ""
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+		method, _, _ := decodeStorageRW(t, tx.Data())
+		require.Equal(t, method, txs.Operation)
+		require.Equal(t, config.OpRmw, txs.Operation)
+	}
+}
