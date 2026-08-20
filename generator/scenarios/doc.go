@@ -41,22 +41,32 @@
 // are emitted by `make generate` from the contract bindings — do not edit that
 // block by hand.
 //
-// # StorageRW scaffold
+// # StorageRW
 //
-// StorageRW issues a read-modify-write against StorageRWv1 to exercise the SLOAD
-// + SSTORE storage path under load. PLT-461 lands it as a scaffold: every
-// transaction targets one fixed slot with an empty calldata pad, which is enough
-// to prove the deploy/send path. The per-tx slot/value/pad distribution arrives
-// in PLT-465.
+// StorageRW exercises the SLOAD + SSTORE storage path under load. Each
+// transaction draws three things independently from the scenario config: the
+// storage slot from KeyDistribution over a RecordCount-wide keyspace, the
+// calldata pad length from SizeDistribution over the SizeBuckets histogram, and
+// the method — read, write, or rmw — from the Operations mix.
+//
+// Those three axes are what make contention a continuum rather than a binary. A
+// wide keyspace drawn uniformly approaches zero conflict; a single slot is total
+// conflict; a zipfian draw sits anywhere between.
+//
+// Every axis is optional and every default is the pre-distribution behavior: one
+// fixed slot, an empty pad, and rmw. An unconfigured scenario draws no randomness
+// at all, so adding these fields to a profile that does not use them cannot
+// perturb its workload. The draws run in a fixed order — slot, pad, operation —
+// because they share one RNG, which makes the order part of the reproducibility
+// contract.
 //
 // Gas sizing. The rmw is an SLOAD + SSTORE on a single slot: ~26k gas warm, but
-// ~44k on a cold first touch (the cold-SLOAD and the zero-to-nonzero SSTORE both
-// charge their higher rates). The scaffold pins GasLimit to 50k: it covers the
-// cold-first-touch case with headroom for the (currently empty) pad, and packs
+// ~44k on a cold first touch, where the cold SLOAD and the zero-to-nonzero SSTORE
+// both charge their higher rates. The base limit is 50k, covering the
+// cold-first-touch case with headroom, and the pad's intrinsic calldata cost is
+// added on top per transaction so a large pad cannot underprovision. That packs
 // roughly 4x denser than the 200k default in CreateTransactionOpts. Density
-// matters on a gas-limit-admission chain, where a block admits transactions up
-// to its gas limit regardless of gas actually used — an oversized limit reserves
-// block space the rmw never spends and throttles achievable throughput. PLT-465
-// revisits the limit once the calldata pad is distribution-driven, since pad size
-// changes calldata gas.
+// matters on a gas-limit-admission chain, where a block admits transactions up to
+// its gas limit regardless of gas actually used — an oversized limit reserves
+// block space the transaction never spends and throttles achievable throughput.
 package scenarios

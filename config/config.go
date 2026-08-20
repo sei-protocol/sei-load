@@ -84,4 +84,46 @@ type Scenario struct {
 	GasTipCapPicker  *GasPicker     `json:"gasTipCapPicker,omitempty"`
 	KeyDistribution  *Distribution  `json:"keyDistribution,omitempty"`
 	SizeDistribution *Distribution  `json:"sizeDistribution,omitempty"`
+	// RecordCount is the keyspace size the KeyDistribution indexes into: the
+	// per-tx slot is a draw in [0, RecordCount). Zero, the default, is the
+	// single-slot 100%-conflict behavior.
+	RecordCount uint64 `json:"recordCount,omitempty"`
+	// SizeBuckets is the calldata-pad-length histogram the SizeDistribution
+	// indexes into: the per-tx pad length is SizeBuckets[draw]. Empty, the
+	// default, is the empty-pad behavior.
+	SizeBuckets []int `json:"sizeBuckets,omitempty"`
+	// Operations is the read/write/rmw selection mix. Nil, the default, is
+	// all-rmw.
+	Operations *OperationMix `json:"operations,omitempty"`
+}
+
+// maxCalldataPadBytes caps each SizeBuckets entry. It guards against a config
+// typo — a stray extra digit would OOM the generator on the make([]byte, n) hot
+// path — and is not a security boundary: configs are author-controlled.
+const maxCalldataPadBytes = 1 << 20 // 1 MiB
+
+// Validate checks the per-scenario invariants that a malformed config would
+// otherwise surface as a hot-path panic or an OOM. Call it once after the
+// config is loaded.
+func (s *Scenario) Validate() error {
+	for i, n := range s.SizeBuckets {
+		if n < 0 {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d] is negative (%d)", s.Name, i, n)
+		}
+		if n > maxCalldataPadBytes {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the %d-byte cap", s.Name, i, n, maxCalldataPadBytes)
+		}
+	}
+	return nil
+}
+
+// ValidateScenarios runs each scenario's Validate. Call it once after the
+// config is loaded.
+func (c *LoadConfig) ValidateScenarios() error {
+	for i := range c.Scenarios {
+		if err := c.Scenarios[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

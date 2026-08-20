@@ -16,11 +16,22 @@ import (
 
 const StorageRW = "storagerw"
 
-// Fixed slot and empty pad for the scaffold; PLT-465 makes these per-tx.
-var (
-	storageRWSlot = big.NewInt(0)
-	storageRWPad  = []byte{}
+const (
+	// storageRWBaseGas covers the cold-first-touch rmw (a cold SLOAD plus a
+	// zero-to-nonzero SSTORE, ~44k) and the fixed calldata head, with headroom.
+	// The pad's intrinsic cost is added per-tx on top; see package doc.
+	storageRWBaseGas = 50000
+	// calldataZeroByteGas is the EIP-2028 intrinsic cost of one zero calldata
+	// byte. The pad is a zero-filled slice, so each pad byte costs exactly this.
+	calldataZeroByteGas = 4
+	// storageRWWriteValue is the constant value write stores. The load contract
+	// never asserts on it.
+	storageRWWriteValue = 1
 )
+
+// storageRWDefaultSlot is the single slot every tx targets when no key
+// distribution is configured — the 100%-conflict default.
+var storageRWDefaultSlot = big.NewInt(0)
 
 // StorageRWScenario implements the TxGenerator interface for StorageRWv1 contract operations
 type StorageRWScenario struct {
@@ -78,12 +89,73 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 	return err
 }
 
-// CreateContractTransaction implements ContractDeployer interface - creates a
-// fixed StorageRWv1 rmw transaction. See package doc for the scaffold and gas
-// rationale.
+// CreateContractTransaction implements ContractDeployer interface - builds one
+// StorageRWv1 transaction whose slot (key contention), calldata pad (tx size),
+// and operation are drawn from the configured distributions. With no
+// distribution config it falls back to a single-slot empty-pad rmw, consuming
+// no randomness. See package doc for the gas rationale.
+//
+// The draws run in a fixed order — slot, pad, operation — because all three
+// share one RNG, so the order is part of the reproducibility contract.
 func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
-	// 50k fits rmw (SLOAD+SSTORE) with headroom; see package doc for sizing.
-	// PLT-465 revisits with the distribution-driven pad.
-	auth.GasLimit = 50000
-	return s.contract.Rmw(auth, storageRWSlot, storageRWPad)
+	slot, err := s.pickSlot(rng)
+	if err != nil {
+		return nil, err
+	}
+	pad, err := s.pickPad(rng)
+	if err != nil {
+		return nil, err
+	}
+
+	// The pad's intrinsic calldata cost is the only gas the base does not
+	// already cover, so a large pad cannot underprovision the tx.
+	auth.GasLimit = storageRWBaseGas + uint64(len(pad))*calldataZeroByteGas
+
+	switch s.pickOp(rng) {
+	case config.OpRead:
+		return s.contract.Read(auth, slot, pad)
+	case config.OpWrite:
+		return s.contract.Write(auth, slot, big.NewInt(storageRWWriteValue), pad)
+	default:
+		return s.contract.Rmw(auth, slot, pad)
+	}
+}
+
+// pickSlot draws the storage slot from the key distribution over the configured
+// RecordCount keyspace. With no key distribution it returns the fixed default
+// slot and consumes no randomness.
+func (s *StorageRWScenario) pickSlot(rng *mrand.Rand) (*big.Int, error) {
+	cfg := s.scenarioConfig
+	if cfg.KeyDistribution == nil || cfg.RecordCount == 0 {
+		return storageRWDefaultSlot, nil
+	}
+	idx, err := cfg.KeyDistribution.SampleIndex(rng, cfg.RecordCount)
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).SetUint64(idx), nil
+}
+
+// pickPad draws the calldata pad length from the size distribution over the
+// configured SizeBuckets histogram. With no size distribution it returns an
+// empty pad and consumes no randomness.
+func (s *StorageRWScenario) pickPad(rng *mrand.Rand) ([]byte, error) {
+	cfg := s.scenarioConfig
+	if cfg.SizeDistribution == nil || len(cfg.SizeBuckets) == 0 {
+		return nil, nil
+	}
+	bucket, err := cfg.SizeDistribution.SampleIndex(rng, uint64(len(cfg.SizeBuckets)))
+	if err != nil {
+		return nil, err
+	}
+	return make([]byte, cfg.SizeBuckets[bucket]), nil
+}
+
+// pickOp selects read, write, or rmw from the configured mix. With no mix it
+// returns rmw and consumes no randomness.
+func (s *StorageRWScenario) pickOp(rng *mrand.Rand) config.Operation {
+	if s.scenarioConfig.Operations == nil {
+		return config.OpRmw
+	}
+	return s.scenarioConfig.Operations.Select(rng)
 }

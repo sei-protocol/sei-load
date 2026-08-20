@@ -434,5 +434,9 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 		return nil, err
 	}
 
+	if err := cfg.ValidateScenarios(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
 }
