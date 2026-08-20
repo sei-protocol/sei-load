@@ -24,6 +24,15 @@
 // door — add new names, never rename existing ones. A zero-value Distribution
 // (empty Name) draws no randomness and samples 0.
 //
+// The per-scenario workload keys are frozen on the same terms:
+//
+//	"recordCount"        the keyspace a keyDistribution indexes
+//	"sizeBuckets"        the pad-length histogram a sizeDistribution indexes
+//	"operations"         the operation mix, with keys "read", "write", "rmw"
+//
+// So is the order OperationMix.Select compares those weights in, which decides
+// which operation a given draw selects.
+//
 // # Semantics: uniform vs zipfian(theta)
 //
 // uniform draws every index in [0, n) with equal probability.

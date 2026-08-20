@@ -2,10 +2,13 @@ package scenarios_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	mrand "math/rand/v2"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/core"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sei-protocol/sei-load/config"
@@ -184,8 +187,7 @@ func TestStorageRWSizeBuckets(t *testing.T) {
 		_, _, padLen := decodeStorageRW(t, tx.Data())
 		require.Contains(t, buckets, padLen)
 		seen[padLen] = struct{}{}
-		// Gas covers the base plus the pad's intrinsic calldata cost.
-		require.Equal(t, uint64(50000+padLen*4), tx.Gas())
+		requireGasCoversFloor(t, tx)
 	}
 	require.Len(t, seen, len(buckets), "every bucket should be drawn over 256 samples")
 }
@@ -242,6 +244,7 @@ func TestStorageRWDefaultPathUnchanged(t *testing.T) {
 		require.Zero(t, slot)
 		require.Zero(t, padLen)
 		require.Equal(t, uint64(50000), tx.Gas())
+		requireGasCoversFloor(t, tx)
 	}
 
 	// The default path must consume no randomness: an untouched RNG at the same
@@ -257,4 +260,97 @@ func TestStorageRWScenarioConfigAdditive(t *testing.T) {
 	require.NotContains(t, string(encoded), "recordCount")
 	require.NotContains(t, string(encoded), "sizeBuckets")
 	require.NotContains(t, string(encoded), "operations")
+}
+
+// requireGasCoversFloor asserts the declared limit clears both admission costs a
+// transaction has to satisfy: the intrinsic cost the ante checks, and the
+// EIP-7623 calldata floor it does not. The floor is the one that matters here —
+// Sei admits a transaction whose limit is below it, then fails execution with
+// GasUsed equal to the limit, so the failure lands in a block as an included tx
+// and inflates the gas-used metric a run reports.
+func requireGasCoversFloor(t *testing.T, tx *ethtypes.Transaction) {
+	t.Helper()
+
+	intrinsic, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), nil, false, true, true, true)
+	require.NoError(t, err)
+	require.GreaterOrEqualf(t, tx.Gas(), intrinsic,
+		"gas limit %d is below the intrinsic cost %d for %d bytes of calldata",
+		tx.Gas(), intrinsic, len(tx.Data()))
+
+	floor, err := core.FloorDataGas(tx.Data())
+	require.NoError(t, err)
+	require.GreaterOrEqualf(t, tx.Gas(), floor,
+		"gas limit %d is below the EIP-7623 floor %d for %d bytes of calldata",
+		tx.Gas(), floor, len(tx.Data()))
+}
+
+// TestStorageRWGasClearsFloorAcrossPadSizes sweeps the pad from empty to the
+// configured cap and asserts every transaction is fundable. The pre-Prague rate
+// of 4 gas per pad byte fails this from roughly 4.6 KiB upward, which is inside
+// the range sizeBuckets invites.
+func TestStorageRWGasClearsFloorAcrossPadSizes(t *testing.T) {
+	for _, pad := range []int{0, 1, 31, 32, 1024, 4096, 4544, 4609, 8192, 65536, 128 << 10} {
+		t.Run(fmt.Sprintf("pad=%d", pad), func(t *testing.T) {
+			for _, mix := range []*config.OperationMix{{Rmw: 1}, {Read: 1}, {Write: 1}} {
+				gen, txs := newAttachedStorageRW(t, config.Scenario{
+					SizeDistribution: uniformDist(t),
+					SizeBuckets:      []int{pad},
+					Operations:       mix,
+				})
+				tx, err := gen.Generate(newTestRng(1), txs)
+				require.NoError(t, err)
+				requireGasCoversFloor(t, tx)
+			}
+		})
+	}
+}
+
+// TestStorageRWDrawOrderIsStable pins the documented draw order — slot, then
+// pad, then operation — with all three axes live. Reordering the picks changes
+// this sequence, which is what makes a saved workload replayable; without a
+// golden the order is documented but unguarded.
+func TestStorageRWDrawOrderIsStable(t *testing.T) {
+	scenario := config.Scenario{
+		KeyDistribution:  uniformDist(t),
+		RecordCount:      64,
+		SizeDistribution: uniformDist(t),
+		SizeBuckets:      []int{0, 32, 96},
+		Operations:       &config.OperationMix{Rmw: 1, Read: 1, Write: 1},
+	}
+	want := []struct {
+		method string
+		slot   uint64
+		pad    int
+	}{
+		{"rmw", 50, 96},
+		{"read", 30, 32},
+		{"rmw", 18, 96},
+		{"rmw", 46, 32},
+		{"rmw", 31, 96},
+		{"rmw", 10, 0},
+		{"read", 12, 96},
+		{"write", 24, 96},
+	}
+
+	draw := func() []string {
+		gen, txs := newAttachedStorageRW(t, scenario)
+		rng := newTestRng(2026)
+		out := make([]string, len(want))
+		for i := range out {
+			tx, err := gen.Generate(rng, txs)
+			require.NoError(t, err)
+			method, slot, pad := decodeStorageRW(t, tx.Data())
+			out[i] = fmt.Sprintf("%s/%d/%d", method, slot, pad)
+		}
+		return out
+	}
+
+	golden := make([]string, len(want))
+	for i, w := range want {
+		golden[i] = fmt.Sprintf("%s/%d/%d", w.method, w.slot, w.pad)
+	}
+	require.Equal(t, golden, draw())
+
+	// Same seed, a fresh scenario: the sequence repeats.
+	require.Equal(t, golden, draw())
 }

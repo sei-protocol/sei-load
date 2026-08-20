@@ -1,6 +1,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"math/big"
 	mrand "math/rand/v2"
 
@@ -17,16 +18,32 @@ import (
 const StorageRW = "storagerw"
 
 const (
-	// storageRWBaseGas covers the cold-first-touch rmw (a cold SLOAD plus a
-	// zero-to-nonzero SSTORE, ~44k) and the fixed calldata head, with headroom.
-	// The pad's intrinsic cost is added per-tx on top; see package doc.
+	// storageRWBaseGas covers execution plus the fixed calldata head. Measured
+	// worst case is a read that first writes readAccumulator, at 46,269 including
+	// intrinsic; rmw and write cold-first-touch sit near 44k. 50k clears all
+	// three, but only by ~3.7k — and SSTORE_SET is a Sei governance parameter
+	// (SeiSstoreSetGasEip2200, default 20,000), so a raise past ~23.7k would put
+	// read out of gas. See package doc for why the limit is kept tight anyway.
 	storageRWBaseGas = 50000
-	// calldataZeroByteGas is the EIP-2028 intrinsic cost of one zero calldata
-	// byte. The pad is a zero-filled slice, so each pad byte costs exactly this.
-	calldataZeroByteGas = 4
 	// storageRWWriteValue is the constant value write stores. The load contract
 	// never asserts on it.
 	storageRWWriteValue = 1
+
+	// abiWord is the 32-byte unit the ABI right-pads a dynamic argument up to,
+	// so the pad reaches the wire as a whole number of words.
+	abiWord = 32
+	// calldataFloorGasPerByte is what a zero calldata byte costs under EIP-7623,
+	// which is live on Sei (PragueTime is 0). The floor is 21000 + 10 per token
+	// and a zero byte is one token, so charging 10 per padded pad byte on top of
+	// the base always clears it: the base exceeds 21000 by more than the head's
+	// worst-case token cost.
+	//
+	// The pre-Prague rate of 4 would be short above roughly 4.5 KiB of pad, and
+	// Sei's ante checks only the intrinsic cost, not the floor — so such a tx is
+	// admitted, reserves its full declared limit, then fails in execution with
+	// GasUsed equal to the limit. It lands in a block as an included failure and
+	// inflates the very gas-used metric the run reports.
+	calldataFloorGasPerByte = 10
 )
 
 // storageRWDefaultSlot is the single slot every tx targets when no key
@@ -108,17 +125,21 @@ func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bin
 		return nil, err
 	}
 
-	// The pad's intrinsic calldata cost is the only gas the base does not
-	// already cover, so a large pad cannot underprovision the tx.
-	auth.GasLimit = storageRWBaseGas + uint64(len(pad))*calldataZeroByteGas
+	// Charge the pad at the EIP-7623 floor rate over its on-wire length, which
+	// the ABI rounds up to a whole word.
+	paddedPad := (uint64(len(pad)) + abiWord - 1) / abiWord * abiWord
+	auth.GasLimit = storageRWBaseGas + paddedPad*calldataFloorGasPerByte
 
-	switch s.pickOp(rng) {
+	op := s.pickOp(rng)
+	switch op {
+	case config.OpRmw:
+		return s.contract.Rmw(auth, slot, pad)
 	case config.OpRead:
 		return s.contract.Read(auth, slot, pad)
 	case config.OpWrite:
 		return s.contract.Write(auth, slot, big.NewInt(storageRWWriteValue), pad)
 	default:
-		return s.contract.Rmw(auth, slot, pad)
+		return nil, fmt.Errorf("storagerw: no contract method for operation %d", op)
 	}
 }
 

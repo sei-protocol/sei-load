@@ -67,21 +67,34 @@
 // axis changes how many draws each transaction takes, which shifts the other
 // axes — see the config package doc on what the seed does and does not promise.
 //
-// Gas sizing. All three operations share one base GasLimit of 50k. The rmw is
-// the costliest: an SLOAD plus an SSTORE on a single slot, ~26k warm and ~44k on
-// a cold first touch, where the cold SLOAD and the zero-to-nonzero SSTORE both
-// charge their higher rates. write is an SSTORE without the load, and read folds
-// its load into readAccumulator, so both sit under the rmw ceiling — 50k covers
-// the worst of the three with headroom for the fixed calldata head.
+// read writes too, and that bounds what the key axis can show. Every read folds
+// its load into readAccumulator — one contract-wide slot — so reads conflict with
+// each other no matter which key they drew. A read-weighted mix therefore does
+// not sweep contention; only rmw and write do. Reads also measure absent slots
+// until something has written them, since a fresh deploy starts empty and there
+// is no warm-up phase.
 //
-// One limit for all three trades a little slack on read and write for a single
+// Gas sizing. All three operations share one base GasLimit of 50k. The measured
+// worst case is a read that first writes readAccumulator, at 46,269 including
+// intrinsic cost; rmw and write cold-first-touch sit near 44k. So 50k clears all
+// three, but by only ~3.7k — and SSTORE_SET is a Sei governance parameter
+// (SeiSstoreSetGasEip2200, default 20,000), so a raise past roughly 23.7k would
+// put read out of gas. Widening the keyspace also makes cold first touches the
+// normal case rather than the exception, which is the regime this headroom has to
+// survive.
+//
+// One limit for all three trades slack on the cheaper operations for a single
 // number to reason about. Density is why the number is tight at all: it packs
 // roughly 4x denser than the 200k default in CreateTransactionOpts, and on a
-// gas-limit-admission chain a block admits transactions up to its gas limit
-// regardless of gas actually used, so an oversized limit reserves block space
-// the transaction never spends and throttles achievable throughput.
+// gas-limit-admission chain a block admits transactions up to their declared
+// limit regardless of gas actually used, so an oversized limit reserves block
+// space the transaction never spends and throttles achievable throughput.
 //
-// The drawn pad adds its own intrinsic calldata cost — 4 gas per zero pad byte,
-// EIP-2028 — on top of the base, so a large pad cannot underprovision the tx
-// while an empty pad leaves the limit at exactly 50k.
+// The drawn pad is charged at 10 gas per on-wire byte on top of the base. That is
+// the EIP-7623 floor rate, which is live on Sei, and it is the binding cost above
+// roughly 4.6 KiB of pad. Sei's ante checks only the intrinsic cost, so a limit
+// sized to the older 4-gas rate is admitted, reserves its full limit, then fails
+// in execution with GasUsed equal to the limit — an included failure that
+// inflates the gas-used metric the run reports. An empty pad leaves the limit at
+// exactly 50k.
 package scenarios

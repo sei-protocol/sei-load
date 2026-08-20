@@ -105,10 +105,24 @@ type Scenario struct {
 	Operations *OperationMix `json:"operations,omitempty"`
 }
 
-// maxCalldataPadBytes caps each SizeBuckets entry at 1 MiB. It catches a config
-// typo — a stray extra digit would OOM the generator on the make([]byte, n) hot
-// path — and is not a security boundary: configs are author-controlled.
-const maxCalldataPadBytes = 1 << 20 // 1 MiB
+const (
+	// maxCalldataPadBytes caps each SizeBuckets entry at 128 KiB. Two ceilings
+	// sit above it and the cap stays under both: the CometBFT mempool rejects a
+	// transaction over 1 MiB, which a 1 MiB pad already breaches on calldata
+	// alone, and the pad is charged at the EIP-7623 floor rate, so 128 KiB costs
+	// about 1.4M gas against a 50M block. It also keeps a stray extra digit from
+	// pinning gigabytes: the send queue holds up to a few thousand transactions,
+	// each retaining its own pad.
+	maxCalldataPadBytes = 128 << 10 // 128 KiB
+
+	// maxRecordCount caps the keyspace. The zipfian sampler precomputes zeta in
+	// O(n) on its first draw, under a mutex, on the generator's only goroutine:
+	// measured at ~26 ns per element, so 1e7 costs ~270 ms once and 1e11 would
+	// stall the run for roughly a minute per order of magnitude with nothing
+	// logged. The package doc puts the design target at ~1e6, so this leaves an
+	// order of magnitude of headroom.
+	maxRecordCount = 10_000_000
+)
 
 // Validate checks the per-scenario invariants that a malformed config would
 // otherwise surface as a hot-path panic or an OOM. loadConfig calls it through
@@ -122,7 +136,28 @@ func (s *Scenario) Validate() error {
 			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the 1 MiB (%d-byte) cap", s.Name, i, n, maxCalldataPadBytes)
 		}
 	}
-	return nil
+
+	if s.RecordCount > maxRecordCount {
+		return fmt.Errorf("scenario %q: recordCount=%d exceeds the %d cap", s.Name, s.RecordCount, maxRecordCount)
+	}
+
+	// An axis needs both halves to do anything: a sampler and a space to sample.
+	// Half-configured, the scenario silently runs its baseline instead of the
+	// experiment the operator asked for, which is the worst outcome available to
+	// a benchmark. Reject the pairing rather than degenerate.
+	if s.KeyDistribution != nil && s.RecordCount == 0 {
+		return fmt.Errorf("scenario %q: keyDistribution is set but recordCount is 0, so every tx would target one slot", s.Name)
+	}
+	if s.KeyDistribution == nil && s.RecordCount != 0 {
+		return fmt.Errorf("scenario %q: recordCount is %d but no keyDistribution samples it", s.Name, s.RecordCount)
+	}
+	if s.SizeDistribution != nil && len(s.SizeBuckets) == 0 {
+		return fmt.Errorf("scenario %q: sizeDistribution is set but sizeBuckets is empty, so every tx would send an empty pad", s.Name)
+	}
+	if s.SizeDistribution == nil && len(s.SizeBuckets) != 0 {
+		return fmt.Errorf("scenario %q: sizeBuckets has %d entries but no sizeDistribution samples them", s.Name, len(s.SizeBuckets))
+	}
+	return s.Operations.validate(s.Name)
 }
 
 // ValidateScenarios runs each scenario's Validate and names the scenario that

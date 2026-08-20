@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	mrand "math/rand/v2"
 )
 
@@ -25,8 +26,26 @@ type OperationMix struct {
 	Rmw   uint64 `json:"rmw,omitempty"`
 }
 
+// validate rejects a mix that is present but cannot select anything, so an
+// operator who writes "operations": {} — or misspells every weight key — gets an
+// error instead of a silent all-rmw run. Select's own zero-total guard then
+// covers only the absent-mix case it was written for. A nil mix is the
+// documented default and passes.
+func (m *OperationMix) validate(scenario string) error {
+	if m == nil {
+		return nil
+	}
+	if m.Read == 0 && m.Write == 0 && m.Rmw == 0 {
+		return fmt.Errorf("scenario %q: operations is set but every weight is 0; omit it for the all-rmw default", scenario)
+	}
+	if m.Read+m.Write+m.Rmw < m.Read {
+		return fmt.Errorf("scenario %q: operations weights sum past uint64", scenario)
+	}
+	return nil
+}
+
 // Select draws one operation in proportion to the configured weights. A zero
-// total falls back to OpRmw, so an empty mix is the default rather than a
+// total falls back to OpRmw, so an absent mix is the default rather than a
 // division by zero, and it draws no randomness.
 //
 // The comparison order (rmw, then read, then write) fixes which weight owns
