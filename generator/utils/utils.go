@@ -34,6 +34,9 @@ const (
 	gasTipCapWei = 2_000_000_000
 	// gasFeeCapWei is the max fee, base plus priority (20 gwei).
 	gasFeeCapWei = 20_000_000_000
+	// deployGasFeeCapWei is the max fee for a contract creation (100 gwei),
+	// matching the funding path because both sign from the same key.
+	deployGasFeeCapWei = 100_000_000_000
 )
 
 // CreateDeploymentOpts returns the options for a contract deployment signed by
@@ -47,7 +50,13 @@ func CreateDeploymentOpts(ctx context.Context, chainID *big.Int, account loadtyp
 	auth.Context = ctx
 	auth.GasLimit = deployGasLimit
 	auth.GasTipCap = big.NewInt(gasTipCapWei)
-	auth.GasFeeCap = big.NewInt(gasFeeCapWei)
+	// A deploy is the first transaction on the deployer's nonce stream, and when
+	// funding is configured that stream belongs to the root key. Pricing it at
+	// the load-transaction cap would put the stream's weakest-priced transaction
+	// at its head, so a base fee above that cap blocks every later root
+	// transaction until someone replaces the nonce by hand. Match the funding
+	// cap instead — the same key, the same exposure, one number.
+	auth.GasFeeCap = big.NewInt(deployGasFeeCapWei)
 	return auth, nil
 }
 

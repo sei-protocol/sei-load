@@ -127,7 +127,7 @@ func TestFundedRunSharesOneNonceStream(t *testing.T) {
 		addrs = append(addrs, account.Address)
 	}
 	require.Len(t, addrs, 4)
-	require.NoError(t, funder.FundAccounts(t.Context(), cfg, addrs))
+	require.NoError(t, funder.FundAccounts(t.Context(), cfg, deployer, addrs))
 
 	// 2 scenario deployments, then the funder's Disperse deployment and 2
 	// disperseEther batches for 4 accounts, each at the next nonce.

@@ -305,13 +305,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 		} else {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
-			// don't have until funded.
-			if cfg.Funding != nil && !cfg.Settings.DryRun {
+			// don't have until funded. MockDeploy gates it too: with no contract
+			// on the chain every transaction would hit a code-less address, so
+			// funding would spend real value on a run that exercises nothing.
+			if cfg.Funding != nil && !cfg.Settings.DryRun && !cfg.MockDeploy {
 				var addrs []common.Address
 				for _, a := range gen.Accounts() {
 					addrs = append(addrs, a.Address)
 				}
-				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
+				if err := funder.FundAccounts(ctx, cfg, deployer, addrs); err != nil {
 					return fmt.Errorf("failed to fund accounts: %w", err)
 				}
 			}
@@ -394,10 +396,25 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		time.Sleep(d)
 	}
 	log.Printf("👋 Shutdown complete")
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		err = nil
+	if endedOnRunContext(ctx, err) {
+		return nil
 	}
 	return err
+}
+
+// endedOnRunContext reports whether err is just the run finishing: its duration
+// elapsed, or the operator signalled it. Both are success.
+//
+// The run context's own expiry is what qualifies. A deadline raised anywhere
+// else carries the same sentinel — a deployment that never mined is the live
+// example, since it bounds itself at 30s — and matching on the sentinel alone
+// would report that failure as a clean exit, with the error text discarded and
+// nothing on stdout to say the run did nothing.
+func endedOnRunContext(ctx context.Context, err error) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // inclusionRegistryCap sizes the inclusion registry. A registry entry lives from

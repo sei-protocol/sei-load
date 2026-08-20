@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -17,22 +18,26 @@ import (
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
+	"github.com/sei-protocol/sei-load/types"
 )
 
 const balanceCheckConcurrency = 16
+
+// waitTimeout bounds one awaited transaction — the Disperse deploy or a batch.
+// Funding runs before the sender starts, so an unbounded wait against a chain
+// that accepts a transaction and never mines it leaves the process alive and
+// silent with no load offered and nothing to time it out: a profile need not set
+// a run duration, and the deploy half of startup already bounds itself.
+const waitTimeout = 30 * time.Second
 
 // FundAccounts funds every account to at least the configured
 // per-account amount from cfg.Funding's root key, or is a no-op when
 // cfg.Funding is nil. See the package doc for the funding flow, the EVM
 // auto-association precondition, and the restart/idempotency semantics.
-func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Address) error {
+func FundAccounts(ctx context.Context, cfg *config.LoadConfig, root types.Account, addrs []common.Address) error {
 	fc := cfg.Funding
 	if fc == nil {
 		return nil
-	}
-	root, err := rootAccount(fc)
-	if err != nil {
-		return err
 	}
 	if len(cfg.Endpoints) == 0 {
 		return fmt.Errorf("funder: no endpoints configured")
@@ -165,6 +170,9 @@ func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.Tr
 
 // waitSuccess blocks until tx is mined and asserts it did not revert.
 func waitSuccess(ctx context.Context, client *ethclient.Client, tx *ethtypes.Transaction, what string) error {
+	ctx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+
 	receipt, err := bind.WaitMined(ctx, client, tx)
 	if err != nil {
 		return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
