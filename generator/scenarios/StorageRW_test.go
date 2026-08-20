@@ -198,7 +198,7 @@ func TestStorageRWSizeBuckets(t *testing.T) {
 func TestStorageRWOpMix(t *testing.T) {
 	t.Run("single weight is exclusive", func(t *testing.T) {
 		gen, txs := newAttachedStorageRW(t, config.Scenario{
-			Operations: &config.OperationMix{Write: 1},
+			Operations: config.OperationMix{config.OpWrite: 1},
 		})
 		rng := newTestRng(3)
 		for i := 0; i < 64; i++ {
@@ -211,7 +211,7 @@ func TestStorageRWOpMix(t *testing.T) {
 
 	t.Run("balanced mix reaches every method", func(t *testing.T) {
 		gen, txs := newAttachedStorageRW(t, config.Scenario{
-			Operations: &config.OperationMix{Read: 1, Write: 1, Rmw: 1},
+			Operations: config.OperationMix{config.OpRead: 1, config.OpWrite: 1, config.OpRmw: 1},
 		})
 		rng := newTestRng(3)
 		seen := map[string]int{}
@@ -291,7 +291,7 @@ func requireGasCoversFloor(t *testing.T, tx *ethtypes.Transaction) {
 func TestStorageRWGasClearsFloorAcrossPadSizes(t *testing.T) {
 	for _, pad := range []int{0, 1, 31, 32, 1024, 4096, 4544, 4609, 8192, 65536, 128 << 10} {
 		t.Run(fmt.Sprintf("pad=%d", pad), func(t *testing.T) {
-			for _, mix := range []*config.OperationMix{{Rmw: 1}, {Read: 1}, {Write: 1}} {
+			for _, mix := range []config.OperationMix{{config.OpRmw: 1}, {config.OpRead: 1}, {config.OpWrite: 1}} {
 				gen, txs := newAttachedStorageRW(t, config.Scenario{
 					SizeDistribution: uniformDist(t),
 					SizeBuckets:      []int{pad},
@@ -315,7 +315,7 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 		RecordCount:      64,
 		SizeDistribution: uniformDist(t),
 		SizeBuckets:      []int{0, 32, 96},
-		Operations:       &config.OperationMix{Rmw: 1, Read: 1, Write: 1},
+		Operations:       config.OperationMix{config.OpRmw: 1, config.OpRead: 1, config.OpWrite: 1},
 	}
 	want := []struct {
 		method string
@@ -353,4 +353,23 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 
 	// Same seed, a fresh scenario: the sequence repeats.
 	require.Equal(t, golden, draw())
+}
+
+// TestStorageRWCoversItsDeclaredOperations closes the seam between the operation
+// names config declares for this scenario and the contract methods the scenario
+// calls: weighting one name alone must produce calldata for the method of that
+// name. A name added to the basket with no method here fails this test rather
+// than every transaction of a run.
+func TestStorageRWCoversItsDeclaredOperations(t *testing.T) {
+	for _, name := range config.StorageRWOperations.Names() {
+		t.Run(name, func(t *testing.T) {
+			gen, txs := newAttachedStorageRW(t, config.Scenario{
+				Operations: config.OperationMix{name: 1},
+			})
+			tx, err := gen.Generate(newTestRng(1), txs)
+			require.NoError(t, err)
+			method, _, _ := decodeStorageRW(t, tx.Data())
+			require.Equal(t, name, method)
+		})
+	}
 }

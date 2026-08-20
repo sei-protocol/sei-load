@@ -50,6 +50,10 @@
 // Operations mix. Slot and pad are the two customer-named axes, key contention
 // and tx size; the operation mix shapes what each drawn slot is used for.
 //
+// config.StorageRWOperations declares those three operation names and the order
+// a weighted draw walks them in. A drawn name is the contract method it calls,
+// so the switch in CreateContractTransaction is the whole mapping.
+//
 // Slot and keyspace are what make contention a continuum rather than a binary.
 // A wide keyspace drawn uniformly approaches zero conflict; a single slot is
 // total conflict; a zipfian draw sits anywhere between. Throughout this section

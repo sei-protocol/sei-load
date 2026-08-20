@@ -53,12 +53,15 @@ var storageRWDefaultSlot = big.NewInt(0)
 // StorageRWScenario implements the TxGenerator interface for StorageRWv1 contract operations
 type StorageRWScenario struct {
 	*ContractScenarioBase[bindings.StorageRWv1]
-	contract *bindings.StorageRWv1
+	contract   *bindings.StorageRWv1
+	operations *config.OperationPicker
 }
 
 // NewStorageRWScenario creates a new StorageRW scenario
 func NewStorageRWScenario(cfg config.Scenario) TxGenerator {
-	scenario := &StorageRWScenario{}
+	scenario := &StorageRWScenario{
+		operations: config.StorageRWOperations.Picker(cfg.Operations),
+	}
 	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.StorageRWv1](scenario, cfg)
 	return scenario
 }
@@ -130,8 +133,7 @@ func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bin
 	paddedPad := (uint64(len(pad)) + abiWord - 1) / abiWord * abiWord
 	auth.GasLimit = storageRWBaseGas + paddedPad*calldataFloorGasPerByte
 
-	op := s.pickOp(rng)
-	switch op {
+	switch op := s.operations.Select(rng); op {
 	case config.OpRmw:
 		return s.contract.Rmw(auth, slot, pad)
 	case config.OpRead:
@@ -139,7 +141,7 @@ func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bin
 	case config.OpWrite:
 		return s.contract.Write(auth, slot, big.NewInt(storageRWWriteValue), pad)
 	default:
-		return nil, fmt.Errorf("storagerw: no contract method for operation %d", op)
+		return nil, fmt.Errorf("storagerw: no contract method for operation %q", op)
 	}
 }
 
@@ -171,13 +173,4 @@ func (s *StorageRWScenario) pickPad(rng *mrand.Rand) ([]byte, error) {
 		return nil, err
 	}
 	return make([]byte, cfg.SizeBuckets[bucket]), nil
-}
-
-// pickOp selects read, write, or rmw from the configured mix. With no mix it
-// returns rmw and consumes no randomness.
-func (s *StorageRWScenario) pickOp(rng *mrand.Rand) config.Operation {
-	if s.scenarioConfig.Operations == nil {
-		return config.OpRmw
-	}
-	return s.scenarioConfig.Operations.Select(rng)
 }
