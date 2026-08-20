@@ -92,7 +92,7 @@ func TestTxsWriter_WithGeneratorFinalFiles(t *testing.T) {
 
 			cfg := testGeneratorConfigWithAccounts(nil, tt.accountCount, tt.newAccountRate)
 			rng := mrand.New(mrand.NewPCG(5, 6))
-			gen, err := generator.NewGenerator(rng, cfg)
+			gen, err := generator.NewGenerator(t.Context(), rng, cfg, types.NewAccount(false))
 			require.NoError(t, err)
 
 			outDir := t.TempDir()

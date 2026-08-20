@@ -6,15 +6,12 @@ import (
 	"log"
 	"maps"
 	"math/big"
-	"os"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"golang.org/x/sync/errgroup"
 
@@ -33,14 +30,9 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	if fc == nil {
 		return nil
 	}
-	rootKeyHex, err := resolveRootKey(fc)
+	root, err := rootAccount(fc)
 	if err != nil {
 		return err
-	}
-	// TrimSpace: a SOPS-mounted key file commonly carries a trailing newline.
-	rootKey, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(rootKeyHex), "0x"))
-	if err != nil {
-		return fmt.Errorf("funder: parse root key: %w", err)
 	}
 	if len(cfg.Endpoints) == 0 {
 		return fmt.Errorf("funder: no endpoints configured")
@@ -59,7 +51,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	}
 	amount := fc.FundAmount()
 	log.Printf("💰 funder: %d accounts, target %s wei each, from %s",
-		len(addrs), amount.String(), crypto.PubkeyToAddress(rootKey.PublicKey).Hex())
+		len(addrs), amount.String(), root.Address.Hex())
 
 	underfunded, err := filterUnderfunded(ctx, client, addrs, amount)
 	if err != nil {
@@ -72,7 +64,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	log.Printf("💰 funder: %d of %d need funding", len(underfunded), len(addrs))
 
 	chainID := cfg.GetChainID()
-	auth, err := bind.NewKeyedTransactorWithChainID(rootKey, chainID)
+	auth, err := bind.NewKeyedTransactorWithChainID(root.PrivKey, chainID)
 	if err != nil {
 		return fmt.Errorf("funder: transactor: %w", err)
 	}
@@ -110,27 +102,6 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	auth.Value = nil
 	log.Printf("✅ funder: funding complete")
 	return nil
-}
-
-func resolveRootKey(fc *config.FundingConfig) (string, error) {
-	if fc.RootKeyFile != "" {
-		b, err := os.ReadFile(fc.RootKeyFile)
-		if err != nil {
-			return "", fmt.Errorf("funder: read rootKeyFile: %w", err)
-		}
-		if len(strings.TrimSpace(string(b))) == 0 {
-			return "", fmt.Errorf("funder: rootKeyFile %s is empty", fc.RootKeyFile)
-		}
-		return string(b), nil
-	}
-	if fc.RootKeyEnv != "" {
-		v := os.Getenv(fc.RootKeyEnv)
-		if v == "" {
-			return "", fmt.Errorf("funder: env %s is empty", fc.RootKeyEnv)
-		}
-		return v, nil
-	}
-	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
 func unique[T comparable](vs []T) []T {
@@ -171,9 +142,8 @@ func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []co
 	return underfunded, nil
 }
 
-// deployDisperse deploys a fresh Disperse contract (the root's first EVM tx,
-// which also auto-associates it) and verifies it has code. See the package doc
-// for why this is not a configurable address.
+// deployDisperse deploys a fresh Disperse contract and verifies it has code.
+// See the package doc for why this is not a configurable address.
 func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.TransactOpts) (*bindings.Disperse, error) {
 	addr, tx, d, err := bindings.DeployDisperse(auth, client, big.NewInt(0), big.NewInt(0))
 	if err != nil {

@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -27,16 +28,17 @@ type TxGenerator interface {
 	Name() string
 	Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 	Attach(config *config.LoadConfig, address common.Address) error
-	Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
+	Deploy(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error)
 }
 
 // ScenarioDeployer defines the interface for scenario-specific deployment logic
 // This can be implemented by both contract and non-contract scenarios
 type ScenarioDeployer interface {
-	// DeployScenario handles any setup required for the scenario
-	// For contracts: deploys the contract and returns its address
-	// For non-contracts: performs any initialization and returns zero address
-	DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
+	// DeployScenario handles any setup required for the scenario.
+	// For contracts: deploys the contract from deployer's account and returns its
+	// address, erroring if the deployment does not mine successfully.
+	// For non-contracts: performs any initialization and returns zero address.
+	DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error)
 
 	// AttachScenario connects to an existing contract.
 	AttachScenario(config *config.LoadConfig, address common.Address) common.Address
@@ -84,12 +86,18 @@ func NewScenarioBase(deployer ScenarioDeployer, cfg config.Scenario) *ScenarioBa
 	}
 }
 
-// Deploy handles the common deployment flow
-func (s *ScenarioBase) Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
+// Deploy handles the common deployment flow. A scenario whose deployment fails
+// stays undeployed, so Generate reports it rather than shaping transactions
+// against an address that holds no contract.
+func (s *ScenarioBase) Deploy(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error) {
 	s.config = config
-	s.address = s.deployer.DeployScenario(config, deployer, nonce)
+	address, err := s.deployer.DeployScenario(ctx, config, deployer)
+	if err != nil {
+		return common.Address{}, err
+	}
+	s.address = address
 	s.deployed = true
-	return s.address
+	return s.address, nil
 }
 
 // Attach connects to an existing contract.
@@ -158,63 +166,60 @@ func (c *ContractScenarioBase[T]) AttachScenario(config *config.LoadConfig, addr
 	return address
 }
 
+// deployTimeout bounds one deployment end to end: the nonce fetch, the send, and
+// the wait for the receipt. Nothing else bounds startup, so a chain that never
+// mines the transaction would hold the run open.
+const deployTimeout = 30 * time.Second
+
 // DeployScenario implements ScenarioDeployer interface for contract scenarios
-func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
+func (c *ContractScenarioBase[T]) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error) {
+	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
+	defer cancel()
+
 	client, err := dial(config)
 	if err != nil {
-		panic("Failed to connect to Ethereum client: " + err.Error())
+		return common.Address{}, fmt.Errorf("dial: %w", err)
 	}
 
-	// Create deployment options
-	auth, err := utils.CreateDeploymentOpts(config.GetChainID(), client, deployer, nonce)
+	auth, err := utils.CreateDeploymentOpts(ctx, config.GetChainID(), deployer)
 	if err != nil {
-		panic("Failed to create deployment options: " + err.Error())
+		return common.Address{}, fmt.Errorf("deployment options for %s: %w", deployer.Address.Hex(), err)
 	}
 
-	// Deploy using contract-specific logic
 	address, tx, err := c.deployer.DeployContract(auth, client)
 	if err != nil {
-		panic("Failed to deploy contract: " + err.Error())
+		return common.Address{}, fmt.Errorf("send deployment from %s: %w", deployer.Address.Hex(), err)
 	}
-
 	log.Printf("📤 Deployment transaction sent: %s", tx.Hash().Hex())
-
-	// Wait for the deployment transaction to be mined
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	receipt, err := bind.WaitMined(ctx, client, tx)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to wait for deployment transaction to be mined: %v", err))
+		return common.Address{}, fmt.Errorf("wait for deployment %s: %w", tx.Hash().Hex(), err)
 	}
-
-	// Check if deployment was successful
 	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		panic(describeFailedDeployment(ctx, client, tx, receipt))
+		return common.Address{}, failedDeployment(ctx, client, tx, receipt)
 	}
-
 	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
-	// Bind contract instance using the provided bind function
-	bindFunc := c.deployer.GetBindFunc()
-	contract, err := bindFunc(address, client)
+	contract, err := c.deployer.GetBindFunc()(address, client)
 	if err != nil {
-		panic("Failed to bind contract: " + err.Error())
+		return common.Address{}, fmt.Errorf("bind contract at %s: %w", address.Hex(), err)
 	}
-
-	// Store the contract instance
 	c.deployer.SetContract(contract)
-	return address
+	return address, nil
 }
 
-func describeFailedDeployment(
+// failedDeployment reports a deployment that mined with a failed status. It
+// replays the transaction with eth_call and asks the node for the transaction
+// error, so the message carries the revert reason when the node offers one.
+func failedDeployment(
 	ctx context.Context,
 	client *ethclient.Client,
 	tx *ethtypes.Transaction,
 	receipt *ethtypes.Receipt,
-) string {
+) error {
 	msg := fmt.Sprintf(
-		"Deployment transaction failed with status %d (tx: %s, block: %d, gas used: %d/%d, contract: %s)",
+		"deployment transaction failed with status %d (tx: %s, block: %d, gas used: %d/%d, contract: %s)",
 		receipt.Status,
 		tx.Hash().Hex(),
 		receipt.BlockNumber.Uint64(),
@@ -255,7 +260,7 @@ func describeFailedDeployment(
 		msg += fmt.Sprintf(" [eth_getTransactionErrorByHash: %s]", txErr)
 	}
 
-	return msg
+	return errors.New(msg)
 }
 
 func deployerAddress(tx *ethtypes.Transaction) common.Address {

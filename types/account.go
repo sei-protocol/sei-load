@@ -17,10 +17,14 @@ type Account struct {
 
 // NewAccount generates new account.
 func NewAccount(tracked bool) Account {
-	privateKey := utils.OrPanic1(crypto.GenerateKey())
+	return AccountFromKey(utils.OrPanic1(crypto.GenerateKey()), tracked)
+}
+
+// AccountFromKey wraps an existing private key, deriving its EVM address.
+func AccountFromKey(privKey *ecdsa.PrivateKey, tracked bool) Account {
 	return Account{
-		Address: crypto.PubkeyToAddress(privateKey.PublicKey),
-		PrivKey: privateKey,
+		Address: crypto.PubkeyToAddress(privKey.PublicKey),
+		PrivKey: privKey,
 		Tracked: tracked,
 	}
 }

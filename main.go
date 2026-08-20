@@ -214,8 +214,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	inclusion := utils.None[*stats.InclusionTracker]()
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
+		// The generator deploys as it is built, so resolve who signs those
+		// deployments first.
+		deployer, err := funder.Deployer(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve contract deployer: %w", err)
+		}
+
 		// Create the generator from the config struct
-		gen, err := generator.NewGenerator(rng, cfg)
+		gen, err := generator.NewGenerator(ctx, rng, cfg, deployer)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}

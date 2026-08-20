@@ -1,52 +1,74 @@
+// Package utils builds the go-ethereum transact options behind seiload's two
+// transaction paths: a contract deployment, which is signed and sent live at
+// startup, and a load transaction, which is shaped offline and sent by the
+// sender package.
+//
+// # Nonce sourcing
+//
+// The two paths source their nonce differently, and the difference is the point.
+// A load transaction pins the nonce the generator assigned it: the sender owns
+// that per-account sequence, and no RPC round-trip belongs on the hot path. A
+// deployment leaves the nonce unset, so go-ethereum reads the deployer's pending
+// nonce from the chain. That is what makes a deployer with on-chain history safe
+// — the funding root spends nonces of its own, before and after these
+// deployments.
 package utils
 
 import (
+	"context"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 	loadtypes "github.com/sei-protocol/sei-load/types"
 )
 
-// CreateTransactOpts creates transaction options for contract deployment or interaction
-func createTransactOpts(chainID *big.Int, account loadtypes.Account, gasLimit uint64, nonce uint64, noSend bool) (*bind.TransactOpts, error) {
-	// Create transactor
+const (
+	// deployGasLimit is the gas limit every contract creation is sent with.
+	deployGasLimit = 3_000_000
+	// txGasLimit is the default per-transaction limit; a scenario that knows its
+	// own cost overrides it.
+	txGasLimit = 200_000
+	// gasTipCapWei is the priority fee (2 gwei).
+	gasTipCapWei = 2_000_000_000
+	// gasFeeCapWei is the max fee, base plus priority (20 gwei).
+	gasFeeCapWei = 20_000_000_000
+)
+
+// CreateDeploymentOpts returns the options for a contract deployment signed by
+// account. The transaction is sent live, so ctx bounds the send and the nonce
+// fetch behind it.
+func CreateDeploymentOpts(ctx context.Context, chainID *big.Int, account loadtypes.Account) (*bind.TransactOpts, error) {
 	auth, err := bind.NewKeyedTransactorWithChainID(account.PrivKey, chainID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Set transaction parameters
-	auth.Nonce = big.NewInt(int64(nonce))
-	auth.NoSend = noSend
-
-	auth.GasLimit = gasLimit
-	auth.GasTipCap = big.NewInt(2000000000)  // 2 gwei tip (priority fee)
-	auth.GasFeeCap = big.NewInt(20000000000) // 20 gwei max fee (base + priority)
-
+	auth.Context = ctx
+	auth.GasLimit = deployGasLimit
+	auth.GasTipCap = big.NewInt(gasTipCapWei)
+	auth.GasFeeCap = big.NewInt(gasFeeCapWei)
 	return auth, nil
 }
 
-// CreateDeploymentOpts creates transaction options specifically for contract deployment
-func CreateDeploymentOpts(chainID *big.Int, client *ethclient.Client, account loadtypes.Account, nonce uint64) (*bind.TransactOpts, error) {
-	// For deployment, use the account's current nonce (don't fetch from blockchain)
-	// This allows sequential deployments with incrementing nonces
-	return createTransactOpts(chainID, account, 3000000, nonce, false) // 3M gas limit for deployment
-}
-
-// CreateTransactionOpts creates transaction options for regular contract interactions
+// CreateTransactionOpts returns the options for one load transaction against a
+// contract. NoSend keeps the transaction in hand for the sender, and the signer
+// hands it back unsigned: the sender signs it at send time.
 func CreateTransactionOpts(chainID *big.Int, scenario *loadtypes.TxScenario) *bind.TransactOpts {
-	opts, err := createTransactOpts(chainID, scenario.Sender, 200000, scenario.Nonce, true)
+	auth, err := bind.NewKeyedTransactorWithChainID(scenario.Sender.PrivKey, chainID)
 	if err != nil {
 		panic("Failed to create transaction options: " + err.Error())
 	}
-	opts.Signer = func(address common.Address, tx *ethtypes.Transaction) (*ethtypes.Transaction, error) {
+	auth.Nonce = new(big.Int).SetUint64(scenario.Nonce)
+	auth.NoSend = true
+	auth.GasLimit = txGasLimit
+	auth.GasTipCap = big.NewInt(gasTipCapWei)
+	auth.GasFeeCap = big.NewInt(gasFeeCapWei)
+	auth.Signer = func(address common.Address, tx *ethtypes.Transaction) (*ethtypes.Transaction, error) {
 		if address != scenario.Sender.Address {
 			return nil, bind.ErrNotAuthorized
 		}
 		return tx, nil
 	}
-	return opts
+	return auth
 }
