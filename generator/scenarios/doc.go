@@ -46,13 +46,20 @@
 // StorageRW exercises the SLOAD + SSTORE storage path under load against
 // StorageRWv1 along two customer-named axes: key contention and tx size. Per tx
 // the scenario draws a slot from the key distribution over the configured
-// RecordCount keyspace, an operation (read/write/rmw) from the configured mix,
-// and a calldata-pad length from the size distribution over the configured
-// SizeBuckets histogram. The three draws ride independent rng sub-streams
-// (dist:i:key, dist:i:op, dist:i:size) so tuning any one axis leaves the others'
-// sequences identical. Each field is nil-guarded exactly like the gas pickers:
-// with no distribution config the scenario degenerates to a single fixed slot 0,
-// an empty pad, and rmw — the 100%-conflict baseline.
+// RecordCount keyspace, a calldata-pad length from the size distribution over
+// the configured SizeBuckets histogram, and an operation (read/write/rmw) from
+// the configured mix.
+//
+// Those axes are what make contention a continuum rather than a binary. A wide
+// keyspace drawn uniformly approaches zero conflict; a single slot is total
+// conflict; a zipfian draw sits anywhere between.
+//
+// Each field is nil-guarded exactly like the gas pickers: with no distribution
+// config the scenario degenerates to a single fixed slot 0, an empty pad, and
+// rmw — the 100%-conflict baseline — and draws no randomness at all, so adding
+// these fields to a profile that does not use them cannot perturb its workload.
+// The three draws run in a fixed order — slot, pad, operation — because they
+// share one RNG, which makes the order part of the reproducibility contract.
 //
 // Gas sizing. The rmw is an SLOAD + SSTORE on a single slot: ~26k gas warm, but
 // ~44k on a cold first touch (the cold-SLOAD and the zero-to-nonzero SSTORE both

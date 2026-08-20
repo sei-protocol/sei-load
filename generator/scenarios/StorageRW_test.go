@@ -3,17 +3,20 @@ package scenarios_test
 import (
 	"encoding/json"
 	"math/big"
+	mrand "math/rand/v2"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
 	"github.com/sei-protocol/sei-load/generator/scenarios"
 	"github.com/sei-protocol/sei-load/types"
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
+
+func newTestRng(seed uint64) *mrand.Rand {
+	return mrand.New(mrand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+}
 
 // rmwSelector is the 4-byte function selector for StorageRWv1.rmw(uint256,bytes).
 // It is the ABI-derived discriminator the produced calldata must start with.
@@ -40,30 +43,31 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
 
 	// Mirror generator.mockDeployAll: attach the bound contract at a known address.
-	contractAddr := types.GenerateAccounts(1)[0].Address
+	contractAddr := types.GenerateAccounts(1, false)[0].Address
 	require.NoError(t, gen.Attach(cfg, contractAddr))
 
 	// Build the tx scenario the way the weighted generator does: a funded sender.
-	sender := types.GenerateAccounts(1)[0]
+	sender := types.GenerateAccounts(1, true)[0]
 	txScenario := &types.TxScenario{
 		Name:   scenarios.StorageRW,
+		Nonce:  0,
 		Sender: sender,
 	}
 
-	loadTx := gen.Generate(txScenario)
-	require.NotNil(t, loadTx)
-	require.NotNil(t, loadTx.EthTx)
+	tx, err := gen.Generate(newTestRng(1), txScenario)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
 
 	// The produced tx must target the deployed contract...
-	require.NotNil(t, loadTx.EthTx.To())
-	require.Equal(t, contractAddr, *loadTx.EthTx.To())
+	require.NotNil(t, tx.To())
+	require.Equal(t, contractAddr, *tx.To())
 
 	// ...and carry rmw calldata against the fixed slot 0.
-	data := loadTx.EthTx.Data()
+	data := tx.Data()
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 
-	// Pin the fixed default-path calldata: rmw(uint256 slot, bytes _pad) with
+	// Pin the fixed scaffold calldata: rmw(uint256 slot, bytes _pad) with
 	// slot == 0 and an empty pad. ABI head is the slot operand (32B) then the
 	// bytes offset (0x40); the tail is the bytes length (0). All zero except the
 	// 0x40 offset, so the full body is 96 bytes.
@@ -79,253 +83,178 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	require.Equal(t, rmwSelector, parsed.Methods["rmw"].ID)
 }
 
-// storageRWABI returns the parsed StorageRWv1 ABI for calldata decoding.
-func storageRWABI(t *testing.T) *abi.ABI {
+// newAttachedStorageRW builds a StorageRW scenario from sc and attaches it at a
+// known address under mock deploy, mirroring generator.mockDeployAll. It returns
+// the generator and a tx scenario carrying a funded sender.
+func newAttachedStorageRW(t *testing.T, sc config.Scenario) (scenarios.TxGenerator, *types.TxScenario) {
+	t.Helper()
+	sc.Name = scenarios.StorageRW
+	cfg := &config.LoadConfig{
+		ChainID:    7777,
+		MockDeploy: true,
+		Endpoints:  []string{"http://localhost:8545"},
+	}
+	gen := scenarios.CreateScenario(sc)
+	require.NoError(t, gen.Attach(cfg, types.GenerateAccounts(1, false)[0].Address))
+	return gen, &types.TxScenario{
+		Name:   scenarios.StorageRW,
+		Nonce:  0,
+		Sender: types.GenerateAccounts(1, true)[0],
+	}
+}
+
+// decodeStorageRW unpacks StorageRW calldata through the binding's own ABI, so
+// the assertions below read against method names rather than byte offsets. The
+// slot is the first argument of every method and the pad is the last.
+func decodeStorageRW(t *testing.T, data []byte) (method string, slot uint64, padLen int) {
 	t.Helper()
 	parsed, err := bindings.StorageRWv1MetaData.GetAbi()
 	require.NoError(t, err)
-	return parsed
-}
-
-// decodeStorageRWTx decodes one produced tx into (method name, slot, pad-length).
-// It identifies the method by its 4-byte selector and unpacks the operands so a
-// test can assert on the slot draw and pad size without reimplementing ABI rules.
-func decodeStorageRWTx(t *testing.T, parsed *abi.ABI, data []byte) (string, uint64, int) {
-	t.Helper()
 	require.GreaterOrEqual(t, len(data), 4)
-	method, err := parsed.MethodById(data[:4])
+	m, err := parsed.MethodById(data[:4])
 	require.NoError(t, err)
-	args, err := method.Inputs.Unpack(data[4:])
+	args, err := m.Inputs.Unpack(data[4:])
 	require.NoError(t, err)
-	slot := args[0].(*big.Int)
-	pad := args[len(args)-1].([]byte) // _pad is always the trailing operand.
-	return method.Name, slot.Uint64(), len(pad)
+	require.GreaterOrEqual(t, len(args), 2)
+	return m.Name, args[0].(*big.Int).Uint64(), len(args[len(args)-1].([]byte))
 }
 
-// newConfiguredStorageRW builds a mock-deployed StorageRW scenario from cfg and
-// binds its distribution streams the way generator.bindDistributionStreams does,
-// so the produced txs are seeded deterministically.
-func newConfiguredStorageRW(t *testing.T, seed uint64, cfg config.Scenario) scenarios.TxGenerator {
-	t.Helper()
-	cfg.Name = scenarios.StorageRW
-	src := rng.NewSource(seed)
-	if cfg.KeyDistribution != nil {
-		cfg.KeyDistribution.SetStream(src.Stream(rng.KeyDistributionStream(0)))
-	}
-	if cfg.SizeDistribution != nil {
-		cfg.SizeDistribution.SetStream(src.Stream(rng.SizeDistributionStream(0)))
-	}
-	if cfg.Operations != nil {
-		cfg.Operations.SetStream(src.Stream(rng.OpDistributionStream(0)))
-	}
-	gen := scenarios.CreateScenario(cfg)
-	loadCfg := &config.LoadConfig{ChainID: 7777, MockDeploy: true, Endpoints: []string{"http://localhost:8545"}}
-	require.NoError(t, gen.Attach(loadCfg, types.GenerateAccounts(1)[0].Address))
-	return gen
-}
-
-// drawSlots produces count txs and returns the slot drawn for each.
-func drawSlots(t *testing.T, gen scenarios.TxGenerator, parsed *abi.ABI, count int) []uint64 {
-	t.Helper()
-	sender := types.GenerateAccounts(1)[0]
-	slots := make([]uint64, count)
-	for i := range slots {
-		tx := gen.Generate(&types.TxScenario{Name: scenarios.StorageRW, Sender: sender})
-		_, slot, _ := decodeStorageRWTx(t, parsed, tx.EthTx.Data())
-		slots[i] = slot
-	}
-	return slots
-}
-
+// uniformDist unmarshals a uniform Distribution the way a profile would, so the
+// tests exercise the same wire path operators use.
 func uniformDist(t *testing.T) *config.Distribution {
 	t.Helper()
 	var d config.Distribution
-	require.NoError(t, d.UnmarshalJSON([]byte(`{"Name":"uniform"}`)))
+	require.NoError(t, json.Unmarshal([]byte(`{"Name":"uniform"}`), &d))
 	return &d
 }
 
-// TestStorageRWContentionSweep pins the contention continuum at its two ends: a
-// uniform draw over a huge keyspace collides almost never, and the default
-// single-slot config collides always. The assertion is on the generator's slot
-// draw, not on-chain state.
+// TestStorageRWContentionSweep pins the contention continuum at both ends: a
+// single-slot keyspace is total conflict, and a large keyspace spreads draws
+// across many distinct slots.
 func TestStorageRWContentionSweep(t *testing.T) {
-	t.Parallel()
-	parsed := storageRWABI(t)
-	const draws = 2000
-
-	t.Run("huge_uniform_keyspace_near_zero_collision", func(t *testing.T) {
-		t.Parallel()
-		gen := newConfiguredStorageRW(t, 1, config.Scenario{
+	t.Run("single slot keyspace is total conflict", func(t *testing.T) {
+		gen, txs := newAttachedStorageRW(t, config.Scenario{
 			KeyDistribution: uniformDist(t),
-			RecordCount:     1_000_000,
+			RecordCount:     1,
 		})
-		slots := drawSlots(t, gen, parsed, draws)
-		seen := make(map[uint64]int, draws)
-		for _, s := range slots {
-			seen[s]++
+		rng := newTestRng(7)
+		for i := 0; i < 64; i++ {
+			tx, err := gen.Generate(rng, txs)
+			require.NoError(t, err)
+			_, slot, _ := decodeStorageRW(t, tx.Data())
+			require.Zero(t, slot)
 		}
-		// Birthday collisions over a 1e6 keyspace with 2000 draws are a handful;
-		// require >99% distinct so a regression that collapsed the keyspace fails.
-		require.Greater(t, len(seen), int(float64(draws)*0.99),
-			"uniform over a huge keyspace must barely collide; got %d distinct of %d", len(seen), draws)
 	})
 
-	t.Run("single_slot_full_collision", func(t *testing.T) {
-		t.Parallel()
-		// No key distribution => single-slot default: every draw is slot 0.
-		gen := newConfiguredStorageRW(t, 1, config.Scenario{})
-		slots := drawSlots(t, gen, parsed, draws)
-		for _, s := range slots {
-			require.Zero(t, s, "default config must target the single fixed slot")
+	t.Run("large keyspace spreads draws", func(t *testing.T) {
+		const keyspace = 10000
+		gen, txs := newAttachedStorageRW(t, config.Scenario{
+			KeyDistribution: uniformDist(t),
+			RecordCount:     keyspace,
+		})
+		rng := newTestRng(7)
+		seen := map[uint64]struct{}{}
+		for i := 0; i < 512; i++ {
+			tx, err := gen.Generate(rng, txs)
+			require.NoError(t, err)
+			_, slot, _ := decodeStorageRW(t, tx.Data())
+			require.Less(t, slot, uint64(keyspace))
+			seen[slot] = struct{}{}
 		}
+		// 512 uniform draws over 10k slots collide rarely; anything near a single
+		// slot would mean the keyspace is not being indexed.
+		require.Greater(t, len(seen), 400)
 	})
 }
 
 // TestStorageRWSizeBuckets proves the size distribution selects calldata pad
-// lengths from the configured bucket histogram and only from those buckets.
+// lengths from the configured histogram, and that gas scales with the pad.
 func TestStorageRWSizeBuckets(t *testing.T) {
-	t.Parallel()
-	parsed := storageRWABI(t)
-	buckets := []int{0, 64, 256, 1024}
-	allowed := make(map[int]bool, len(buckets))
-	for _, b := range buckets {
-		allowed[b] = true
-	}
-
-	gen := newConfiguredStorageRW(t, 7, config.Scenario{
+	buckets := []int{0, 128, 1024}
+	gen, txs := newAttachedStorageRW(t, config.Scenario{
 		SizeDistribution: uniformDist(t),
 		SizeBuckets:      buckets,
 	})
 
-	sender := types.GenerateAccounts(1)[0]
-	const draws = 4000
-	hits := make(map[int]int, len(buckets))
-	for i := 0; i < draws; i++ {
-		tx := gen.Generate(&types.TxScenario{Name: scenarios.StorageRW, Sender: sender})
-		_, _, padLen := decodeStorageRWTx(t, parsed, tx.EthTx.Data())
-		require.True(t, allowed[padLen], "pad length %d not in configured buckets", padLen)
-		hits[padLen]++
+	rng := newTestRng(11)
+	seen := map[int]struct{}{}
+	for i := 0; i < 256; i++ {
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+		_, _, padLen := decodeStorageRW(t, tx.Data())
+		require.Contains(t, buckets, padLen)
+		seen[padLen] = struct{}{}
+		// Gas covers the base plus the pad's intrinsic calldata cost.
+		require.Equal(t, uint64(50000+padLen*4), tx.Gas())
 	}
-	// Uniform over 4 buckets: each should be well-represented (no empty bucket),
-	// proving the size draw actually spans the histogram.
-	for _, b := range buckets {
-		require.Positive(t, hits[b], "bucket %d never selected under uniform size dist", b)
-	}
+	require.Len(t, seen, len(buckets), "every bucket should be drawn over 256 samples")
 }
 
-// TestStorageRWKeySizeIndependence is the core trap guard: changing the size
-// distribution must not perturb the key sequence. Same seed + same key config
-// must yield an identical slot sequence regardless of the size config.
-func TestStorageRWKeySizeIndependence(t *testing.T) {
-	t.Parallel()
-	parsed := storageRWABI(t)
-	const seed, draws = 42, 500
-
-	keyOnly := newConfiguredStorageRW(t, seed, config.Scenario{
-		KeyDistribution: uniformDist(t),
-		RecordCount:     100_000,
-	})
-	withSize := newConfiguredStorageRW(t, seed, config.Scenario{
-		KeyDistribution:  uniformDist(t),
-		RecordCount:      100_000,
-		SizeDistribution: uniformDist(t),
-		SizeBuckets:      []int{0, 128, 512},
-	})
-
-	require.Equal(t,
-		drawSlots(t, keyOnly, parsed, draws),
-		drawSlots(t, withSize, parsed, draws),
-		"adding a size distribution must not change the key draw sequence")
-}
-
-// TestStorageRWOpIndependence guards that op selection rides its own sub-stream:
-// configuring an op mix must not change the key draw sequence.
-func TestStorageRWOpIndependence(t *testing.T) {
-	t.Parallel()
-	parsed := storageRWABI(t)
-	const seed, draws = 42, 500
-
-	keyOnly := newConfiguredStorageRW(t, seed, config.Scenario{
-		KeyDistribution: uniformDist(t),
-		RecordCount:     100_000,
-	})
-	withOps := newConfiguredStorageRW(t, seed, config.Scenario{
-		KeyDistribution: uniformDist(t),
-		RecordCount:     100_000,
-		Operations:      &config.OperationMix{Read: 1, Write: 1, Rmw: 1},
-	})
-
-	require.Equal(t,
-		drawSlots(t, keyOnly, parsed, draws),
-		drawSlots(t, withOps, parsed, draws),
-		"adding an operation mix must not change the key draw sequence")
-}
-
-// TestStorageRWOpMix proves the operation selector honors the configured mix:
-// all three methods appear when all three are weighted, and a single-op mix
-// produces only that op.
+// TestStorageRWOpMix proves the operation selector honors the configured mix: a
+// single-weighted op is selected exclusively, and a balanced mix reaches all
+// three methods.
 func TestStorageRWOpMix(t *testing.T) {
-	t.Parallel()
-	parsed := storageRWABI(t)
-	sender := types.GenerateAccounts(1)[0]
-
-	countOps := func(gen scenarios.TxGenerator, draws int) map[string]int {
-		out := map[string]int{}
-		for i := 0; i < draws; i++ {
-			tx := gen.Generate(&types.TxScenario{Name: scenarios.StorageRW, Sender: sender})
-			name, _, _ := decodeStorageRWTx(t, parsed, tx.EthTx.Data())
-			out[name]++
-		}
-		return out
-	}
-
-	t.Run("all_three_appear", func(t *testing.T) {
-		t.Parallel()
-		gen := newConfiguredStorageRW(t, 3, config.Scenario{
-			Operations: &config.OperationMix{Read: 1, Write: 1, Rmw: 1},
-		})
-		got := countOps(gen, 3000)
-		require.Positive(t, got["read"])
-		require.Positive(t, got["write"])
-		require.Positive(t, got["rmw"])
-	})
-
-	t.Run("single_op_only", func(t *testing.T) {
-		t.Parallel()
-		gen := newConfiguredStorageRW(t, 3, config.Scenario{
+	t.Run("single weight is exclusive", func(t *testing.T) {
+		gen, txs := newAttachedStorageRW(t, config.Scenario{
 			Operations: &config.OperationMix{Write: 1},
 		})
-		got := countOps(gen, 500)
-		require.Equal(t, 500, got["write"])
-		require.Len(t, got, 1, "single-op mix must produce only that op")
+		rng := newTestRng(3)
+		for i := 0; i < 64; i++ {
+			tx, err := gen.Generate(rng, txs)
+			require.NoError(t, err)
+			method, _, _ := decodeStorageRW(t, tx.Data())
+			require.Equal(t, "write", method)
+		}
+	})
+
+	t.Run("balanced mix reaches every method", func(t *testing.T) {
+		gen, txs := newAttachedStorageRW(t, config.Scenario{
+			Operations: &config.OperationMix{Read: 1, Write: 1, Rmw: 1},
+		})
+		rng := newTestRng(3)
+		seen := map[string]int{}
+		for i := 0; i < 600; i++ {
+			tx, err := gen.Generate(rng, txs)
+			require.NoError(t, err)
+			method, _, _ := decodeStorageRW(t, tx.Data())
+			seen[method]++
+		}
+		require.Positive(t, seen["read"])
+		require.Positive(t, seen["write"])
+		require.Positive(t, seen["rmw"])
 	})
 }
 
-// TestStorageRWDefaultPathByteIdentical pins the additive guarantee: a scenario
-// with no distribution config produces the fixed default-path calldata (slot 0,
-// empty pad, rmw), byte-identical for a fixed sender/nonce.
-func TestStorageRWDefaultPathByteIdentical(t *testing.T) {
-	t.Parallel()
-	gen := newConfiguredStorageRW(t, 99, config.Scenario{})
-	sender := types.GenerateAccounts(1)[0]
-	tx := gen.Generate(&types.TxScenario{Name: scenarios.StorageRW, Sender: sender})
+// TestStorageRWDefaultPathUnchanged pins the additive guarantee: a scenario with
+// no distribution config produces exactly the pre-existing fixed rmw transaction
+// and draws no randomness, so adding these fields cannot perturb an existing
+// profile's workload.
+func TestStorageRWDefaultPathUnchanged(t *testing.T) {
+	gen, txs := newAttachedStorageRW(t, config.Scenario{})
 
-	data := tx.EthTx.Data()
-	require.Equal(t, rmwSelector, data[:4])
-	body := data[4:]
-	require.Len(t, body, 96)
-	want := make([]byte, 96)
-	want[63] = 0x40 // offset to the empty _pad bytes argument.
-	require.Equal(t, want, body)
+	rng := newTestRng(42)
+	for i := 0; i < 64; i++ {
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+
+		method, slot, padLen := decodeStorageRW(t, tx.Data())
+		require.Equal(t, "rmw", method)
+		require.Zero(t, slot)
+		require.Zero(t, padLen)
+		require.Equal(t, uint64(50000), tx.Gas())
+	}
+
+	// The default path must consume no randomness: an untouched RNG at the same
+	// seed is still in lockstep with the one the generator was handed.
+	require.Equal(t, newTestRng(42).Uint64(), rng.Uint64())
 }
 
-// TestStorageRWScenarioConfigAdditive proves the new fields are omitempty: a
-// scenario carrying none of them round-trips without introducing their keys.
+// TestStorageRWScenarioConfigAdditive proves the new fields are omitempty, so a
+// profile that does not set them round-trips without gaining keys.
 func TestStorageRWScenarioConfigAdditive(t *testing.T) {
-	t.Parallel()
-	out, err := json.Marshal(config.Scenario{Name: scenarios.StorageRW})
+	encoded, err := json.Marshal(config.Scenario{Name: scenarios.StorageRW, Weight: 1})
 	require.NoError(t, err)
-	for _, key := range []string{"recordCount", "sizeBuckets", "operations"} {
-		require.NotContains(t, string(out), key)
-	}
+	require.NotContains(t, string(encoded), "recordCount")
+	require.NotContains(t, string(encoded), "sizeBuckets")
+	require.NotContains(t, string(encoded), "operations")
 }

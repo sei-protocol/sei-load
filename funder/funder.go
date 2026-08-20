@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"math/big"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -18,16 +20,15 @@ import (
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
-	"github.com/sei-protocol/sei-load/types"
 )
 
 const balanceCheckConcurrency = 16
 
-// FundAccounts funds every account across the pools to at least the configured
+// FundAccounts funds every account to at least the configured
 // per-account amount from cfg.Funding's root key, or is a no-op when
 // cfg.Funding is nil. See the package doc for the funding flow, the EVM
 // auto-association precondition, and the restart/idempotency semantics.
-func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.AccountPool) error {
+func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Address) error {
 	fc := cfg.Funding
 	if fc == nil {
 		return nil
@@ -51,16 +52,16 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	}
 	defer client.Close()
 
-	recipients := uniqueAddresses(pools)
-	if len(recipients) == 0 {
+	addrs = unique(addrs)
+	if len(addrs) == 0 {
 		log.Printf("💰 funder: no accounts to fund")
 		return nil
 	}
 	amount := fc.FundAmount()
 	log.Printf("💰 funder: %d accounts, target %s wei each, from %s",
-		len(recipients), amount.String(), crypto.PubkeyToAddress(rootKey.PublicKey).Hex())
+		len(addrs), amount.String(), crypto.PubkeyToAddress(rootKey.PublicKey).Hex())
 
-	underfunded, err := filterUnderfunded(ctx, client, recipients, amount)
+	underfunded, err := filterUnderfunded(ctx, client, addrs, amount)
 	if err != nil {
 		return err
 	}
@@ -68,7 +69,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 		log.Printf("💰 funder: all accounts already funded — nothing to do")
 		return nil
 	}
-	log.Printf("💰 funder: %d of %d need funding", len(underfunded), len(recipients))
+	log.Printf("💰 funder: %d of %d need funding", len(underfunded), len(addrs))
 
 	chainID := cfg.GetChainID()
 	auth, err := bind.NewKeyedTransactorWithChainID(rootKey, chainID)
@@ -88,10 +89,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, pools []types.Acc
 	// batch keeps nonces ordered. Do not parallelize or set auth.Nonce.
 	batch := fc.Batch()
 	for start := 0; start < len(underfunded); start += batch {
-		end := start + batch
-		if end > len(underfunded) {
-			end = len(underfunded)
-		}
+		end := min(start+batch, len(underfunded))
 		chunk := underfunded[start:end]
 		values := make([]*big.Int, len(chunk))
 		total := new(big.Int)
@@ -135,19 +133,12 @@ func resolveRootKey(fc *config.FundingConfig) (string, error) {
 	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
-func uniqueAddresses(pools []types.AccountPool) []common.Address {
-	seen := make(map[common.Address]struct{})
-	var out []common.Address
-	for _, p := range pools {
-		for _, a := range p.GetAccounts() {
-			if _, ok := seen[a.Address]; ok {
-				continue
-			}
-			seen[a.Address] = struct{}{}
-			out = append(out, a.Address)
-		}
+func unique[T comparable](vs []T) []T {
+	m := make(map[T]struct{})
+	for _, v := range vs {
+		m[v] = struct{}{}
 	}
-	return out
+	return slices.Collect(maps.Keys(m))
 }
 
 // filterUnderfunded returns the addresses whose balance is below amount. The

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"math/big"
 	"time"
-
-	"github.com/sei-protocol/sei-load/utils/rng"
 )
 
 // LoadConfig stores the configuration for load-related settings.
@@ -27,12 +25,15 @@ type LoadConfig struct {
 	// Seed roots the deterministic PRNG sub-streams that drive the run. Same
 	// seed + config reproduces the per-stream draw multiset, so the workload
 	// (the distribution of keys, sizes, gas, and accounts) is statistically
-	// reproducible for fair A/B comparison. Per-tx emission ordering is
-	// reproducible only at a single worker; above one worker the multiset still
-	// matches but ordering does not, and on-chain arrival order is concurrent
+	// reproducible for fair A/B comparison. On-chain arrival order is concurrent
 	// regardless. A nil Seed means "unseeded": the generator resolves a random
 	// one and records it for after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
+}
+
+func (c *LoadConfig) TotalQueueSize() int {
+	// Backward compatible formula, consider making it a config value.
+	return len(c.Endpoints) * c.Settings.BufferSize
 }
 
 // Duration wraps time.Duration to provide JSON unmarshaling support
@@ -126,18 +127,4 @@ func (c *LoadConfig) ValidateScenarios() error {
 		}
 	}
 	return nil
-}
-
-// OperationMix is the relative weighting of the StorageRW read/write/rmw
-// operations. The weights need not sum to anything in particular; a per-tx draw
-// selects an operation in proportion to its weight over the total. An all-zero
-// (or nil) mix falls back to rmw, the default.
-type OperationMix struct {
-	Read  uint64 `json:"read,omitempty"`
-	Write uint64 `json:"write,omitempty"`
-	Rmw   uint64 `json:"rmw,omitempty"`
-
-	// stream is set by SetStream; nil draws from the unseeded global RNG. The
-	// pointer aliases on copy, matching GasPicker/Distribution.
-	stream *rng.Stream
 }

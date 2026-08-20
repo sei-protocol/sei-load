@@ -1,6 +1,8 @@
 package scenarios
 
 import (
+	mrand "math/rand/v2"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -17,16 +19,14 @@ const Disperse = "disperse"
 type DisperseScenario struct {
 	*ContractScenarioBase[bindings.Disperse]
 	contract *bindings.Disperse
-	pool     types.AccountPool
+	pool     *types.AccountPool
 }
 
 // NewDisperseScenario creates a new Disperse scenario
 func NewDisperseScenario(cfg config.Scenario) TxGenerator {
 	scenario := &DisperseScenario{}
-	scenario.ContractScenarioBase = NewContractScenarioBase[bindings.Disperse](scenario, cfg)
-	scenario.pool = types.NewAccountPool(&types.AccountConfig{
-		NewAccountRate: 1.0,
-	})
+	scenario.ContractScenarioBase = NewContractScenarioBase(scenario, cfg)
+	scenario.pool = types.NewAccountPool(0, 1.0)
 	return scenario
 }
 
@@ -72,11 +72,11 @@ func (s *DisperseScenario) Attach(config *config.LoadConfig, address common.Addr
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates Disperse transaction
-func (s *DisperseScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (s *DisperseScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	// create new accounts so that it auto-creates the accounts.
 	targets := make([]common.Address, 0, 100)
 	for range 100 {
-		targets = append(targets, s.pool.NextAccount().Address)
+		targets = append(targets, s.pool.NextAccount(rng).Address)
 	}
 	return s.contract.DisperseEtherFixed(auth, targets)
 }

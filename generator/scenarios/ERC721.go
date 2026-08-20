@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -53,7 +54,7 @@ func (s *ERC721Scenario) SetContract(contract *bindings.ERC721) {
 }
 
 // CreateContractTransaction implements ContractDeployer interface - creates ERC721 transaction
-func (s *ERC721Scenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (s *ERC721Scenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	auth.GasLimit = 22460
 	return s.contract.Mint(auth, scenario.Receiver, big.NewInt(atomic.AddInt64(&s.id, 1)))
 }

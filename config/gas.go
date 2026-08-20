@@ -3,9 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
-
-	"github.com/sei-protocol/sei-load/utils/rng"
+	mrand "math/rand/v2"
 )
 
 var (
@@ -15,7 +13,7 @@ var (
 )
 
 type gasGenerator interface {
-	GenerateGas() (uint64, error)
+	GenerateGas(rng *mrand.Rand) (uint64, error)
 }
 
 type GasPicker struct {
@@ -25,23 +23,11 @@ type GasPicker struct {
 
 func (g *GasPicker) Name() string { return g.name }
 
-// SetStream binds the picker's random delegate to a deterministic sub-stream. A
-// nil stream leaves the picker on the unseeded global RNG.
-//
-// Only a random delegate has anything to seed: fixed and empty pickers draw no
-// randomness, so the type assertion intentionally no-ops for them rather than
-// erroring.
-func (g *GasPicker) SetStream(s *rng.Stream) {
-	if r, ok := g.delegate.(*RandomGasGenerator); ok {
-		r.stream = s
-	}
-}
-
-func (g *GasPicker) GenerateGas() (uint64, error) {
+func (g *GasPicker) GenerateGas(rng *mrand.Rand) (uint64, error) {
 	if g.delegate == nil {
 		return 0, nil
 	}
-	return g.delegate.GenerateGas()
+	return g.delegate.GenerateGas(rng)
 }
 
 func (g *GasPicker) UnmarshalJSON(data []byte) error {
@@ -78,24 +64,19 @@ type FixedGasGenerator struct {
 	Gas uint64 `json:"Gas"`
 }
 
-func (f *FixedGasGenerator) GenerateGas() (uint64, error) {
+func (f *FixedGasGenerator) GenerateGas(rng *mrand.Rand) (uint64, error) {
 	return f.Gas, nil
 }
 
 type RandomGasGenerator struct {
 	Min uint64 `json:"Min"`
 	Max uint64 `json:"Max"`
-
-	stream *rng.Stream
 }
 
-func (r *RandomGasGenerator) GenerateGas() (uint64, error) {
+func (r *RandomGasGenerator) GenerateGas(rng *mrand.Rand) (uint64, error) {
 	if r.Min >= r.Max {
 		return 0, fmt.Errorf("invalid random gas range: min %d must be less than max %d", r.Min, r.Max)
 	}
 	span := r.Max - r.Min + 1
-	if r.stream != nil {
-		return r.Min + r.stream.Uint64N(span), nil
-	}
-	return r.Min + rand.Uint64N(span), nil
+	return r.Min + rng.Uint64N(span), nil
 }

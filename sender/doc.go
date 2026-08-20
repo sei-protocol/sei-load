@@ -2,10 +2,12 @@
 //
 // The send path is a pipeline: a [generator.Generator] produces transactions;
 // the [Dispatcher] times their arrival and hands each off to a [TxSender]; the
-// [ShardedSender] routes each tx to one of N per-endpoint [Worker]s by shard;
-// the worker's send loop stamps the attempt and calls the go-ethereum client
-// (eth_sendRawTransaction). Receipts, when tracked, are
-// polled on a separate worker loop. A shared [golang.org/x/time/rate.Limiter] is
+// [ShardedSender] routes each tx to one of N per-endpoint [ethClient]s by shard;
+// the sender queue contains unsigned transactions; the sender loop stamps the
+// attempt, signs the tx, and calls the go-ethereum client (eth_sendRawTransaction).
+// Inclusion, when tracked, is observed by the
+// block-indexed [stats.InclusionTracker] (see Inclusion stage below), not by
+// per-tx receipt polling. A shared [golang.org/x/time/rate.Limiter] is
 // the single rate authority for the whole pipeline; the [Ramper] drives its
 // limit up or down via SetLimit.
 //
@@ -38,9 +40,9 @@
 // scheduled instant the scheduler tries to acquire a permit without blocking: if
 // the senders are saturated the tick is dropped and counted, and the clock moves
 // on. The permit is not released at enqueue. The scheduler installs a release
-// callback on tx.OnComplete, and the worker invokes it only after the
-// synchronous send returns — note the two phases of the worker path: the enqueue
-// into the worker's channel ([TxSender.Send]) is asynchronous and returns at
+// callback on tx.OnComplete, and the sender invokes it only after the
+// synchronous send returns — note the two phases of the send path: the enqueue
+// into the sender's request channel ([TxSender.Send]) is asynchronous and returns at
 // once, but the RPC send itself is synchronous. So the permit is held for the
 // full unacked-in-flight window (enqueue plus RPC round-trip), and maxInFlight
 // bounds real in-flight work while the drop count measures genuine load shed,
@@ -70,7 +72,7 @@
 //
 // Shutdown boundary (accepted, not drift). admitted == succeeded + failed holds
 // on a clean drain (generator exhaustion). On ctx cancel (SIGTERM/duration),
-// admitted txs still buffered for a worker exit uncounted; the undercount is
+// admitted txs still buffered for a sender exit uncounted; the undercount is
 // bounded by the channel backlog and never affects a cleanly completed run.
 //
 // LoadTx lifecycle and scheduling. The scheduling-relevant fields of [types.LoadTx]
@@ -78,11 +80,42 @@
 // goroutine that solely owns the tx at that stage, then is immutable as ownership
 // transfers with the pointer across channels. The scheduler stamps IntendedSendTime
 // (the true scheduled instant t₀ + i/λ) and SequenceIndex (the arrival index i)
-// before hand-off; the worker stamps AttemptedSendTime at the real send. A tx
+// before hand-off; the sender stamps AttemptedSendTime at the real send. A tx
 // cannot self-describe which model produced it — an open-loop and a closed-loop
 // tx are byte-identical — so coordinated-omission safety is a property of the
 // run's arrival model, not of any per-tx field. Latency and schedule-lag consumers
 // must gate on the run-level arrival model.
+//
+// # Inclusion stage
+//
+// When enabled (--track-receipts), the sender hands each successful send to the
+// [stats.InclusionTracker] at send-completion (after OnComplete, only on a nil
+// send error). The tracker subscribes to new heads, fetches each arriving
+// block's body once (O(blocks), not O(txs)), and stamps InclusionTime on every
+// matched in-flight tx with the block's header-ARRIVAL time. Un-included txs are
+// reaped as expired after reapAfter. inclusion_latency (arrival minus
+// IntendedSendTime) is an open-loop-only measure; in closed-loop IntendedSendTime
+// is enqueue time, so the latency sample is omitted (counts are tracked in both).
+//
+// Conservation. registered == included + expired + inflight_at_shutdown, and
+// registered ⊆ succeeded (only successful sends are registered). The inclusion
+// denominator is succeeded (txs_accepted), never a minted "registered" series;
+// dropped_at_cap txs are excluded from it. inflight_at_shutdown is read only
+// after both the senders and the tracker have joined.
+//
+// Accepted boundaries. (1) WS gaps degrade conservatively: a missed head is
+// counted (block_gaps) but never backfilled, so its txs reap as expired —
+// an undercount of inclusions, never a miscount. (2) Reorgs use
+// first-observation-wins (stamp + delete); the inclusion-time error is bounded
+// by reorg_depth × block_time, with no canonical reconciliation. (3) A single
+// fetch endpoint (Endpoints[0], shared with the block collector) adds a small
+// read load. (4) InclusionTime is the header-arrival wall clock, not fetch
+// completion and not header.Time. (5) A failed block-body fetch is counted
+// (block_fetch_errors) and not retried — that block's txs reap as expired, the
+// same conservative undercount as a WS gap. (6) A tx registered after its
+// including block was already scanned is missed and reaps as expired — bounded
+// by the microsecond register window versus block time, a rare conservative
+// undercount, the same direction as a WS gap.
 //
 // Detection and baseline. schedule_lag (AttemptedSendTime minus IntendedSendTime)
 // is the primary coordinated-omission gate: it shows when sends fall behind the

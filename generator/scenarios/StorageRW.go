@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"math/big"
+	mrand "math/rand/v2"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -16,14 +17,14 @@ import (
 const StorageRW = "storagerw"
 
 const (
-	// storageRWBaseGas covers the cold-first-touch rmw (cold SLOAD + zero->nonzero
-	// SSTORE, ~44k) plus the fixed calldata head, with headroom. The distribution-
-	// driven pad's intrinsic cost is added on top per-tx; see package doc.
+	// storageRWBaseGas covers the cold-first-touch rmw (a cold SLOAD plus a
+	// zero-to-nonzero SSTORE, ~44k) and the fixed calldata head, with headroom.
+	// The pad's intrinsic cost is added per-tx on top; see package doc.
 	storageRWBaseGas = 50000
-	// calldataZeroByteGas is the EIP-2028 intrinsic cost of one zero calldata byte.
-	// The pad is a zero-filled slice, so each pad byte costs exactly this.
+	// calldataZeroByteGas is the EIP-2028 intrinsic cost of one zero calldata
+	// byte. The pad is a zero-filled slice, so each pad byte costs exactly this.
 	calldataZeroByteGas = 4
-	// storageRWWriteValue is the constant value write() stores; the load contract
+	// storageRWWriteValue is the constant value write stores. The load contract
 	// never asserts on it.
 	storageRWWriteValue = 1
 )
@@ -89,25 +90,28 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 }
 
 // CreateContractTransaction implements ContractDeployer interface - builds one
-// StorageRWv1 transaction whose slot (key contention), operation, and calldata
-// pad (tx size) are drawn from the configured distributions. With no
-// distribution config it falls back to a single-slot empty-pad rmw.
-// See package doc for the gas rationale.
-func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
-	slot, err := s.pickSlot()
+// StorageRWv1 transaction whose slot (key contention), calldata pad (tx size),
+// and operation are drawn from the configured distributions. With no
+// distribution config it falls back to a single-slot empty-pad rmw, consuming
+// no randomness. See package doc for the gas rationale.
+//
+// The draws run in a fixed order — slot, pad, operation — because all three
+// share one RNG, so the order is part of the reproducibility contract.
+func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+	slot, err := s.pickSlot(rng)
 	if err != nil {
 		return nil, err
 	}
-	pad, err := s.pickPad()
+	pad, err := s.pickPad(rng)
 	if err != nil {
 		return nil, err
 	}
 
-	// The pad's intrinsic calldata cost is the only gas the base does not already
-	// cover; add it so a large pad cannot underprovision the tx.
+	// The pad's intrinsic calldata cost is the only gas the base does not
+	// already cover, so a large pad cannot underprovision the tx.
 	auth.GasLimit = storageRWBaseGas + uint64(len(pad))*calldataZeroByteGas
 
-	switch s.pickOp() {
+	switch s.pickOp(rng) {
 	case config.OpRead:
 		return s.contract.Read(auth, slot, pad)
 	case config.OpWrite:
@@ -119,13 +123,13 @@ func (s *StorageRWScenario) CreateContractTransaction(auth *bind.TransactOpts, s
 
 // pickSlot draws the storage slot from the key distribution over the configured
 // RecordCount keyspace. With no key distribution it returns the fixed default
-// slot — the 100%-conflict default.
-func (s *StorageRWScenario) pickSlot() (*big.Int, error) {
+// slot and consumes no randomness.
+func (s *StorageRWScenario) pickSlot(rng *mrand.Rand) (*big.Int, error) {
 	cfg := s.scenarioConfig
 	if cfg.KeyDistribution == nil || cfg.RecordCount == 0 {
 		return storageRWDefaultSlot, nil
 	}
-	idx, err := cfg.KeyDistribution.SampleIndex(cfg.RecordCount)
+	idx, err := cfg.KeyDistribution.SampleIndex(rng, cfg.RecordCount)
 	if err != nil {
 		return nil, err
 	}
@@ -133,25 +137,25 @@ func (s *StorageRWScenario) pickSlot() (*big.Int, error) {
 }
 
 // pickPad draws the calldata pad length from the size distribution over the
-// configured SizeBuckets histogram, on a sub-stream independent of the key draw.
-// With no size distribution it returns an empty pad.
-func (s *StorageRWScenario) pickPad() ([]byte, error) {
+// configured SizeBuckets histogram. With no size distribution it returns an
+// empty pad and consumes no randomness.
+func (s *StorageRWScenario) pickPad(rng *mrand.Rand) ([]byte, error) {
 	cfg := s.scenarioConfig
 	if cfg.SizeDistribution == nil || len(cfg.SizeBuckets) == 0 {
 		return nil, nil
 	}
-	bucket, err := cfg.SizeDistribution.SampleIndex(uint64(len(cfg.SizeBuckets)))
+	bucket, err := cfg.SizeDistribution.SampleIndex(rng, uint64(len(cfg.SizeBuckets)))
 	if err != nil {
 		return nil, err
 	}
 	return make([]byte, cfg.SizeBuckets[bucket]), nil
 }
 
-// pickOp selects read/write/rmw from the configured mix on its own independent
-// sub-stream. With no mix it returns rmw.
-func (s *StorageRWScenario) pickOp() config.Operation {
+// pickOp selects read, write, or rmw from the configured mix. With no mix it
+// returns rmw and consumes no randomness.
+func (s *StorageRWScenario) pickOp(rng *mrand.Rand) config.Operation {
 	if s.scenarioConfig.Operations == nil {
 		return config.OpRmw
 	}
-	return s.scenarioConfig.Operations.Select()
+	return s.scenarioConfig.Operations.Select(rng)
 }

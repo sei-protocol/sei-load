@@ -10,7 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/sei-protocol/sei-load/utils"
-	"github.com/sei-protocol/sei-load/utils/service"
+	"github.com/sei-protocol/sei-load/utils/scope"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -57,7 +57,7 @@ func NewBlockCollector(seiChainID string) *BlockCollector {
 // Start begins block subscription and data collection
 func (bc *BlockCollector) Run(ctx context.Context, firstEndpoint string) error {
 	wsEndpoint := utils.GetWSEndpoint(firstEndpoint)
-	return service.Run(ctx, func(ctx context.Context, s service.Scope) error {
+	return scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
 		// Connect to WebSocket endpoint
 		client, err := ethclient.Dial(wsEndpoint)
 		if err != nil {

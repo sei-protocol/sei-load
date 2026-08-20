@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	mrand "math/rand/v2"
 	"time"
 
+	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -23,9 +25,9 @@ var bigOne = big.NewInt(1)
 // TxGenerator defines the interface for generating transactions.
 type TxGenerator interface {
 	Name() string
-	Generate(scenario *types.TxScenario) *types.LoadTx
+	Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 	Attach(config *config.LoadConfig, address common.Address) error
-	Deploy(config *config.LoadConfig, deployer *types.Account) common.Address
+	Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
 }
 
 // ScenarioDeployer defines the interface for scenario-specific deployment logic
@@ -34,13 +36,13 @@ type ScenarioDeployer interface {
 	// DeployScenario handles any setup required for the scenario
 	// For contracts: deploys the contract and returns its address
 	// For non-contracts: performs any initialization and returns zero address
-	DeployScenario(config *config.LoadConfig, deployer *types.Account) common.Address
+	DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address
 
 	// AttachScenario connects to an existing contract.
 	AttachScenario(config *config.LoadConfig, address common.Address) common.Address
 
 	// CreateTransaction creates a transaction for this scenario
-	CreateTransaction(config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error)
+	CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 }
 
 // ContractBindFunc defines a function that creates a contract instance from an address
@@ -61,7 +63,7 @@ type ContractDeployer[T any] interface {
 	SetContract(contract *T)
 
 	// CreateContractTransaction creates a contract interaction transaction
-	CreateContractTransaction(auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error)
+	CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 }
 
 // ScenarioBase provides common functionality for all scenarios
@@ -83,9 +85,9 @@ func NewScenarioBase(deployer ScenarioDeployer, cfg config.Scenario) *ScenarioBa
 }
 
 // Deploy handles the common deployment flow
-func (s *ScenarioBase) Deploy(config *config.LoadConfig, deployer *types.Account) common.Address {
+func (s *ScenarioBase) Deploy(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
 	s.config = config
-	s.address = s.deployer.DeployScenario(config, deployer)
+	s.address = s.deployer.DeployScenario(config, deployer, nonce)
 	s.deployed = true
 	return s.address
 }
@@ -99,18 +101,12 @@ func (s *ScenarioBase) Attach(config *config.LoadConfig, address common.Address)
 }
 
 // Generate handles the common transaction generation flow
-func (s *ScenarioBase) Generate(scenario *types.TxScenario) *types.LoadTx {
+func (s *ScenarioBase) Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	if !s.deployed {
-		panic("Scenario not deployed/initialized")
+		return nil, fmt.Errorf("scenario not deployed/initialized")
 	}
-
 	// Create transaction using scenario-specific logic
-	tx, err := s.deployer.CreateTransaction(s.config, scenario)
-	if err != nil {
-		panic("Failed to create transaction: " + err.Error())
-	}
-
-	return types.CreateTxFromEthTx(tx, scenario)
+	return s.deployer.CreateTransaction(rng, s.config, scenario)
 }
 
 // GetConfig returns the configuration
@@ -131,9 +127,7 @@ type ContractScenarioBase[T any] struct {
 
 // NewContractScenarioBase creates a new base scenario with the given contract deployer
 func NewContractScenarioBase[T any](deployer ContractDeployer[T], cfg config.Scenario) *ContractScenarioBase[T] {
-	base := &ContractScenarioBase[T]{
-		deployer: deployer,
-	}
+	base := &ContractScenarioBase[T]{deployer: deployer}
 	base.ScenarioBase = NewScenarioBase(base, cfg)
 	return base
 }
@@ -165,14 +159,14 @@ func (c *ContractScenarioBase[T]) AttachScenario(config *config.LoadConfig, addr
 }
 
 // DeployScenario implements ScenarioDeployer interface for contract scenarios
-func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, deployer *types.Account) common.Address {
+func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, deployer types.Account, nonce uint64) common.Address {
 	client, err := dial(config)
 	if err != nil {
 		panic("Failed to connect to Ethereum client: " + err.Error())
 	}
 
 	// Create deployment options
-	auth, err := utils.CreateDeploymentOpts(config.GetChainID(), client, deployer)
+	auth, err := utils.CreateDeploymentOpts(config.GetChainID(), client, deployer, nonce)
 	if err != nil {
 		panic("Failed to create deployment options: " + err.Error())
 	}
@@ -196,7 +190,7 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 
 	// Check if deployment was successful
 	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		panic(fmt.Sprintf("Deployment transaction failed with status %d (tx: %s)", receipt.Status, tx.Hash().Hex()))
+		panic(describeFailedDeployment(ctx, client, tx, receipt))
 	}
 
 	log.Printf("✅ Deployment successful at block %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
@@ -213,8 +207,81 @@ func (c *ContractScenarioBase[T]) DeployScenario(config *config.LoadConfig, depl
 	return address
 }
 
+func describeFailedDeployment(
+	ctx context.Context,
+	client *ethclient.Client,
+	tx *ethtypes.Transaction,
+	receipt *ethtypes.Receipt,
+) string {
+	msg := fmt.Sprintf(
+		"Deployment transaction failed with status %d (tx: %s, block: %d, gas used: %d/%d, contract: %s)",
+		receipt.Status,
+		tx.Hash().Hex(),
+		receipt.BlockNumber.Uint64(),
+		receipt.GasUsed,
+		tx.Gas(),
+		receipt.ContractAddress.Hex(),
+	)
+
+	if receipt.GasUsed == tx.Gas() {
+		msg += " [gas used hit gas limit]"
+	}
+
+	callMsg := ethereum.CallMsg{
+		From:  deployerAddress(tx),
+		To:    tx.To(),
+		Gas:   tx.Gas(),
+		Value: tx.Value(),
+		Data:  tx.Data(),
+	}
+	if tx.Type() == ethtypes.AccessListTxType {
+		callMsg.AccessList = tx.AccessList()
+	}
+	if tx.Type() == ethtypes.LegacyTxType || tx.Type() == ethtypes.AccessListTxType {
+		callMsg.GasPrice = tx.GasPrice()
+	} else {
+		callMsg.GasFeeCap = tx.GasFeeCap()
+		callMsg.GasTipCap = tx.GasTipCap()
+	}
+
+	prevBlock := new(big.Int).Sub(receipt.BlockNumber, common.Big1)
+	if prevBlock.Sign() < 0 {
+		prevBlock = big.NewInt(0)
+	}
+	if _, err := client.CallContract(ctx, callMsg, prevBlock); err != nil {
+		msg += fmt.Sprintf(" [eth_call replay: %v]", err)
+	}
+	if txErr := fetchTransactionErrorByHash(ctx, client, tx.Hash()); txErr != "" {
+		msg += fmt.Sprintf(" [eth_getTransactionErrorByHash: %s]", txErr)
+	}
+
+	return msg
+}
+
+func deployerAddress(tx *ethtypes.Transaction) common.Address {
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, tx)
+	if err != nil {
+		return common.Address{}
+	}
+	return from
+}
+
+func fetchTransactionErrorByHash(ctx context.Context, client *ethclient.Client, hash common.Hash) string {
+	rpcClient := client.Client()
+	if rpcClient == nil {
+		return ""
+	}
+
+	var result string
+	if err := rpcClient.CallContext(ctx, &result, "eth_getTransactionErrorByHash", hash); err != nil {
+		return fmt.Sprintf("rpc error: %v", err)
+	}
+	return result
+}
+
 // CreateTransaction implements ScenarioDeployer interface for contract scenarios
-func (c *ContractScenarioBase[T]) CreateTransaction(config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
+func (c *ContractScenarioBase[T]) CreateTransaction(rng *mrand.Rand, config *config.LoadConfig, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	auth := utils.CreateTransactionOpts(config.GetChainID(), scenario)
-	return c.deployer.CreateContractTransaction(auth, scenario)
+	return c.deployer.CreateContractTransaction(rng, auth, scenario)
 }

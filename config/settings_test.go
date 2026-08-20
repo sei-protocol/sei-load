@@ -12,56 +12,65 @@ import (
 
 func TestArgumentPrecedence(t *testing.T) {
 	tests := []struct {
-		name            string
-		configContent   string
-		cliArgs         []string
-		expectedStats   time.Duration
-		expectedWorkers int
-		expectedTPS     float64
+		name          string
+		configContent string
+		cliArgs       []string
+		expectedStats time.Duration
+		expectedTPS   float64
+		expectedMax   int
 	}{
 		{
 			name: "config file only",
 			configContent: `{
 				"statsInterval": "5s",
-				"workers": 3,
 				"tps": 100.5
 			}`,
-			cliArgs:         []string{},
-			expectedStats:   5 * time.Second,
-			expectedWorkers: 3,
-			expectedTPS:     100.5,
+			cliArgs:       []string{},
+			expectedStats: 5 * time.Second,
+			expectedTPS:   100.5,
+			expectedMax:   10_000,
 		},
 		{
 			name: "CLI overrides config",
 			configContent: `{
 				"statsInterval": "5s",
-				"workers": 3,
 				"tps": 100.5
 			}`,
-			cliArgs:         []string{"--stats-interval", "3s", "--workers", "7"},
-			expectedStats:   3 * time.Second,
-			expectedWorkers: 7,
-			expectedTPS:     100.5, // Not overridden by CLI
+			cliArgs:       []string{"--stats-interval", "3s"},
+			expectedStats: 3 * time.Second,
+			expectedTPS:   100.5, // Not overridden by CLI
+			expectedMax:   10_000,
 		},
 		{
 			name: "defaults when neither CLI nor config",
 			configContent: `{
 				"endpoints": ["http://localhost:8545"]
 			}`,
-			cliArgs:         []string{},
-			expectedStats:   10 * time.Second, // Default
-			expectedWorkers: 1,                // Default
-			expectedTPS:     0.0,              // Default
+			cliArgs:       []string{},
+			expectedStats: 10 * time.Second, // Default
+			expectedTPS:   0.0,              // Default
+			expectedMax:   10_000,
 		},
 		{
 			name: "CLI overrides defaults",
 			configContent: `{
 				"endpoints": ["http://localhost:8545"]
 			}`,
-			cliArgs:         []string{"--stats-interval", "15s", "--tps", "50"},
-			expectedStats:   15 * time.Second,
-			expectedWorkers: 1,    // Default (not overridden)
-			expectedTPS:     50.0, // CLI override
+			cliArgs:       []string{"--stats-interval", "15s", "--tps", "50"},
+			expectedStats: 15 * time.Second,
+			expectedTPS:   50.0, // CLI override
+			expectedMax:   10_000,
+		},
+		{
+			name: "CLI overrides max-in-flight",
+			configContent: `{
+				"endpoints": ["http://localhost:8545"],
+				"maxInFlight": 123
+			}`,
+			cliArgs:       []string{"--max-in-flight", "456"},
+			expectedStats: 10 * time.Second,
+			expectedTPS:   0.0,
+			expectedMax:   456,
 		},
 	}
 
@@ -82,7 +91,7 @@ func TestArgumentPrecedence(t *testing.T) {
 
 			// Add flags (with zero defaults to avoid precedence issues)
 			cmd.Flags().Duration("stats-interval", 0, "Stats interval")
-			cmd.Flags().Int("workers", 0, "Number of workers")
+			cmd.Flags().Duration("inclusion-reap-after", 0, "Inclusion reap after")
 			cmd.Flags().Float64("tps", 0, "TPS")
 			cmd.Flags().Bool("dry-run", false, "Dry run")
 			cmd.Flags().Bool("debug", false, "Debug")
@@ -117,8 +126,9 @@ func TestArgumentPrecedence(t *testing.T) {
 
 			// Verify expectations
 			require.Equal(t, tt.expectedStats, settings.StatsInterval.ToDuration(), "StatsInterval: expected %v, got %v", tt.expectedStats, settings.StatsInterval.ToDuration())
-			require.Equal(t, tt.expectedWorkers, settings.TasksPerEndpoint, "TasksPerEndpoint: expected %d, got %d", tt.expectedWorkers, settings.TasksPerEndpoint)
 			require.Equal(t, tt.expectedTPS, settings.TPS, "TPS: expected %f, got %f", tt.expectedTPS, settings.TPS)
+			require.Equal(t, tt.expectedMax, settings.MaxInFlight, "MaxInFlight: expected %d, got %d", tt.expectedMax, settings.MaxInFlight)
+			require.NoError(t, settings.Validate())
 		})
 	}
 }
@@ -127,9 +137,9 @@ func TestDefaultSettings(t *testing.T) {
 	defaults := DefaultSettings()
 
 	expected := Settings{
-		TasksPerEndpoint:      1,
 		TPS:                   0.0,
 		StatsInterval:         Duration(10 * time.Second),
+		InclusionReapAfter:    Duration(30 * time.Second),
 		BufferSize:            1000,
 		DryRun:                false,
 		Debug:                 false,
@@ -159,37 +169,22 @@ func TestSettingsValidate(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name:     "closed-loop with no rate is fine",
-			settings: Settings{ArrivalModel: ArrivalModelClosedLoop, TPS: 0},
+			name:     "positive max-in-flight is valid",
+			settings: Settings{MaxInFlight: 1},
 		},
 		{
-			name:     "open-loop with finite TPS is fine",
-			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 100},
+			name:     "default settings are valid",
+			settings: DefaultSettings(),
 		},
 		{
-			name:     "open-loop with ramp-up is fine (finite ramp curve λ)",
-			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 0, RampUp: true},
+			name:     "zero max-in-flight is rejected",
+			settings: Settings{MaxInFlight: 0},
+			wantErr:  "MaxInFlight = 0, want > 0",
 		},
 		{
-			// B1: open-loop with TPS=0 and no ramp ⇒ λ=Inf ⇒ degenerate anchor.
-			name:     "open-loop with zero TPS and no ramp is rejected",
-			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: 0},
-			wantErr:  "finite positive arrival rate",
-		},
-		{
-			name:     "open-loop with negative TPS is rejected",
-			settings: Settings{ArrivalModel: ArrivalModelOpenLoop, TPS: -1},
-			wantErr:  "finite positive arrival rate",
-		},
-		{
-			name:     "unrecognized arrival-model is rejected",
-			settings: Settings{ArrivalModel: "burst", TPS: 100},
-			wantErr:  "invalid arrival-model",
-		},
-		{
-			name:     "empty arrival-model is rejected",
-			settings: Settings{ArrivalModel: "", TPS: 100},
-			wantErr:  "invalid arrival-model",
+			name:     "negative max-in-flight is rejected",
+			settings: Settings{MaxInFlight: -1},
+			wantErr:  "MaxInFlight = -1, want > 0",
 		},
 	}
 
