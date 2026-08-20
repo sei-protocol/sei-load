@@ -149,7 +149,7 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 	for _, account := range g.Accounts() {
 		// Create self-transfer transaction
 		scenario := &types.TxScenario{
-			Name:     "EVMTransfer",
+			Name:     scenarios.EVMTransfer,
 			Nonce:    txSender.Nonce(account),
 			Sender:   account,
 			Receiver: account.Address, // Send to self
