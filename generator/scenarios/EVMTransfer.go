@@ -14,6 +14,13 @@ import (
 
 const EVMTransfer = "evmtransfer"
 
+// Prewarm labels the account-warming transactions the generator sends before a
+// run. It shares the scenario label namespace with the scenario names, so it is
+// declared beside them, but no factory builds it: a profile cannot select it.
+// Prewarm traffic is setup, not offered load, and merging it into a scenario's
+// series moves the latency percentiles the run reports.
+const Prewarm = "prewarm"
+
 // EVMTransferScenario implements the TxGenerator interface for simple ETH transfers
 type EVMTransferScenario struct {
 	*ScenarioBase

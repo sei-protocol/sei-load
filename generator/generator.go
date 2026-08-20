@@ -149,7 +149,7 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 	for _, account := range g.Accounts() {
 		// Create self-transfer transaction
 		scenario := &types.TxScenario{
-			Name:     scenarios.EVMTransfer,
+			Name:     scenarios.Prewarm,
 			Nonce:    txSender.Nonce(account),
 			Sender:   account,
 			Receiver: account.Address, // Send to self
@@ -158,7 +158,9 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 		if err != nil {
 			return fmt.Errorf("evmScenario.Generate(): %w", err)
 		}
-		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		// Prewarm has no arrival schedule, so IntendedSendTime stays zero and the
+		// inclusion tracker leaves these out of its latency histogram.
+		ltx := &types.LoadTx{EthTx: tx, Scenario: scenario}
 		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}

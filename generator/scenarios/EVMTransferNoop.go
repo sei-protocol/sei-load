@@ -27,7 +27,7 @@ func NewEVMTransferNoopScenario(cfg config.Scenario) TxGenerator {
 
 // Name returns the name of the scenario.
 func (s *EVMTransferNoopScenario) Name() string {
-	return EVMTransfer
+	return EVMTransferNoop
 }
 
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
