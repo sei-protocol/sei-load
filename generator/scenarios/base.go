@@ -171,11 +171,24 @@ func (c *ContractScenarioBase[T]) AttachScenario(config *config.LoadConfig, addr
 // mines the transaction would hold the run open.
 const deployTimeout = 30 * time.Second
 
-// DeployScenario implements ScenarioDeployer interface for contract scenarios
+// DeployScenario implements ScenarioDeployer interface for contract scenarios.
+// It bounds the deployment at deployTimeout and reports an expiry of that budget
+// without a context sentinel in the error chain: main reads those sentinels as a
+// clean shutdown, so a deployment that never mined would otherwise be reported
+// as a successful run that did nothing. A sentinel from the caller's own context
+// is passed through, because that one really is a shutdown.
 func (c *ContractScenarioBase[T]) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error) {
-	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
+	deployCtx, cancel := context.WithTimeout(ctx, deployTimeout)
 	defer cancel()
 
+	address, err := c.deployWithin(deployCtx, config, deployer)
+	if err != nil && ctx.Err() == nil && deployCtx.Err() != nil {
+		return common.Address{}, fmt.Errorf("deployment exceeded its %s budget: %v", deployTimeout, err)
+	}
+	return address, err
+}
+
+func (c *ContractScenarioBase[T]) deployWithin(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error) {
 	client, err := dial(config)
 	if err != nil {
 		return common.Address{}, fmt.Errorf("dial: %w", err)

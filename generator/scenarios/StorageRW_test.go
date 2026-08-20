@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	"context"
 	mrand "math/rand/v2"
 	"testing"
 
@@ -79,4 +80,24 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	parsed, err := bindings.StorageRWv1MetaData.GetAbi()
 	require.NoError(t, err)
 	require.Equal(t, rmwSelector, parsed.Methods["rmw"].ID)
+}
+
+// TestDeployTimeoutIsNotAContextSentinel: the deploy budget must not reach the
+// caller as context.DeadlineExceeded. main treats those sentinels as a clean
+// shutdown so a signalled or duration-bounded run exits zero, and a deployment
+// that never mined would otherwise be reported as a successful run that did
+// nothing.
+func TestDeployTimeoutIsNotAContextSentinel(t *testing.T) {
+	cfg := &config.LoadConfig{
+		ChainID: 7777,
+		// A blackhole address: dialing is lazy, so the deploy reaches its wait and
+		// the budget expires there rather than at dial.
+		Endpoints: []string{"http://198.51.100.1:8545"},
+	}
+	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
+
+	_, err := gen.Deploy(t.Context(), cfg, types.GenerateAccounts(1, true)[0])
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded,
+		"a deploy budget that escapes as a context sentinel is read by main as a clean shutdown")
 }

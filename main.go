@@ -405,15 +405,16 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 // endedOnRunContext reports whether err is just the run finishing: its duration
 // elapsed, or the operator signalled it. Both are success.
 //
-// The run context's own expiry is what qualifies. A deadline raised anywhere
-// else carries the same sentinel — a deployment that never mined is the live
-// example, since it bounds itself at 30s — and matching on the sentinel alone
-// would report that failure as a clean exit, with the error text discarded and
-// nothing on stdout to say the run did nothing.
-func endedOnRunContext(ctx context.Context, err error) bool {
-	if ctx.Err() == nil {
-		return false
-	}
+// Matching the sentinels is what works here. A signalled run leaves ctx itself
+// uncancelled — cobra runs on an uncancelled context and the handler reads the
+// signal off a channel — so the error arrives from a background task that scope
+// cancelled on the way out. Testing ctx.Err() would therefore report every
+// normal SIGTERM as a failure.
+//
+// The cost of matching sentinels is that any deadline raised inside the run
+// looks the same. Callers that bound their own work must not let a context
+// sentinel escape; see DeployScenario, which formats its timeout with %v.
+func endedOnRunContext(_ context.Context, err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
