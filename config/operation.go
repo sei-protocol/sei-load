@@ -17,6 +17,29 @@ const (
 	OpWrite = "write"
 )
 
+// The operations a scenario that draws from no basket records. A profile cannot
+// weight these, so they are not wire values, but they share the operation
+// vocabulary with the names above and reach the same metric dimension. They are
+// FROZEN for that reason: a query matches an operation by value.
+//
+// Each names a call shape, not a scenario. Scenarios that issue the same call
+// share a name, and the scenario dimension separates them — so a query can total
+// one call shape across scenarios, or split it by scenario, without either
+// dimension standing in for the other.
+const (
+	// OpTransfer is a native value transfer to another account.
+	OpTransfer = "transfer"
+	// OpSelfTransfer is a zero-value transfer to the sender, which touches one
+	// account rather than two.
+	OpSelfTransfer = "self_transfer"
+	// OpERC20Transfer is ERC20 transfer(address,uint256).
+	OpERC20Transfer = "erc20_transfer"
+	// OpERC721Mint is ERC721 mint(address,uint256).
+	OpERC721Mint = "erc721_mint"
+	// OpDisperseEther is Disperse disperseEtherFixed(address[]).
+	OpDisperseEther = "disperse_ether"
+)
+
 // StorageRWOperations is the operation set the storagerw scenario draws from.
 var StorageRWOperations = NewOperationSet(OpRmw, OpRead, OpWrite)
 

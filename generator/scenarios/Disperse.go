@@ -35,6 +35,10 @@ func (s *DisperseScenario) Name() string {
 	return Disperse
 }
 
+func (s *DisperseScenario) Operation() string {
+	return config.OpDisperseEther
+}
+
 // DeployContract implements ContractDeployer interface - deploys Disperse with specific constructor args
 func (s *DisperseScenario) DeployContract(opts *bind.TransactOpts, client *ethclient.Client) (common.Address, *ethtypes.Transaction, error) {
 	address, tx, _, err := bindings.DeployDisperse(opts, client, bigOne, bigOne)

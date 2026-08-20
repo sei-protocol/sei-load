@@ -65,12 +65,11 @@ type JSONRPCRequest struct {
 type TxScenario struct {
 	Name  string
 	Nonce uint64
-	// Operation is the operation the scenario drew for this transaction, from
-	// the scenario's own weighted basket. The generator passes a TxScenario into
-	// Generate by pointer, so the scenario writes the drawn name here and every
-	// later stage reads which operation it was. A scenario with one implicit
-	// operation leaves it empty, and consumers omit the dimension rather than
-	// invent a value for it.
+	// Operation is the call shape this transaction issues, from the frozen
+	// vocabulary in config. The generator records the scenario's own operation
+	// here; a scenario that draws from a weighted basket overwrites it with the
+	// draw. It is never empty, so a consumer records the dimension on every
+	// sample and needs no placeholder for a scenario that draws nothing.
 	Operation string
 	Sender    Account
 	Receiver  common.Address

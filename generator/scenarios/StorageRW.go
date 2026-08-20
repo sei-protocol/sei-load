@@ -71,6 +71,10 @@ func (s *StorageRWScenario) Name() string {
 	return StorageRW
 }
 
+func (s *StorageRWScenario) Operation() string {
+	return config.OpRmw
+}
+
 // DeployContract implements ContractDeployer interface - deploys StorageRWv1.
 // StorageRWv1 is mapping-backed and takes no constructor arguments; the keyspace
 // is generator-side.
@@ -133,8 +137,6 @@ func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bin
 	paddedPad := (uint64(len(pad)) + abiWord - 1) / abiWord * abiWord
 	auth.GasLimit = storageRWBaseGas + paddedPad*calldataFloorGasPerByte
 
-	// Record the draw on the scenario so the send path and the inclusion tracker
-	// can attribute their samples to the operation that produced them.
 	op := s.operations.Select(rng)
 	scenario.Operation = op
 

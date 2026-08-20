@@ -31,6 +31,10 @@ func (s *EVMTransferFastScenario) Name() string {
 	return EVMTransferFast
 }
 
+func (s *EVMTransferFastScenario) Operation() string {
+	return config.OpTransfer
+}
+
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
 func (s *EVMTransferFastScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
 	// No deployment needed for simple ETH transfers

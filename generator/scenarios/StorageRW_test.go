@@ -390,11 +390,9 @@ func TestStorageRWCoversItsDeclaredOperations(t *testing.T) {
 	}
 }
 
-// TestStorageRWStampsTheDrawnOperation pins the operation dimension to the
-// transaction it describes: for every draw the name recorded on the TxScenario
-// must be the method the calldata actually calls. A stamp that disagrees would
-// attribute a sample to the wrong operation, and every per-operation number
-// downstream would be wrong while still looking plausible.
+// TestStorageRWStampsTheDrawnOperation asserts that the operation recorded on
+// the TxScenario is the contract method the calldata calls. It covers every draw
+// across a balanced read/write/rmw mix.
 func TestStorageRWStampsTheDrawnOperation(t *testing.T) {
 	gen, txs := newAttachedStorageRW(t, config.Scenario{
 		Operations: config.OperationMix{config.OpRead: 1, config.OpWrite: 1, config.OpRmw: 1},
@@ -415,10 +413,10 @@ func TestStorageRWStampsTheDrawnOperation(t *testing.T) {
 	}
 }
 
-// TestStorageRWDefaultStampsItsDefaultOperation covers the scenario that
-// configures no mix. It still draws one operation — the set's default — so the
-// dimension is present rather than empty, and a default-profile run stays
-// separable from a weighted one.
+// TestStorageRWDefaultStampsItsDefaultOperation covers a scenario that
+// configures no mix. The recorded operation is the set's default, rmw, so the
+// dimension is never empty for StorageRW. The fallback consumes no randomness —
+// see config.TestOperationMixAbsentDrawsNoRandomness.
 func TestStorageRWDefaultStampsItsDefaultOperation(t *testing.T) {
 	gen, txs := newAttachedStorageRW(t, config.Scenario{})
 

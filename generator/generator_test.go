@@ -117,10 +117,13 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 	require.Len(t, txs, totalTxs)
 
-	// Count occurrences per scenario
+	// Count occurrences per scenario. Every tx also carries its operation: the
+	// generator records it, and the sender reads it off the LoadTx to label a
+	// sample, so a tx that reaches the sender without one loses that sample.
 	scenarioCounts := make(map[string]int)
 	for _, tx := range txs {
 		require.NotNil(t, tx.Scenario)
+		require.NotEmpty(t, tx.Scenario.Operation)
 		scenario := tx.Scenario.Name
 		scenarioCounts[scenario]++
 	}
