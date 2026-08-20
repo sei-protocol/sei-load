@@ -321,3 +321,19 @@ func TestOperationSetNamesAreCallerOwned(t *testing.T) {
 	names[0] = "clobbered"
 	require.Equal(t, config.OpRmw, config.StorageRWOperations.Names()[0])
 }
+
+// TestOperationPickerRejectsOverflow: Validate rejects weights that sum past
+// uint64, and the picker asserts the same invariant rather than wrapping its
+// cumulative total into a workload nobody configured.
+func TestOperationPickerRejectsOverflow(t *testing.T) {
+	t.Parallel()
+	set := config.StorageRWOperations
+	mix := config.OperationMix{config.OpRmw: 1 << 63, config.OpRead: 1 << 63, config.OpWrite: 7}
+
+	require.ErrorContains(t,
+		(&config.Scenario{Name: "storagerw", Operations: mix}).Validate(),
+		"sum past uint64")
+	require.PanicsWithValue(t,
+		"operation weights for rmw, read, write sum past uint64",
+		func() { set.Picker(mix) })
+}

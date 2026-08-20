@@ -135,6 +135,14 @@ func (s *OperationSet) Picker(mix OperationMix) *OperationPicker {
 		if weight == 0 {
 			continue
 		}
+		// Validate rejects a mix whose weights overflow, but a picker built from
+		// an unvalidated mix would wrap its cumulative total and draw a workload
+		// nobody configured — silently, since every weight still looks sane.
+		// Assert it here too rather than trust the caller, the same way an
+		// undeclared name is asserted below.
+		if picker.total+weight < picker.total {
+			panic(fmt.Sprintf("operation weights for %s sum past uint64", strings.Join(s.names, ", ")))
+		}
 		picker.total += weight
 		picker.names = append(picker.names, name)
 		picker.cum = append(picker.cum, picker.total)

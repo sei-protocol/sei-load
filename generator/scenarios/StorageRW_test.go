@@ -305,6 +305,22 @@ func TestStorageRWGasClearsFloorAcrossPadSizes(t *testing.T) {
 	}
 }
 
+// decodeMix builds a mix the way a profile does. Insertion order matters to the
+// guard this feeds: a small map iterates in insertion order most of the time, so
+// a mix built in the set's declared order would let a picker that wrongly walked
+// the mix still reproduce the golden on most runs. The keys below are
+// deliberately alphabetical, which for storagerw inverts the declared order
+// (rmw, read, write) and turns that mutation into a reliable failure.
+//
+// json.Unmarshal inserts in document order, so the ordering lives in the literal
+// rather than in the decoding.
+func decodeMix(t *testing.T, raw string) config.OperationMix {
+	t.Helper()
+	var mix config.OperationMix
+	require.NoError(t, json.Unmarshal([]byte(raw), &mix))
+	return mix
+}
+
 // TestStorageRWDrawOrderIsStable pins the documented draw order — slot, then
 // pad, then operation — with all three axes live. Reordering the picks changes
 // this sequence, which is what makes a saved workload replayable; without a
@@ -315,7 +331,7 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 		RecordCount:      64,
 		SizeDistribution: uniformDist(t),
 		SizeBuckets:      []int{0, 32, 96},
-		Operations:       config.OperationMix{config.OpRmw: 1, config.OpRead: 1, config.OpWrite: 1},
+		Operations:       decodeMix(t, `{"read":1,"rmw":1,"write":1}`),
 	}
 	want := []struct {
 		method string
