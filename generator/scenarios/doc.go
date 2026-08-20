@@ -44,32 +44,44 @@
 // # StorageRW
 //
 // StorageRW exercises the SLOAD + SSTORE storage path under load against
-// StorageRWv1 along two customer-named axes: key contention and tx size. Per tx
-// the scenario draws a slot from the key distribution over the configured
-// RecordCount keyspace, a calldata-pad length from the size distribution over
-// the configured SizeBuckets histogram, and an operation (read/write/rmw) from
-// the configured mix.
+// StorageRWv1. Per tx it draws three things: a slot from the key distribution
+// over the RecordCount keyspace, a pad length from the size distribution over
+// the SizeBuckets histogram, and an operation — read, write, or rmw — from the
+// Operations mix. Slot and pad are the two customer-named axes, key contention
+// and tx size; the operation mix shapes what each drawn slot is used for.
 //
-// Those axes are what make contention a continuum rather than a binary. A wide
-// keyspace drawn uniformly approaches zero conflict; a single slot is total
-// conflict; a zipfian draw sits anywhere between.
+// Slot and keyspace are what make contention a continuum rather than a binary.
+// A wide keyspace drawn uniformly approaches zero conflict; a single slot is
+// total conflict; a zipfian draw sits anywhere between. Throughout this section
+// record, key, and slot all name the same thing: an index in [0, RecordCount).
 //
-// Each field is nil-guarded exactly like the gas pickers: with no distribution
-// config the scenario degenerates to a single fixed slot 0, an empty pad, and
-// rmw — the 100%-conflict baseline — and draws no randomness at all, so adding
-// these fields to a profile that does not use them cannot perturb its workload.
-// The three draws run in a fixed order — slot, pad, operation — because they
-// share one RNG, which makes the order part of the reproducibility contract.
+// Every axis is optional. Omit them all and StorageRW behaves exactly as it did
+// before they existed: slot 0, an empty pad, rmw — the 100%-conflict baseline —
+// and zero draws from the RNG. So adding these fields to a profile that does not
+// set them cannot perturb its workload.
 //
-// Gas sizing. The rmw is an SLOAD + SSTORE on a single slot: ~26k gas warm, but
-// ~44k on a cold first touch (the cold-SLOAD and the zero-to-nonzero SSTORE both
-// charge their higher rates). The base GasLimit is pinned to 50k, which covers
-// the cold-first-touch case with headroom for the fixed calldata head and packs
-// roughly 4x denser than the 200k default in CreateTransactionOpts. Density
-// matters on a gas-limit-admission chain, where a block admits transactions up
-// to its gas limit regardless of gas actually used — an oversized limit reserves
-// block space the rmw never spends and throttles achievable throughput. The
-// distribution-driven pad adds its own intrinsic calldata cost (4 gas per
-// zero pad byte, EIP-2028) on top of the base so a large pad cannot
-// underprovision the tx, without inflating the limit when the pad is empty.
+// Whichever draws a config does enable run in a fixed order: slot, then pad,
+// then operation. That order must stay stable. The draws share the run's single
+// PRNG, so reordering them shifts every subsequent draw and diverges any saved
+// workload replayed at the same seed. Conversely, enabling or reweighting an
+// axis changes how many draws each transaction takes, which shifts the other
+// axes — see the config package doc on what the seed does and does not promise.
+//
+// Gas sizing. All three operations share one base GasLimit of 50k. The rmw is
+// the costliest: an SLOAD plus an SSTORE on a single slot, ~26k warm and ~44k on
+// a cold first touch, where the cold SLOAD and the zero-to-nonzero SSTORE both
+// charge their higher rates. write is an SSTORE without the load, and read folds
+// its load into readAccumulator, so both sit under the rmw ceiling — 50k covers
+// the worst of the three with headroom for the fixed calldata head.
+//
+// One limit for all three trades a little slack on read and write for a single
+// number to reason about. Density is why the number is tight at all: it packs
+// roughly 4x denser than the 200k default in CreateTransactionOpts, and on a
+// gas-limit-admission chain a block admits transactions up to its gas limit
+// regardless of gas actually used, so an oversized limit reserves block space
+// the transaction never spends and throttles achievable throughput.
+//
+// The drawn pad adds its own intrinsic calldata cost — 4 gas per zero pad byte,
+// EIP-2028 — on top of the base, so a large pad cannot underprovision the tx
+// while an empty pad leaves the limit at exactly 50k.
 package scenarios

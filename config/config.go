@@ -22,12 +22,19 @@ type LoadConfig struct {
 	Funding *FundingConfig `json:"funding,omitempty"`
 	// Path to write a JSON report of the load test.
 	ReportPath string `json:"reportPath,omitempty"`
-	// Seed roots the deterministic PRNG sub-streams that drive the run. Same
-	// seed + config reproduces the per-stream draw multiset, so the workload
-	// (the distribution of keys, sizes, gas, and accounts) is statistically
-	// reproducible for fair A/B comparison. On-chain arrival order is concurrent
-	// regardless. A nil Seed means "unseeded": the generator resolves a random
-	// one and records it for after-the-fact replay.
+	// Seed roots the PRNG behind every workload draw: key and size
+	// distributions, gas pickers, operation mixes, and account selection. The
+	// same seed and the same config reproduce the same draw sequence.
+	//
+	// One stream serves the whole run, so the axes are reproducible together
+	// rather than independently: adding, removing, or reweighting any axis
+	// changes how many draws each transaction takes, which shifts every other
+	// axis's sequence. Two runs compare only when their configs match — a saved
+	// workload is the seed and the config together, never the seed alone.
+	//
+	// On-chain arrival order is concurrent regardless. A nil Seed means
+	// "unseeded": the generator resolves a random one and records it for
+	// after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
 }
 
@@ -88,38 +95,38 @@ type Scenario struct {
 	// per-tx slot is a draw in [0, RecordCount). Zero (the default) is the
 	// single-slot, 100%-conflict behavior.
 	RecordCount uint64 `json:"recordCount,omitempty"`
-	// SizeBuckets is the calldata-pad-length histogram the SizeDistribution
-	// indexes into: the per-tx pad length is SizeBuckets[draw]. Empty (the
-	// default) is the empty-pad behavior.
+	// SizeBuckets is the pad-length histogram the SizeDistribution indexes into:
+	// the per-tx pad length is SizeBuckets[draw]. Empty (the default) is the
+	// empty-pad behavior. Each entry must be between 0 and 1 MiB; Validate
+	// rejects the config otherwise.
 	SizeBuckets []int `json:"sizeBuckets,omitempty"`
 	// Operations is the read/write/rmw selection mix. Nil (the default) is the
 	// all-rmw behavior.
 	Operations *OperationMix `json:"operations,omitempty"`
 }
 
-// maxCalldataPadBytes caps each SizeBuckets entry. It is a generous guard
-// against a config typo (e.g. a stray extra digit OOMing the generator on the
-// make([]byte, n) hot path), not a security boundary: configs are
-// author-controlled today.
+// maxCalldataPadBytes caps each SizeBuckets entry at 1 MiB. It catches a config
+// typo — a stray extra digit would OOM the generator on the make([]byte, n) hot
+// path — and is not a security boundary: configs are author-controlled.
 const maxCalldataPadBytes = 1 << 20 // 1 MiB
 
-// Validate checks per-scenario invariants that a malformed config would
-// otherwise surface as a hot-path panic or OOM. Mirrors ZipfianDistribution's
-// parameter validation; call once after the config is loaded.
+// Validate checks the per-scenario invariants that a malformed config would
+// otherwise surface as a hot-path panic or an OOM. loadConfig calls it through
+// ValidateScenarios after unmarshalling; any new entrypoint must do the same.
 func (s *Scenario) Validate() error {
 	for i, n := range s.SizeBuckets {
 		if n < 0 {
 			return fmt.Errorf("scenario %q: sizeBuckets[%d] is negative (%d)", s.Name, i, n)
 		}
 		if n > maxCalldataPadBytes {
-			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the %d-byte cap", s.Name, i, n, maxCalldataPadBytes)
+			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the 1 MiB (%d-byte) cap", s.Name, i, n, maxCalldataPadBytes)
 		}
 	}
 	return nil
 }
 
-// ValidateScenarios runs each scenario's Validate. It must be called after the
-// config is loaded.
+// ValidateScenarios runs each scenario's Validate and names the scenario that
+// failed. loadConfig calls it after unmarshalling.
 func (c *LoadConfig) ValidateScenarios() error {
 	for i := range c.Scenarios {
 		if err := c.Scenarios[i].Validate(); err != nil {

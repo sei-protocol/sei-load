@@ -91,12 +91,13 @@ func (s *StorageRWScenario) Attach(config *config.LoadConfig, address common.Add
 
 // CreateContractTransaction implements ContractDeployer interface - builds one
 // StorageRWv1 transaction whose slot (key contention), calldata pad (tx size),
-// and operation are drawn from the configured distributions. With no
-// distribution config it falls back to a single-slot empty-pad rmw, consuming
-// no randomness. See package doc for the gas rationale.
+// and operation are drawn from the scenario config. With none of the three
+// configured it falls back to a single-slot empty-pad rmw and draws no
+// randomness. See package doc for the gas rationale.
 //
-// The draws run in a fixed order — slot, pad, operation — because all three
-// share one RNG, so the order is part of the reproducibility contract.
+// The draws run in a fixed order: slot, then pad, then operation. That order
+// must stay stable — all three share the run's single PRNG, so reordering them
+// shifts every subsequent draw and diverges a replay at the same seed.
 func (s *StorageRWScenario) CreateContractTransaction(rng *mrand.Rand, auth *bind.TransactOpts, scenario *types.TxScenario) (*ethtypes.Transaction, error) {
 	slot, err := s.pickSlot(rng)
 	if err != nil {

@@ -67,7 +67,7 @@ func TestStorageRWDeployAndGenerate(t *testing.T) {
 	require.GreaterOrEqual(t, len(data), 4)
 	require.Equal(t, rmwSelector, data[:4])
 
-	// Pin the fixed scaffold calldata: rmw(uint256 slot, bytes _pad) with
+	// Pin the default calldata: rmw(uint256 slot, bytes _pad) with
 	// slot == 0 and an empty pad. ABI head is the slot operand (32B) then the
 	// bytes offset (0x40); the tail is the bytes length (0). All zero except the
 	// 0x40 offset, so the full body is 96 bytes.
