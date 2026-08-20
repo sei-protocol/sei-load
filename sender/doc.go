@@ -54,8 +54,8 @@
 // wasted CPU on shed load). This makes the admitted transactions a deterministic
 // PREFIX of the seeded generator sequence: the same seed yields the same
 // admitted multiset regardless of how many ticks the SUT speed forced to drop —
-// the per-stream reproducibility contract holds under saturation, where it
-// otherwise would not. SequenceIndex is the arrival-tick index i (so
+// the reproducibility contract holds under saturation, where it otherwise would
+// not. SequenceIndex is the arrival-tick index i (so
 // IntendedSendTime = t₀ + i/λ holds); under drops it is monotonic but
 // non-contiguous across admitted txs, because dropped ticks still advance i and
 // the clock while consuming no draw.

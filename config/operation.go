@@ -1,0 +1,67 @@
+package config
+
+import (
+	"fmt"
+	mrand "math/rand/v2"
+)
+
+// Operation identifies one StorageRW contract method.
+type Operation uint8
+
+const (
+	// OpRmw is the read-modify-write operation. It is the zero value so a
+	// zero-weight or absent OperationMix selects rmw, matching the default.
+	OpRmw Operation = iota
+	OpRead
+	OpWrite
+)
+
+// OperationMix is the relative weighting of the StorageRW read/write/rmw
+// operations. The weights need not sum to anything in particular: a per-tx draw
+// selects an operation in proportion to its weight over the total. An all-zero
+// mix falls back to rmw, the default.
+type OperationMix struct {
+	Read  uint64 `json:"read,omitempty"`
+	Write uint64 `json:"write,omitempty"`
+	Rmw   uint64 `json:"rmw,omitempty"`
+}
+
+// validate rejects a mix that is present but cannot select anything, so an
+// operator who writes "operations": {} — or misspells every weight key — gets an
+// error instead of a silent all-rmw run. Select's own zero-total guard then
+// covers only the absent-mix case it was written for. A nil mix is the
+// documented default and passes.
+func (m *OperationMix) validate(scenario string) error {
+	if m == nil {
+		return nil
+	}
+	if m.Read == 0 && m.Write == 0 && m.Rmw == 0 {
+		return fmt.Errorf("scenario %q: operations is set but every weight is 0; omit it for the all-rmw default", scenario)
+	}
+	if m.Read+m.Write+m.Rmw < m.Read {
+		return fmt.Errorf("scenario %q: operations weights sum past uint64", scenario)
+	}
+	return nil
+}
+
+// Select draws one operation in proportion to the configured weights. A zero
+// total falls back to OpRmw, so an absent mix is the default rather than a
+// division by zero, and it draws no randomness.
+//
+// The comparison order (rmw, then read, then write) fixes which weight owns
+// which sub-range of the draw. It is arbitrary but must stay stable, because
+// changing it changes which operation a given draw selects.
+func (m *OperationMix) Select(rng *mrand.Rand) Operation {
+	total := m.Read + m.Write + m.Rmw
+	if total == 0 {
+		return OpRmw
+	}
+	switch u := rng.Uint64N(total); {
+	case u < m.Rmw:
+		return OpRmw
+	case u < m.Rmw+m.Read:
+		return OpRead
+	default:
+		return OpWrite
+	}
+}

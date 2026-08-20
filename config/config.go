@@ -22,12 +22,19 @@ type LoadConfig struct {
 	Funding *FundingConfig `json:"funding,omitempty"`
 	// Path to write a JSON report of the load test.
 	ReportPath string `json:"reportPath,omitempty"`
-	// Seed roots the deterministic PRNG sub-streams that drive the run. Same
-	// seed + config reproduces the per-stream draw multiset, so the workload
-	// (the distribution of keys, sizes, gas, and accounts) is statistically
-	// reproducible for fair A/B comparison. On-chain arrival order is concurrent
-	// regardless. A nil Seed means "unseeded": the generator resolves a random
-	// one and records it for after-the-fact replay.
+	// Seed roots the PRNG behind every workload draw: key and size
+	// distributions, gas pickers, operation mixes, and account selection. The
+	// same seed and the same config reproduce the same draw sequence.
+	//
+	// One stream serves the whole run, so the axes are reproducible together
+	// rather than independently: adding, removing, or reweighting any axis
+	// changes how many draws each transaction takes, which shifts every other
+	// axis's sequence. Two runs compare only when their configs match — a saved
+	// workload is the seed and the config together, never the seed alone.
+	//
+	// On-chain arrival order is concurrent regardless. A nil Seed means
+	// "unseeded": the generator resolves a random one and records it for
+	// after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
 }
 
@@ -84,4 +91,82 @@ type Scenario struct {
 	GasTipCapPicker  *GasPicker     `json:"gasTipCapPicker,omitempty"`
 	KeyDistribution  *Distribution  `json:"keyDistribution,omitempty"`
 	SizeDistribution *Distribution  `json:"sizeDistribution,omitempty"`
+	// RecordCount is the keyspace size the KeyDistribution indexes into: the
+	// per-tx slot is a draw in [0, RecordCount). Zero (the default) is the
+	// single-slot, 100%-conflict behavior.
+	RecordCount uint64 `json:"recordCount,omitempty"`
+	// SizeBuckets is the pad-length histogram the SizeDistribution indexes into:
+	// the per-tx pad length is SizeBuckets[draw]. Empty (the default) is the
+	// empty-pad behavior. Each entry must be between 0 and 1 MiB; Validate
+	// rejects the config otherwise.
+	SizeBuckets []int `json:"sizeBuckets,omitempty"`
+	// Operations is the read/write/rmw selection mix. Nil (the default) is the
+	// all-rmw behavior.
+	Operations *OperationMix `json:"operations,omitempty"`
+}
+
+const (
+	// maxCalldataPadBytes caps each SizeBuckets entry at 128 KiB. Two ceilings
+	// sit above it and the cap stays under both: the CometBFT mempool rejects a
+	// transaction over 1 MiB, which a 1 MiB pad already breaches on calldata
+	// alone, and the pad is charged at the EIP-7623 floor rate, so 128 KiB costs
+	// about 1.4M gas against a 50M block. It also keeps a stray extra digit from
+	// pinning gigabytes: the send queue holds up to a few thousand transactions,
+	// each retaining its own pad.
+	maxCalldataPadBytes = 128 << 10 // 128 KiB
+
+	// maxRecordCount caps the keyspace. The zipfian sampler precomputes zeta in
+	// O(n) on its first draw, under a mutex, on the generator's only goroutine:
+	// measured at ~26 ns per element, so 1e7 costs ~270 ms once and 1e11 would
+	// stall the run for roughly a minute per order of magnitude with nothing
+	// logged. The package doc puts the design target at ~1e6, so this leaves an
+	// order of magnitude of headroom.
+	maxRecordCount = 10_000_000
+)
+
+// Validate checks the per-scenario invariants that a malformed config would
+// otherwise surface as a hot-path panic or an OOM. loadConfig calls it through
+// ValidateScenarios after unmarshalling; any new entrypoint must do the same.
+func (s *Scenario) Validate() error {
+	for i, n := range s.SizeBuckets {
+		if n < 0 {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d] is negative (%d)", s.Name, i, n)
+		}
+		if n > maxCalldataPadBytes {
+			return fmt.Errorf("scenario %q: sizeBuckets[%d]=%d exceeds the 1 MiB (%d-byte) cap", s.Name, i, n, maxCalldataPadBytes)
+		}
+	}
+
+	if s.RecordCount > maxRecordCount {
+		return fmt.Errorf("scenario %q: recordCount=%d exceeds the %d cap", s.Name, s.RecordCount, maxRecordCount)
+	}
+
+	// An axis needs both halves to do anything: a sampler and a space to sample.
+	// Half-configured, the scenario silently runs its baseline instead of the
+	// experiment the operator asked for, which is the worst outcome available to
+	// a benchmark. Reject the pairing rather than degenerate.
+	if s.KeyDistribution != nil && s.RecordCount == 0 {
+		return fmt.Errorf("scenario %q: keyDistribution is set but recordCount is 0, so every tx would target one slot", s.Name)
+	}
+	if s.KeyDistribution == nil && s.RecordCount != 0 {
+		return fmt.Errorf("scenario %q: recordCount is %d but no keyDistribution samples it", s.Name, s.RecordCount)
+	}
+	if s.SizeDistribution != nil && len(s.SizeBuckets) == 0 {
+		return fmt.Errorf("scenario %q: sizeDistribution is set but sizeBuckets is empty, so every tx would send an empty pad", s.Name)
+	}
+	if s.SizeDistribution == nil && len(s.SizeBuckets) != 0 {
+		return fmt.Errorf("scenario %q: sizeBuckets has %d entries but no sizeDistribution samples them", s.Name, len(s.SizeBuckets))
+	}
+	return s.Operations.validate(s.Name)
+}
+
+// ValidateScenarios runs each scenario's Validate and names the scenario that
+// failed. loadConfig calls it after unmarshalling.
+func (c *LoadConfig) ValidateScenarios() error {
+	for i := range c.Scenarios {
+		if err := c.Scenarios[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
