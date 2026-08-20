@@ -76,21 +76,23 @@ func TestProfilesAlignment(t *testing.T) {
 				t.Errorf("Profile %s appears to have zero values for critical settings fields", file.Name())
 			}
 
-			// Test 5: Check for strict JSON unmarshaling to detect unexpected fields
-			// Use a decoder with DisallowUnknownFields to catch any extra fields
-			decoder := json.NewDecoder(strings.NewReader(string(data)))
-			decoder.DisallowUnknownFields()
-
-			var strictConfig config.LoadConfig
-			if err := decoder.Decode(&strictConfig); err != nil {
+			// Test 5: Parse through the same strict parser a run uses, so a
+			// committed profile cannot carry a key the run rejects.
+			strictConfig, err := config.ParseLoadConfig(data)
+			if err != nil {
 				t.Errorf("Profile %s contains unexpected/unaligned fields: %v", file.Name(), err)
 				return
 			}
 
-			// Committed profiles must satisfy the same scenario invariants a
-			// run enforces, so a bad profile fails CI rather than a load test.
+			// Committed profiles must satisfy the same scenario and funding
+			// invariants a run enforces, so a bad profile fails CI rather than a
+			// load test.
 			if err := strictConfig.ValidateScenarios(); err != nil {
 				t.Errorf("Profile %s fails scenario validation: %v", file.Name(), err)
+				return
+			}
+			if err := strictConfig.ValidateFunding(); err != nil {
+				t.Errorf("Profile %s fails funding validation: %v", file.Name(), err)
 				return
 			}
 

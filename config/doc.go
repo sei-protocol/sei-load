@@ -33,6 +33,12 @@
 // So is the order OperationMix.Select compares those weights in, which decides
 // which operation a given draw selects.
 //
+// # Strict parsing
+//
+// ParseLoadConfig rejects a key that maps to no config field, so a key retired
+// from an older wire format fails the run instead of running the default
+// workload. Four kinds of key still pass; ParseLoadConfig names them.
+//
 // # Semantics: uniform vs zipfian(theta)
 //
 // uniform draws every index in [0, n) with equal probability.
