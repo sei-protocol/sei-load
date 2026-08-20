@@ -113,18 +113,32 @@ func newInclusionTrackerWithSource(t *InclusionTracker, source blockSource) *Inc
 // registered ⊆ succeeded holds. At cap the tx is dropped and counted.
 func (t *InclusionTracker) Register(tx *types.LoadTx) {
 	hash := tx.EthTx.Hash()
+	var droppedAtCap bool
 	for s := range t.state.Lock() {
 		// Cap check and insert share one critical section: race-free admission.
 		if len(s.inflight) >= t.maxInflight {
 			s.droppedAtCap++
-			inclusionOutcome.Add(context.Background(), 1, metric.WithAttributes(
-				attribute.String("chain_id", t.seiChainID),
-				attribute.String("outcome", "dropped_at_cap"),
-			))
-			return
+			droppedAtCap = true
+			break
 		}
 		s.inflight[hash] = &entry{tx: tx, registeredAt: time.Now()}
 	}
+	if droppedAtCap {
+		t.recordOutcome("dropped_at_cap", tx.Scenario)
+	}
+}
+
+// recordOutcome counts one tx that left the registry un-included. Callers emit
+// outside the registry lock: the sender blocks on that lock at every send
+// completion, so time spent holding it lands in the latency this package
+// reports.
+func (t *InclusionTracker) recordOutcome(outcome string, scenario *types.TxScenario) {
+	inclusionOutcome.Add(context.Background(), 1, metric.WithAttributes(
+		attribute.String("chain_id", t.seiChainID),
+		attribute.String("scenario", scenario.Name),
+		attribute.String("operation", scenario.Operation),
+		attribute.String("outcome", outcome),
+	))
 }
 
 // Run subscribes to new heads and matches each arriving block once.
@@ -199,6 +213,7 @@ func (t *InclusionTracker) matchBlock(ctx context.Context, num uint64, arrival t
 			attribute.String("chain_id", t.seiChainID)))
 		return
 	}
+	matched := make([]inclusionSample, 0, len(hashes))
 	for s := range t.state.Lock() {
 		for _, h := range hashes {
 			e, ok := s.inflight[h]
@@ -216,11 +231,27 @@ func (t *InclusionTracker) matchBlock(ctx context.Context, num uint64, arrival t
 			// means "not scheduled" (e.g. prewarm txs); skip rather than record a
 			// bogus epoch-based duration. See LoadTx contract.
 			if t.openLoop && !e.tx.IntendedSendTime.IsZero() {
-				inclusionLatency.Record(ctx, arrival.Sub(e.tx.IntendedSendTime).Seconds(),
-					metric.WithAttributes(attribute.String("chain_id", t.seiChainID)))
+				matched = append(matched, inclusionSample{
+					latency:  arrival.Sub(e.tx.IntendedSendTime).Seconds(),
+					scenario: e.tx.Scenario,
+				})
 			}
 		}
 	}
+	for _, m := range matched {
+		inclusionLatency.Record(ctx, m.latency, metric.WithAttributes(
+			attribute.String("chain_id", t.seiChainID),
+			attribute.String("scenario", m.scenario.Name),
+			attribute.String("operation", m.scenario.Operation),
+		))
+	}
+}
+
+// inclusionSample is one matched tx, carried out of the registry lock so its
+// metric lands outside the critical section.
+type inclusionSample struct {
+	latency  float64
+	scenario *types.TxScenario
 }
 
 // reapLoop sweeps every reapAfter; worst-case eviction latency is ~2×reapAfter
@@ -244,6 +275,7 @@ func (t *InclusionTracker) reapLoop(ctx context.Context) error {
 // wins, no double count.
 func (t *InclusionTracker) reap() {
 	cutoff := time.Now().Add(-t.reapAfter)
+	var expired []*types.TxScenario
 	for s := range t.state.Lock() {
 		for h, e := range s.inflight {
 			if e.registeredAt.After(cutoff) {
@@ -251,11 +283,13 @@ func (t *InclusionTracker) reap() {
 			}
 			delete(s.inflight, h)
 			s.expired++
-			inclusionOutcome.Add(context.Background(), 1, metric.WithAttributes(
-				attribute.String("chain_id", t.seiChainID),
-				attribute.String("outcome", "expired"),
-			))
+			expired = append(expired, e.tx.Scenario)
 		}
+	}
+	// A stalled chain can expire the whole registry in one sweep, so the counter
+	// per victim runs after the lock is released.
+	for _, scenario := range expired {
+		t.recordOutcome("expired", scenario)
 	}
 }
 
