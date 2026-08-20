@@ -87,6 +87,13 @@ func TestProfilesAlignment(t *testing.T) {
 				return
 			}
 
+			// Committed profiles must satisfy the same scenario invariants a
+			// run enforces, so a bad profile fails CI rather than a load test.
+			if err := strictConfig.ValidateScenarios(); err != nil {
+				t.Errorf("Profile %s fails scenario validation: %v", file.Name(), err)
+				return
+			}
+
 			t.Logf("✓ Profile %s successfully validated", file.Name())
 		})
 	}

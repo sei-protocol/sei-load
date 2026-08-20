@@ -7,8 +7,8 @@
 //
 // A Distribution is a tagged sampler that draws an index in [0, n) from some
 // keyspace distribution (see distribution.go). It is selected on the JSON wire
-// by a "Name" discriminator and bound at run time to an explicit seeded PRNG so
-// that two runs at the same seed draw the same sequence of indices.
+// by a "Name" discriminator and draws from an explicitly supplied PRNG, so two
+// runs at the same seed and the same config draw the same sequence of indices.
 //
 // # Wire format (FROZEN one-way door)
 //
@@ -23,6 +23,15 @@
 // stops it parsing) and silently diverges replays. Treat them as a one-way
 // door — add new names, never rename existing ones. A zero-value Distribution
 // (empty Name) draws no randomness and samples 0.
+//
+// The per-scenario workload keys are frozen on the same terms:
+//
+//	"recordCount"        the keyspace a keyDistribution indexes
+//	"sizeBuckets"        the pad-length histogram a sizeDistribution indexes
+//	"operations"         the operation mix, with keys "read", "write", "rmw"
+//
+// So is the order OperationMix.Select compares those weights in, which decides
+// which operation a given draw selects.
 //
 // # Semantics: uniform vs zipfian(theta)
 //
@@ -81,6 +90,13 @@
 // # Seeded-stream reproducibility (FROZEN inputs)
 //
 // Draws go through an explicitly supplied *rand.Rand seeded from the run seed.
-// This is what gives the workload its reproducibility contract: same seed +
-// same config yields the same draw sequence for the same call order.
+// The same seed and the same config yield the same draw sequence, because the
+// config fixes the call order: which axes are configured decides how many draws
+// each transaction takes, and in what sequence.
+//
+// One stream serves every axis, every scenario, and account selection. So the
+// config is half of the contract, not a detail of it — adding, removing, or
+// reweighting an axis changes the call order and shifts every other axis's
+// sequence. Hold the config fixed to compare two runs, and record the seed and
+// the config together to replay one.
 package config

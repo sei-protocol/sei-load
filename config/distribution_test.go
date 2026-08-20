@@ -82,8 +82,8 @@ func TestSampleIndexEmptyKeyspace(t *testing.T) {
 	}
 }
 
-// TestSampleIndexDeterminism: same seed + same stream id => identical draw
-// sequence, for both samplers. This is the per-stream reproducibility contract.
+// TestSampleIndexDeterminism: same seed and same call order => identical draw
+// sequence, for both samplers. This is the reproducibility contract.
 func TestSampleIndexDeterminism(t *testing.T) {
 	t.Parallel()
 	const seed, n, count = 99, 1000, 256
