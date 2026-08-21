@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -369,6 +370,26 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 
 	// Same seed, a fresh scenario: the sequence repeats.
 	require.Equal(t, golden, draw())
+}
+
+// TestDeployTimeoutIsNotAContextSentinel: the deploy budget must not reach the
+// caller as context.DeadlineExceeded. main treats those sentinels as a clean
+// shutdown so a signalled or duration-bounded run exits zero, and a deployment
+// that never mined would otherwise be reported as a successful run that did
+// nothing.
+func TestDeployTimeoutIsNotAContextSentinel(t *testing.T) {
+	cfg := &config.LoadConfig{
+		ChainID: 7777,
+		// A blackhole address: dialing is lazy, so the deploy reaches its wait and
+		// the budget expires there rather than at dial.
+		Endpoints: []string{"http://198.51.100.1:8545"},
+	}
+	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
+
+	_, err := gen.Deploy(t.Context(), cfg, types.GenerateAccounts(1, true)[0])
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded,
+		"a deploy budget that escapes as a context sentinel is read by main as a clean shutdown")
 }
 
 // TestStorageRWCoversItsDeclaredOperations closes the seam between the operation

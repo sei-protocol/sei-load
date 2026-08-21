@@ -1,6 +1,7 @@
 package scenarios
 
 import (
+	"context"
 	"math/big"
 	mrand "math/rand/v2"
 
@@ -31,10 +32,10 @@ func (s *EVMTransferNoopScenario) Name() string {
 }
 
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
-func (s *EVMTransferNoopScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
+func (s *EVMTransferNoopScenario) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types2.Account) (common.Address, error) {
 	// No deployment needed for simple ETH transfers
 	// Return zero address to indicate no contract deployment
-	return common.Address{}
+	return common.Address{}, nil
 }
 
 // AttachScenario implements ScenarioDeployer interface - no attachment needed for ETH transfers.

@@ -6,41 +6,39 @@ import (
 	"log"
 	"maps"
 	"math/big"
-	"os"
 	"slices"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/sei-protocol/sei-load/config"
 	"github.com/sei-protocol/sei-load/generator/bindings"
+	"github.com/sei-protocol/sei-load/types"
+	"github.com/sei-protocol/sei-load/utils"
 )
 
 const balanceCheckConcurrency = 16
+
+// waitTimeout bounds one awaited transaction — the Disperse deploy or a batch.
+// Funding runs before the sender starts, so an unbounded wait against a chain
+// that accepts a transaction and never mines it leaves the process alive and
+// silent with no load offered and nothing to time it out: a profile need not set
+// a run duration, and the deploy half of startup already bounds itself.
+const waitTimeout = 30 * time.Second
 
 // FundAccounts funds every account to at least the configured
 // per-account amount from cfg.Funding's root key, or is a no-op when
 // cfg.Funding is nil. See the package doc for the funding flow, the EVM
 // auto-association precondition, and the restart/idempotency semantics.
-func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Address) error {
+func FundAccounts(ctx context.Context, cfg *config.LoadConfig, root types.Account, addrs []common.Address) error {
 	fc := cfg.Funding
 	if fc == nil {
 		return nil
-	}
-	rootKeyHex, err := resolveRootKey(fc)
-	if err != nil {
-		return err
-	}
-	// TrimSpace: a SOPS-mounted key file commonly carries a trailing newline.
-	rootKey, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(rootKeyHex), "0x"))
-	if err != nil {
-		return fmt.Errorf("funder: parse root key: %w", err)
 	}
 	if len(cfg.Endpoints) == 0 {
 		return fmt.Errorf("funder: no endpoints configured")
@@ -59,7 +57,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	}
 	amount := fc.FundAmount()
 	log.Printf("💰 funder: %d accounts, target %s wei each, from %s",
-		len(addrs), amount.String(), crypto.PubkeyToAddress(rootKey.PublicKey).Hex())
+		len(addrs), amount.String(), root.Address.Hex())
 
 	underfunded, err := filterUnderfunded(ctx, client, addrs, amount)
 	if err != nil {
@@ -72,7 +70,7 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	log.Printf("💰 funder: %d of %d need funding", len(underfunded), len(addrs))
 
 	chainID := cfg.GetChainID()
-	auth, err := bind.NewKeyedTransactorWithChainID(rootKey, chainID)
+	auth, err := bind.NewKeyedTransactorWithChainID(root.PrivKey, chainID)
 	if err != nil {
 		return fmt.Errorf("funder: transactor: %w", err)
 	}
@@ -110,27 +108,6 @@ func FundAccounts(ctx context.Context, cfg *config.LoadConfig, addrs []common.Ad
 	auth.Value = nil
 	log.Printf("✅ funder: funding complete")
 	return nil
-}
-
-func resolveRootKey(fc *config.FundingConfig) (string, error) {
-	if fc.RootKeyFile != "" {
-		b, err := os.ReadFile(fc.RootKeyFile)
-		if err != nil {
-			return "", fmt.Errorf("funder: read rootKeyFile: %w", err)
-		}
-		if len(strings.TrimSpace(string(b))) == 0 {
-			return "", fmt.Errorf("funder: rootKeyFile %s is empty", fc.RootKeyFile)
-		}
-		return string(b), nil
-	}
-	if fc.RootKeyEnv != "" {
-		v := os.Getenv(fc.RootKeyEnv)
-		if v == "" {
-			return "", fmt.Errorf("funder: env %s is empty", fc.RootKeyEnv)
-		}
-		return v, nil
-	}
-	return "", fmt.Errorf("funder: no root key (set funding.rootKeyFile or funding.rootKeyEnv)")
 }
 
 func unique[T comparable](vs []T) []T {
@@ -171,9 +148,8 @@ func filterUnderfunded(ctx context.Context, client *ethclient.Client, addrs []co
 	return underfunded, nil
 }
 
-// deployDisperse deploys a fresh Disperse contract (the root's first EVM tx,
-// which also auto-associates it) and verifies it has code. See the package doc
-// for why this is not a configurable address.
+// deployDisperse deploys a fresh Disperse contract and verifies it has code.
+// See the package doc for why this is not a configurable address.
 func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.TransactOpts) (*bindings.Disperse, error) {
 	addr, tx, d, err := bindings.DeployDisperse(auth, client, big.NewInt(0), big.NewInt(0))
 	if err != nil {
@@ -195,12 +171,14 @@ func deployDisperse(ctx context.Context, client *ethclient.Client, auth *bind.Tr
 
 // waitSuccess blocks until tx is mined and asserts it did not revert.
 func waitSuccess(ctx context.Context, client *ethclient.Client, tx *ethtypes.Transaction, what string) error {
-	receipt, err := bind.WaitMined(ctx, client, tx)
-	if err != nil {
-		return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
-	}
-	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		return fmt.Errorf("funder: %s reverted (tx %s)", what, tx.Hash().Hex())
-	}
-	return nil
+	return utils.WithinBudget(ctx, waitTimeout, "funder: "+what, func(ctx context.Context) error {
+		receipt, err := bind.WaitMined(ctx, client, tx)
+		if err != nil {
+			return fmt.Errorf("funder: wait %s (%s): %w", what, tx.Hash().Hex(), err)
+		}
+		if receipt.Status != ethtypes.ReceiptStatusSuccessful {
+			return fmt.Errorf("funder: %s reverted (tx %s)", what, tx.Hash().Hex())
+		}
+		return nil
+	})
 }

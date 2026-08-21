@@ -214,8 +214,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 	inclusion := utils.None[*stats.InclusionTracker]()
 
 	err = scope.Run(ctx, func(ctx context.Context, s scope.Scope) error {
+		// The generator deploys as it is built, so resolve who signs those
+		// deployments first.
+		deployer, err := funder.Deployer(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve contract deployer: %w", err)
+		}
+
 		// Create the generator from the config struct
-		gen, err := generator.NewGenerator(rng, cfg)
+		gen, err := generator.NewGenerator(ctx, rng, cfg, deployer)
 		if err != nil {
 			return fmt.Errorf("failed to create generator: %w", err)
 		}
@@ -298,13 +305,15 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 			snd = sender.NewTxsWriter(cfg.Settings.TargetGas, cfg.Settings.TxsDir, writerHeight, uint64(numBlocksToWrite))
 		} else {
 			// Fund the pool before prewarm/dispatch — both spend gas the accounts
-			// don't have until funded.
-			if cfg.Funding != nil && !cfg.Settings.DryRun {
+			// don't have until funded. MockDeploy gates it too: with no contract
+			// on the chain every transaction would hit a code-less address, so
+			// funding would spend real value on a run that exercises nothing.
+			if cfg.Funding != nil && !cfg.Settings.DryRun && !cfg.MockDeploy {
 				var addrs []common.Address
 				for _, a := range gen.Accounts() {
 					addrs = append(addrs, a.Address)
 				}
-				if err := funder.FundAccounts(ctx, cfg, addrs); err != nil {
+				if err := funder.FundAccounts(ctx, cfg, deployer, addrs); err != nil {
 					return fmt.Errorf("failed to fund accounts: %w", err)
 				}
 			}
@@ -387,10 +396,26 @@ func runLoadTest(ctx context.Context, cmd *cobra.Command) error {
 		time.Sleep(d)
 	}
 	log.Printf("👋 Shutdown complete")
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		err = nil
+	if endedOnRunContext(ctx, err) {
+		return nil
 	}
 	return err
+}
+
+// endedOnRunContext reports whether err is just the run finishing: its duration
+// elapsed, or the operator signalled it. Both are success.
+//
+// Matching the sentinels is what works here. A signalled run leaves ctx itself
+// uncancelled — cobra runs on an uncancelled context and the handler reads the
+// signal off a channel — so the error arrives from a background task that scope
+// cancelled on the way out. Testing ctx.Err() would therefore report every
+// normal SIGTERM as a failure.
+//
+// The cost of matching sentinels is that any deadline raised inside the run
+// looks the same. Callers that bound their own work must not let a context
+// sentinel escape; see DeployScenario, which formats its timeout with %v.
+func endedOnRunContext(_ context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // inclusionRegistryCap sizes the inclusion registry. A registry entry lives from

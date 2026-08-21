@@ -193,7 +193,7 @@ func TestShardedSender_WithGeneratorAndNonceRewinds(t *testing.T) {
 
 			cfg := testGeneratorConfigWithAccounts(endpoints, tt.accountCount, tt.newAccountRate)
 			rng := mrand.New(mrand.NewPCG(1, 2))
-			gen, err := generator.NewGenerator(rng, cfg)
+			gen, err := generator.NewGenerator(t.Context(), rng, cfg, types.NewAccount(false))
 			require.NoError(t, err)
 			ss := newTestShardedSender(endpoints)
 
