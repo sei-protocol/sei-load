@@ -50,6 +50,10 @@
 // Operations mix. Slot and pad are the two customer-named axes, key contention
 // and tx size; the operation mix shapes what each drawn slot is used for.
 //
+// config.StorageRWOperations declares those three operation names and the order
+// a weighted draw walks them in. A drawn name is the contract method it calls,
+// so the switch in CreateContractTransaction is the whole mapping.
+//
 // Slot and keyspace are what make contention a continuum rather than a binary.
 // A wide keyspace drawn uniformly approaches zero conflict; a single slot is
 // total conflict; a zipfian draw sits anywhere between. Throughout this section
@@ -68,11 +72,23 @@
 // axes — see the config package doc on what the seed does and does not promise.
 //
 // read writes too, and that bounds what the key axis can show. Every read folds
-// its load into readAccumulator — one contract-wide slot — so reads conflict with
-// each other no matter which key they drew. A read-weighted mix therefore does
-// not sweep contention; only rmw and write do. Reads also measure absent slots
-// until something has written them, since a fresh deploy starts empty and there
-// is no warm-up phase.
+// its load into readAccumulator, one contract-wide slot, and reads that slot
+// first — so the accumulator sits in both the read set and the write set of
+// every read transaction.
+//
+// Whether that serializes depends on the keyspace. Sei validates a transaction
+// by comparing its read set against committed writes by value, so while a slot
+// still holds zero the accumulator write leaves it unchanged and concurrent
+// reads do not conflict. Once anything has written the keyspace the accumulator
+// changes on every read, a later reader finds a different value than it
+// recorded, and it conflicts regardless of which key it drew. Any mix containing
+// rmw or write reaches that state within a few blocks.
+//
+// So rmw and write sweep contention across the keyspace; a read-weighted mix
+// stops sweeping it as soon as the keyspace is populated. Reads also measure
+// absent slots until something has written them, since a fresh deploy starts
+// empty and there is no warm-up phase — the same threshold, showing up in gas
+// rather than in contention.
 //
 // Gas sizing. All three operations share one base GasLimit of 50k. The measured
 // worst case is a read that first writes readAccumulator, at 46,269 including

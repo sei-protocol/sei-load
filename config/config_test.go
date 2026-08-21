@@ -83,16 +83,16 @@ func TestScenarioValidateAxisPairing(t *testing.T) {
 }
 
 // TestScenarioValidateOperationsPresentButEmpty: an explicit all-zero mix is a
-// misconfiguration, not the default. Omitting the field is the default, and
-// Select's zero-total guard stays a safety net for that case rather than a
+// misconfiguration, not the default. Omitting the field is the default, and the
+// picker's zero-total guard stays a safety net for that case rather than a
 // swallower of this one.
 func TestScenarioValidateOperationsPresentButEmpty(t *testing.T) {
 	t.Parallel()
-	empty := Scenario{Name: "s", Operations: &OperationMix{}}
+	empty := Scenario{Name: "storagerw", Operations: OperationMix{}}
 	require.ErrorContains(t, empty.Validate(), "every weight is 0")
 
-	require.NoError(t, (&Scenario{Name: "s"}).Validate())
-	require.NoError(t, (&Scenario{Name: "s", Operations: &OperationMix{Rmw: 1}}).Validate())
+	require.NoError(t, (&Scenario{Name: "storagerw"}).Validate())
+	require.NoError(t, (&Scenario{Name: "storagerw", Operations: OperationMix{OpRmw: 1}}).Validate())
 }
 
 // TestValidateScenariosReportsOffendingScenario: validation runs across every
@@ -102,10 +102,10 @@ func TestValidateScenariosReportsOffendingScenario(t *testing.T) {
 	t.Parallel()
 	cfg := LoadConfig{Scenarios: []Scenario{
 		{Name: "good"},
-		{Name: "bad", Operations: &OperationMix{}},
+		{Name: "storagerw", Operations: OperationMix{}},
 	}}
-	require.ErrorContains(t, cfg.ValidateScenarios(), `scenario "bad"`)
+	require.ErrorContains(t, cfg.ValidateScenarios(), `scenario "storagerw"`)
 
-	cfg.Scenarios[1].Operations = &OperationMix{Read: 1}
+	cfg.Scenarios[1].Operations = OperationMix{OpRead: 1}
 	require.NoError(t, cfg.ValidateScenarios())
 }
