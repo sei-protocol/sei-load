@@ -157,13 +157,9 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 	}
 	for _, account := range g.Accounts() {
 		// Create self-transfer transaction
-		scenario := &types.TxScenario{
-			Name:      scenarios.Prewarm,
-			Operation: evmScenario.Operation(),
-			Nonce:     txSender.Nonce(account),
-			Sender:    account,
-			Receiver:  account.Address, // Send to self
-		}
+		// Send to self.
+		scenario := types.NewTxScenario(scenarios.Prewarm, evmScenario.Operation(),
+			txSender.Nonce(account), account, account.Address)
 		tx, err := evmScenario.Generate(rng, scenario)
 		if err != nil {
 			return fmt.Errorf("evmScenario.Generate(): %w", err)
@@ -194,13 +190,8 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender)
 		// TODO: This should probably hold a lock on sender.
 		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
 		// the back-pressured enqueue time, not a true schedule instant.
-		scenario := &types.TxScenario{
-			Name:      g.Scenario.Name(),
-			Operation: g.Scenario.Operation(),
-			Nonce:     txSender.Nonce(sender),
-			Sender:    sender,
-			Receiver:  receiver.Address,
-		}
+		scenario := types.NewTxScenario(g.Scenario.Name(), g.Scenario.Operation(),
+			txSender.Nonce(sender), sender, receiver.Address)
 		tx, err := g.Scenario.Generate(rng, scenario)
 		if err != nil {
 			return fmt.Errorf("g.Scenario.Generate(): %w", err)

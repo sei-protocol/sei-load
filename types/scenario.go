@@ -75,6 +75,21 @@ type TxScenario struct {
 	Receiver  common.Address
 }
 
+// NewTxScenario describes one transaction a scenario is about to build. Every
+// field is a parameter so a new call site cannot leave one at its zero value:
+// an empty Operation reaches the metrics as an empty label, which Prometheus
+// treats as absent, collides with the streams that carry a real name, and
+// discards a sample with no scrape error to show it.
+func NewTxScenario(name, operation string, nonce uint64, sender Account, receiver common.Address) *TxScenario {
+	return &TxScenario{
+		Name:      name,
+		Operation: operation,
+		Nonce:     nonce,
+		Sender:    sender,
+		Receiver:  receiver,
+	}
+}
+
 // CreateTxFromEthTx creates a LoadTx from an EthTx (pre-marshaled).
 func CreateTxFromEthTx(tx *ethtypes.Transaction, scenario *TxScenario) *LoadTx {
 	// Return the complete LoadTx object
