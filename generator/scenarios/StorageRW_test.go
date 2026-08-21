@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -198,7 +199,7 @@ func TestStorageRWSizeBuckets(t *testing.T) {
 func TestStorageRWOpMix(t *testing.T) {
 	t.Run("single weight is exclusive", func(t *testing.T) {
 		gen, txs := newAttachedStorageRW(t, config.Scenario{
-			Operations: &config.OperationMix{Write: 1},
+			Operations: config.OperationMix{config.OpWrite: 1},
 		})
 		rng := newTestRng(3)
 		for i := 0; i < 64; i++ {
@@ -211,7 +212,7 @@ func TestStorageRWOpMix(t *testing.T) {
 
 	t.Run("balanced mix reaches every method", func(t *testing.T) {
 		gen, txs := newAttachedStorageRW(t, config.Scenario{
-			Operations: &config.OperationMix{Read: 1, Write: 1, Rmw: 1},
+			Operations: config.OperationMix{config.OpRead: 1, config.OpWrite: 1, config.OpRmw: 1},
 		})
 		rng := newTestRng(3)
 		seen := map[string]int{}
@@ -291,7 +292,7 @@ func requireGasCoversFloor(t *testing.T, tx *ethtypes.Transaction) {
 func TestStorageRWGasClearsFloorAcrossPadSizes(t *testing.T) {
 	for _, pad := range []int{0, 1, 31, 32, 1024, 4096, 4544, 4609, 8192, 65536, 128 << 10} {
 		t.Run(fmt.Sprintf("pad=%d", pad), func(t *testing.T) {
-			for _, mix := range []*config.OperationMix{{Rmw: 1}, {Read: 1}, {Write: 1}} {
+			for _, mix := range []config.OperationMix{{config.OpRmw: 1}, {config.OpRead: 1}, {config.OpWrite: 1}} {
 				gen, txs := newAttachedStorageRW(t, config.Scenario{
 					SizeDistribution: uniformDist(t),
 					SizeBuckets:      []int{pad},
@@ -305,6 +306,22 @@ func TestStorageRWGasClearsFloorAcrossPadSizes(t *testing.T) {
 	}
 }
 
+// decodeMix builds a mix the way a profile does. Insertion order matters to the
+// guard this feeds: a small map iterates in insertion order most of the time, so
+// a mix built in the set's declared order would let a picker that wrongly walked
+// the mix still reproduce the golden on most runs. The keys below are
+// deliberately alphabetical, which for storagerw inverts the declared order
+// (rmw, read, write) and turns that mutation into a reliable failure.
+//
+// json.Unmarshal inserts in document order, so the ordering lives in the literal
+// rather than in the decoding.
+func decodeMix(t *testing.T, raw string) config.OperationMix {
+	t.Helper()
+	var mix config.OperationMix
+	require.NoError(t, json.Unmarshal([]byte(raw), &mix))
+	return mix
+}
+
 // TestStorageRWDrawOrderIsStable pins the documented draw order — slot, then
 // pad, then operation — with all three axes live. Reordering the picks changes
 // this sequence, which is what makes a saved workload replayable; without a
@@ -315,7 +332,7 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 		RecordCount:      64,
 		SizeDistribution: uniformDist(t),
 		SizeBuckets:      []int{0, 32, 96},
-		Operations:       &config.OperationMix{Rmw: 1, Read: 1, Write: 1},
+		Operations:       decodeMix(t, `{"read":1,"rmw":1,"write":1}`),
 	}
 	want := []struct {
 		method string
@@ -353,4 +370,84 @@ func TestStorageRWDrawOrderIsStable(t *testing.T) {
 
 	// Same seed, a fresh scenario: the sequence repeats.
 	require.Equal(t, golden, draw())
+}
+
+// TestDeployTimeoutIsNotAContextSentinel: the deploy budget must not reach the
+// caller as context.DeadlineExceeded. main treats those sentinels as a clean
+// shutdown so a signalled or duration-bounded run exits zero, and a deployment
+// that never mined would otherwise be reported as a successful run that did
+// nothing.
+func TestDeployTimeoutIsNotAContextSentinel(t *testing.T) {
+	cfg := &config.LoadConfig{
+		ChainID: 7777,
+		// A blackhole address: dialing is lazy, so the deploy reaches its wait and
+		// the budget expires there rather than at dial.
+		Endpoints: []string{"http://198.51.100.1:8545"},
+	}
+	gen := scenarios.CreateScenario(config.Scenario{Name: scenarios.StorageRW})
+
+	_, err := gen.Deploy(t.Context(), cfg, types.GenerateAccounts(1, true)[0])
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded,
+		"a deploy budget that escapes as a context sentinel is read by main as a clean shutdown")
+}
+
+// TestStorageRWCoversItsDeclaredOperations closes the seam between the operation
+// names config declares for this scenario and the contract methods the scenario
+// calls: weighting one name alone must produce calldata for the method of that
+// name. A name added to the basket with no method here fails this test rather
+// than every transaction of a run.
+func TestStorageRWCoversItsDeclaredOperations(t *testing.T) {
+	for _, name := range config.StorageRWOperations.Names() {
+		t.Run(name, func(t *testing.T) {
+			gen, txs := newAttachedStorageRW(t, config.Scenario{
+				Operations: config.OperationMix{name: 1},
+			})
+			tx, err := gen.Generate(newTestRng(1), txs)
+			require.NoError(t, err)
+			method, _, _ := decodeStorageRW(t, tx.Data())
+			require.Equal(t, name, method)
+		})
+	}
+}
+
+// TestStorageRWStampsTheDrawnOperation asserts that the operation recorded on
+// the TxScenario is the contract method the calldata calls. It covers every draw
+// across a balanced read/write/rmw mix.
+func TestStorageRWStampsTheDrawnOperation(t *testing.T) {
+	gen, txs := newAttachedStorageRW(t, config.Scenario{
+		Operations: config.OperationMix{config.OpRead: 1, config.OpWrite: 1, config.OpRmw: 1},
+	})
+
+	rng := newTestRng(5)
+	seen := map[string]int{}
+	for i := 0; i < 600; i++ {
+		txs.Operation = ""
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+		method, _, _ := decodeStorageRW(t, tx.Data())
+		require.Equal(t, method, txs.Operation)
+		seen[txs.Operation]++
+	}
+	for _, op := range config.StorageRWOperations.Names() {
+		require.Positive(t, seen[op])
+	}
+}
+
+// TestStorageRWDefaultStampsItsDefaultOperation covers a scenario that
+// configures no mix. The recorded operation is the set's default, rmw, so the
+// dimension is never empty for StorageRW. The fallback consumes no randomness —
+// see config.TestOperationMixAbsentDrawsNoRandomness.
+func TestStorageRWDefaultStampsItsDefaultOperation(t *testing.T) {
+	gen, txs := newAttachedStorageRW(t, config.Scenario{})
+
+	rng := newTestRng(9)
+	for i := 0; i < 16; i++ {
+		txs.Operation = ""
+		tx, err := gen.Generate(rng, txs)
+		require.NoError(t, err)
+		method, _, _ := decodeStorageRW(t, tx.Data())
+		require.Equal(t, method, txs.Operation)
+		require.Equal(t, config.OpRmw, txs.Operation)
+	}
 }

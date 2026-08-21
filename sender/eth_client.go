@@ -112,6 +112,7 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	id := c.clientID(tx.Scenario.Sender.Address)
 	ctx, span := tracer.Start(ctx, "sender.send_tx", trace.WithAttributes(
 		attribute.String("seiload.scenario", tx.Scenario.Name),
+		attribute.String("seiload.operation", tx.Scenario.Operation),
 		attribute.Int("seiload.client_id", id),
 		attribute.String("seiload.chain_id", c.cfg.ChainID),
 	))
@@ -131,18 +132,21 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 	sendLatency.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(
 			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("operation", tx.Scenario.Operation),
 			attribute.String("chain_id", c.cfg.ChainID),
 			statusAttrFromError(err)),
 	)
 	if err != nil {
 		txsRejected.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("operation", tx.Scenario.Operation),
 			attribute.String("reason", "rpc"),
 		))
 		span.RecordError(err)
 	} else {
 		txsAccepted.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("scenario", tx.Scenario.Name),
+			attribute.String("operation", tx.Scenario.Operation),
 		))
 	}
 	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, time.Since(start), err == nil)

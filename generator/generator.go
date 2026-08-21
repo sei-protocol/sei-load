@@ -102,18 +102,25 @@ func (g *generatorBuilder) mockDeployAll() error {
 	return nil
 }
 
-// DeployAll deploys all scenario instances that require deployment
-func (g *generatorBuilder) deployAll() error {
-	deployer := types.NewAccount(false)
+// deployAll deploys all scenario instances that require deployment, from the
+// deployer the run was handed. Sequential by design (see package doc): each
+// deployment reads its nonce from the chain and is mined before the next is
+// sent, so one deployer key stays in one ordered nonce stream.
+func (g *generatorBuilder) deployAll(ctx context.Context, deployer types.Account) error {
 	if g.config.MockDeploy {
 		return g.mockDeployAll()
 	}
+	if deployer.PrivKey == nil {
+		return errors.New("deployer has no private key (a live deployment must be signed)")
+	}
 
-	// Deploy sequentially to ensure proper nonce management
-	for i, instance := range g.instances {
-		// Deploy the scenario
+	log.Printf("Deploying %d scenarios from %s", len(g.instances), deployer.Address.Hex())
+	for _, instance := range g.instances {
 		log.Printf("Deploying scenario %s", instance.Name)
-		address := instance.Scenario.Deploy(g.config, deployer, uint64(i))
+		address, err := instance.Scenario.Deploy(ctx, g.config, deployer)
+		if err != nil {
+			return fmt.Errorf("deploy %s: %w", instance.Name, err)
+		}
 		if address != (common.Address{}) {
 			log.Printf("🚀 Deployed %s at address: %s\n", instance.Name, address.Hex())
 		}
@@ -144,21 +151,20 @@ type TxSender interface {
 func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, txSender TxSender) error {
 	// Create EVMTransfer scenario for prewarming
 	evmScenario := scenarios.NewEVMTransferScenario(config.Scenario{})
-	// Deploy/initialize the scenario (EVMTransfer doesn't need actual deployment)
-	evmScenario.Deploy(cfg, types.NewAccount(false), 0)
+	// EVMTransfer needs no contract, so attaching is all that marks it ready.
+	if err := evmScenario.Attach(cfg, common.Address{}); err != nil {
+		return fmt.Errorf("evmScenario.Attach(): %w", err)
+	}
 	for _, account := range g.Accounts() {
 		// Create self-transfer transaction
-		scenario := &types.TxScenario{
-			Name:     "EVMTransfer",
-			Nonce:    txSender.Nonce(account),
-			Sender:   account,
-			Receiver: account.Address, // Send to self
-		}
+		// Send to self.
+		scenario := types.NewTxScenario(scenarios.Prewarm, evmScenario.Operation(),
+			txSender.Nonce(account), account, account.Address)
 		tx, err := evmScenario.Generate(rng, scenario)
 		if err != nil {
 			return fmt.Errorf("evmScenario.Generate(): %w", err)
 		}
-		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		ltx := types.NewSetupTx(tx, scenario)
 		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
@@ -180,19 +186,15 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender)
 		sender := g.Accounts.NextAccount(rng)
 		receiver := g.Accounts.NextAccount(rng)
 		// TODO: This should probably hold a lock on sender.
-		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
-		// the back-pressured enqueue time, not a true schedule instant.
-		scenario := &types.TxScenario{
-			Name:     g.Scenario.Name(),
-			Nonce:    txSender.Nonce(sender),
-			Sender:   sender,
-			Receiver: receiver.Address,
-		}
+		scenario := types.NewTxScenario(g.Scenario.Name(), g.Scenario.Operation(),
+			txSender.Nonce(sender), sender, receiver.Address)
 		tx, err := g.Scenario.Generate(rng, scenario)
 		if err != nil {
 			return fmt.Errorf("g.Scenario.Generate(): %w", err)
 		}
-		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		// Stamped before hand-off while this goroutine is sole owner: race-free,
+		// see LoadTx.
+		ltx := types.NewEnqueuedTx(tx, scenario, time.Now())
 		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
@@ -252,8 +254,11 @@ func ResolveSeed(cfg *config.LoadConfig) *mrand.Rand {
 	return newSeededRand(seed)
 }
 
-// NewConfigBasedGenerator is a convenience method that combines all steps.
-func NewGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (*Generator, error) {
+// NewGenerator builds the run's weighted generator: it creates the scenario
+// instances, deploys the contracts they need from deployer, and weights them.
+// Deployment spends gas, so deployer must be an account the target chain can
+// charge; see funder.Deployer, which resolves it.
+func NewGenerator(ctx context.Context, rng *mrand.Rand, cfg *config.LoadConfig, deployer types.Account) (*Generator, error) {
 	b := &generatorBuilder{
 		config:    cfg,
 		instances: make([]*scenarioInstance, 0),
@@ -265,7 +270,7 @@ func NewGenerator(rng *mrand.Rand, cfg *config.LoadConfig) (*Generator, error) {
 	}
 
 	// Step 2: Deploy all scenarios
-	if err := b.deployAll(); err != nil {
+	if err := b.deployAll(ctx, deployer); err != nil {
 		return nil, fmt.Errorf("failed to deploy scenarios: %w", err)
 	}
 

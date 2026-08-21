@@ -1,6 +1,7 @@
 package scenarios
 
 import (
+	"context"
 	"math/big"
 	mrand "math/rand/v2"
 	"time"
@@ -13,6 +14,13 @@ import (
 )
 
 const EVMTransfer = "evmtransfer"
+
+// Prewarm labels the account-warming transactions the generator sends before a
+// run. It shares the scenario label namespace with the scenario names, so it is
+// declared beside them, but no factory builds it: a profile cannot select it.
+// Prewarm traffic is setup, not offered load, and merging it into a scenario's
+// series moves the latency percentiles the run reports.
+const Prewarm = "prewarm"
 
 // EVMTransferScenario implements the TxGenerator interface for simple ETH transfers
 type EVMTransferScenario struct {
@@ -31,11 +39,15 @@ func (s *EVMTransferScenario) Name() string {
 	return EVMTransfer
 }
 
+func (s *EVMTransferScenario) Operation() string {
+	return config.OpTransfer
+}
+
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
-func (s *EVMTransferScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
+func (s *EVMTransferScenario) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types2.Account) (common.Address, error) {
 	// No deployment needed for simple ETH transfers
 	// Return zero address to indicate no contract deployment
-	return common.Address{}
+	return common.Address{}, nil
 }
 
 // AttachScenario implements ScenarioDeployer interface - no attachment needed for ETH transfers.

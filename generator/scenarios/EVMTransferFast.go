@@ -1,6 +1,7 @@
 package scenarios
 
 import (
+	"context"
 	"math/big"
 	mrand "math/rand/v2"
 
@@ -28,14 +29,18 @@ func NewEVMTransferFastScenario(cfg config.Scenario) TxGenerator {
 
 // Name returns the name of the scenario.
 func (s *EVMTransferFastScenario) Name() string {
-	return EVMTransfer
+	return EVMTransferFast
+}
+
+func (s *EVMTransferFastScenario) Operation() string {
+	return config.OpTransfer
 }
 
 // DeployScenario implements ScenarioDeployer interface - no deployment needed for ETH transfers
-func (s *EVMTransferFastScenario) DeployScenario(config *config.LoadConfig, deployer types2.Account, nonce uint64) common.Address {
+func (s *EVMTransferFastScenario) DeployScenario(ctx context.Context, config *config.LoadConfig, deployer types2.Account) (common.Address, error) {
 	// No deployment needed for simple ETH transfers
 	// Return zero address to indicate no contract deployment
-	return common.Address{}
+	return common.Address{}, nil
 }
 
 // AttachScenario implements ScenarioDeployer interface - no attachment needed for ETH transfers.

@@ -56,6 +56,13 @@ func (s *collectingSender) Send(_ context.Context, tx *types.LoadTx) error {
 
 func (s *collectingSender) Flush(context.Context) error { return nil }
 
+func (s *collectingSender) collected() []*types.LoadTx {
+	for inner := range s.inner.Lock() {
+		return inner.txs
+	}
+	panic("unreachable")
+}
+
 func (s *collectingSender) Nonce(acc types.Account) uint64 {
 	for inner := range s.inner.Lock() {
 		return inner.nonces[acc.Address]
@@ -104,7 +111,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 
 	rng := newTestRng(1)
-	gen, err := generator.NewGenerator(rng, cfg)
+	gen, err := generator.NewGenerator(t.Context(), rng, cfg, types.NewAccount(false))
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 
@@ -117,10 +124,13 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 	require.Len(t, txs, totalTxs)
 
-	// Count occurrences per scenario
+	// Count occurrences per scenario. Every tx also carries its operation: the
+	// generator records it, and the sender reads it off the LoadTx to label a
+	// sample, so a tx that reaches the sender without one loses that sample.
 	scenarioCounts := make(map[string]int)
 	for _, tx := range txs {
 		require.NotNil(t, tx.Scenario)
+		require.NotEmpty(t, tx.Scenario.Operation)
 		scenario := tx.Scenario.Name
 		scenarioCounts[scenario]++
 	}
@@ -128,4 +138,34 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	// Weight 2:3 → Expect ≈40:60 distribution (±10 allowed)
 	require.InDelta(t, 40, float64(scenarioCounts[scenarios.ERC20]), 10)
 	require.InDelta(t, 60, float64(scenarioCounts[scenarios.EVMTransfer]), 10)
+}
+
+// TestPrewarmLabelsEveryTransaction covers the second path that reaches the
+// sender. Prewarm does not go through Generator.Run, so the dimensions it
+// carries are not covered by the tests above, and both defects this path has had
+// were invisible for that reason: it once sent under a different spelling of a
+// scenario's name, and it once stamped IntendedSendTime, which defeated the
+// inclusion tracker's not-scheduled guard.
+func TestPrewarmLabelsEveryTransaction(t *testing.T) {
+	cfg := &config.LoadConfig{
+		ChainID:   7777,
+		Endpoints: []string{"http://localhost:8545"},
+		Accounts:  &config.AccountConfig{Accounts: 4},
+		Scenarios: []config.Scenario{{Name: scenarios.EVMTransfer, Weight: 1}},
+	}
+	rng := newTestRng(3)
+	gen, err := generator.NewGenerator(t.Context(), rng, cfg, types.NewAccount(false))
+	require.NoError(t, err)
+
+	sender := newCollectingSender(1000)
+	require.NoError(t, gen.Prewarm(t.Context(), rng, cfg, sender))
+
+	txs := sender.collected()
+	require.NotEmpty(t, txs)
+	for _, tx := range txs {
+		require.Equal(t, scenarios.Prewarm, tx.Scenario.Name)
+		require.NotEmpty(t, tx.Scenario.Operation)
+		require.True(t, tx.IntendedSendTime.IsZero(),
+			"prewarm has no arrival schedule, so the inclusion tracker must skip it")
+	}
 }

@@ -83,16 +83,16 @@ func TestScenarioValidateAxisPairing(t *testing.T) {
 }
 
 // TestScenarioValidateOperationsPresentButEmpty: an explicit all-zero mix is a
-// misconfiguration, not the default. Omitting the field is the default, and
-// Select's zero-total guard stays a safety net for that case rather than a
+// misconfiguration, not the default. Omitting the field is the default, and the
+// picker's zero-total guard stays a safety net for that case rather than a
 // swallower of this one.
 func TestScenarioValidateOperationsPresentButEmpty(t *testing.T) {
 	t.Parallel()
-	empty := Scenario{Name: "s", Operations: &OperationMix{}}
+	empty := Scenario{Name: "storagerw", Operations: OperationMix{}}
 	require.ErrorContains(t, empty.Validate(), "every weight is 0")
 
-	require.NoError(t, (&Scenario{Name: "s"}).Validate())
-	require.NoError(t, (&Scenario{Name: "s", Operations: &OperationMix{Rmw: 1}}).Validate())
+	require.NoError(t, (&Scenario{Name: "storagerw"}).Validate())
+	require.NoError(t, (&Scenario{Name: "storagerw", Operations: OperationMix{OpRmw: 1}}).Validate())
 }
 
 // TestValidateScenariosReportsOffendingScenario: validation runs across every
@@ -102,11 +102,11 @@ func TestValidateScenariosReportsOffendingScenario(t *testing.T) {
 	t.Parallel()
 	cfg := LoadConfig{Scenarios: []Scenario{
 		{Name: "good"},
-		{Name: "bad", Operations: &OperationMix{}},
+		{Name: "storagerw", Operations: OperationMix{}},
 	}}
-	require.ErrorContains(t, cfg.ValidateScenarios(), `scenario "bad"`)
+	require.ErrorContains(t, cfg.ValidateScenarios(), `scenario "storagerw"`)
 
-	cfg.Scenarios[1].Operations = &OperationMix{Read: 1}
+	cfg.Scenarios[1].Operations = OperationMix{OpRead: 1}
 	require.NoError(t, cfg.ValidateScenarios())
 }
 
@@ -140,10 +140,6 @@ func TestParseLoadConfigRejectsUnknownKey(t *testing.T) {
 		"scenario": {
 			`{"scenarios":[{"name":"StorageRW","operation":{"read":1}}]}`,
 			[]string{`scenario "StorageRW"`, `"operation"`},
-		},
-		"operation mix": {
-			`{"scenarios":[{"name":"StorageRW","operations":{"reads":1}}]}`,
-			[]string{`scenario "StorageRW"`, `"reads"`},
 		},
 		"later scenario": {
 			`{"scenarios":[{"name":"good"},{"name":"bad","sizeBucket":[64]}]}`,
@@ -216,7 +212,7 @@ func TestParseLoadConfigKeepsEveryField(t *testing.T) {
 	require.Equal(t, uint64(1000), storage.RecordCount)
 	require.Equal(t, "uniform", storage.SizeDistribution.Name())
 	require.Equal(t, []int{0, 64}, storage.SizeBuckets)
-	require.Equal(t, &OperationMix{Read: 50, Write: 30, Rmw: 20}, storage.Operations)
+	require.Equal(t, OperationMix{OpRead: 50, OpWrite: 30, OpRmw: 20}, storage.Operations)
 }
 
 // TestParseLoadConfigAcceptsUnknownKeyInsideTaggedObject: Distribution and
@@ -234,4 +230,17 @@ func TestParseLoadConfigAcceptsUnknownKeyInsideTaggedObject(t *testing.T) {
 	zipfian, ok := cfg.Scenarios[0].KeyDistribution.delegate.(*ZipfianDistribution)
 	require.True(t, ok)
 	require.Zero(t, zipfian.Theta)
+}
+
+// TestValidateRejectsUnknownOperation: Operations is a map, so the strict parser
+// cannot reject an operation the scenario does not declare — a map accepts every
+// key by construction. ValidateScenarios owns that name, and the requirement
+// that a misspelled operation fails the run holds through it rather than through
+// the parse.
+func TestValidateRejectsUnknownOperation(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseLoadConfig([]byte(`{"scenarios":[{"name":"StorageRW","weight":1,"operations":{"reads":1}}]}`))
+	require.NoError(t, err, "a map-typed field accepts the key at parse")
+	require.ErrorContains(t, cfg.ValidateScenarios(), `unknown operation "reads"`)
 }

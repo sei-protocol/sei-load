@@ -50,7 +50,8 @@ type LoadConfig struct {
 //
 //   - a key inside a type with its own UnmarshalJSON, such as a Distribution or
 //     a GasPicker object, which parses its own payload;
-//   - a key of a map-typed field, which accepts every key by construction;
+//   - a key of a map-typed field, which accepts every key by construction —
+//     an unknown operation name is rejected later, by ValidateScenarios;
 //   - a key differing from a field's tag only by case, which encoding/json
 //     matches case-insensitively;
 //   - a repeated key, where the last occurrence wins.
@@ -166,9 +167,10 @@ type Scenario struct {
 	// empty-pad behavior. Each entry must be between 0 and 1 MiB; Validate
 	// rejects the config otherwise.
 	SizeBuckets []int `json:"sizeBuckets,omitempty"`
-	// Operations is the read/write/rmw selection mix. Nil (the default) is the
-	// all-rmw behavior.
-	Operations *OperationMix `json:"operations,omitempty"`
+	// Operations weights the scenario's own operations against each other, keyed
+	// by operation name. Absent (the default) selects the scenario's first
+	// declared operation; see operation.go.
+	Operations OperationMix `json:"operations,omitempty"`
 }
 
 const (
@@ -223,7 +225,7 @@ func (s *Scenario) Validate() error {
 	if s.SizeDistribution == nil && len(s.SizeBuckets) != 0 {
 		return fmt.Errorf("scenario %q: sizeBuckets has %d entries but no sizeDistribution samples them", s.Name, len(s.SizeBuckets))
 	}
-	return s.Operations.validate(s.Name)
+	return s.Operations.validate(s.Name, operationsFor(s.Name))
 }
 
 // ValidateScenarios runs each scenario's Validate and names the scenario that

@@ -1,5 +1,7 @@
-// Package funder funds seiload's generated account pool from a single root key
-// so a load run can execute against a real chain.
+// Package funder owns seiload's funded identity: it resolves the root key and
+// spends it, both to fund the generated account pool and to name the account
+// that signs the run's contract deployments, so a load run can execute against
+// a real chain.
 //
 // # Why
 //
@@ -12,9 +14,8 @@
 //
 // # Flow
 //
-// FundAccounts runs once at startup, after the generator and sender are built
-// and before prewarm and dispatch (both spend gas the accounts don't have until
-// funded):
+// FundAccounts runs once at startup, after the generator is built and before
+// prewarm and dispatch (both spend gas the accounts don't have until funded):
 //
 //  1. Resolve the root key (rootKeyFile, preferred; or rootKeyEnv).
 //  2. Dial the EVM RPC and enumerate every account across the pools.
@@ -23,17 +24,37 @@
 //  4. Deploy a fresh Disperse contract.
 //  5. disperseEther the per-account amount to the underfunded set, in batches.
 //
+// # The contract deployer
+//
+// Deployer names the account that signs the run's contract deployments, and the
+// generator receives it (see the generator package doc). With funding configured
+// that account is the root: paying for a deployment is a funding concern, and
+// the root is the one key a run knows to hold a balance. Without funding it is a
+// fresh random account, payable only by a chain that credits unknown senders.
+// Scenario contracts are deployer-neutral — none of them gates a load
+// transaction on who deployed it — so the choice costs the workload nothing.
+//
+// # One nonce stream
+//
+// When the root is also the deployer, the scenario deployments and this
+// package's Disperse deployment plus disperseEther batches are one EVM nonce
+// stream on one key. Both phases run on the startup goroutine, in sequence, and
+// each awaits its receipt before it sends the next tx, so every tx reads a
+// pending nonce that already counts the one before it. Overlapping the phases,
+// or pinning auth.Nonce in either, collides them.
+//
 // # Cosmos to EVM association
 //
 // The root is a single secp256k1 key with both a cosmos (sei1) and an EVM (0x)
 // representation. Its usei must be EVM-spendable, which on Sei requires the
-// account to be associated. The Disperse deploy is the root's first EVM tx, and
-// the Sei ante handler auto-associates the sender on its first EVM tx — pulling
-// the cosmos balance to the EVM side within that tx. So no explicit association
-// step is needed, provided the root is funded at its EVM (cast) address or is
-// already associated. Recipients receive native value via the Disperse
-// contract, which credits their EVM balance directly; each self-associates on
-// its own first load tx.
+// account to be associated. The Sei ante handler auto-associates the sender on
+// its first EVM tx — pulling the cosmos balance to the EVM side within that tx
+// — and the root's first EVM tx of a run is a deploy: a scenario contract when
+// the profile has one, else Disperse. So no explicit association step is
+// needed, provided the root is funded at its EVM (cast) address or is already
+// associated. Recipients receive native value via the Disperse contract, which
+// credits their EVM balance directly; each self-associates on its own first
+// load tx.
 //
 // # Self-deploy, not a configured address
 //
