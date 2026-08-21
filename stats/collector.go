@@ -2,8 +2,8 @@ package stats
 
 import (
 	"fmt"
+	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -386,26 +386,7 @@ func (s *Stats) FormatStats() string {
 		result += fmt.Sprintf("  %s: %d\n", scenario, count)
 	}
 
-	if len(s.Operations) > 0 {
-		keys := slices.SortedFunc(maps.Keys(s.Operations), func(a, b OperationKey) int {
-			if a.Scenario != b.Scenario {
-				return strings.Compare(a.Scenario, b.Scenario)
-			}
-			return strings.Compare(a.Operation, b.Operation)
-		})
-		result += "\nPer Operation:\n"
-		for _, key := range keys {
-			op := s.Operations[key]
-			result += fmt.Sprintf("  %s/%s: %d txs | P50: %v | P99: %v (samples: %d)\n",
-				key.Scenario, key.Operation, op.Count,
-				op.P50Latency.Round(time.Millisecond),
-				op.P99Latency.Round(time.Millisecond),
-				op.SampleCount)
-		}
-	}
-
 	result += "\nTransaction Performance:\n"
-	result += "  (pooled across every scenario and operation)\n"
 	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
 		s.TransactionStats.P50Latency.Round(time.Millisecond),
 		s.TransactionStats.P99Latency.Round(time.Millisecond),

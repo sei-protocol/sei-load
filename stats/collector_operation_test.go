@@ -44,10 +44,11 @@ func TestOperationsDoNotConflateAcrossScenarios(t *testing.T) {
 	require.Equal(t, uint64(1), got[stats.OperationKey{Scenario: "erc20noop", Operation: "erc20_transfer"}].Count)
 }
 
-// TestFormatStatsOrderIsStable pins the report against Go's randomised map
-// iteration. A run summary that reorders its own lines cannot be diffed against
-// another run, which is what this tool produces summaries for.
-func TestFormatStatsOrderIsStable(t *testing.T) {
+// TestOperationReportOrderIsStable pins the printed report and the JSON report
+// against Go's randomised map iteration, and drives the path a run takes:
+// LogFinalStats builds a FinalStats and prints its String. A summary whose lines
+// reorder cannot be diffed against another run.
+func TestOperationReportOrderIsStable(t *testing.T) {
 	c := stats.NewCollector()
 	for _, op := range []string{"write", "read", "rmw"} {
 		c.RecordTransaction("storagerw", op, time.Millisecond, true)
@@ -56,12 +57,13 @@ func TestFormatStatsOrderIsStable(t *testing.T) {
 		c.RecordTransaction(scenario, "transfer", time.Millisecond, true)
 	}
 
-	// Compare the label order, not the whole report: Avg TPS derives from
-	// time.Since(StartTime) and moves between calls by design.
+	logger := stats.NewLogger(c, time.Second, "", false)
+
+	// Compare the label order, not the whole report: runtime and Avg TPS derive
+	// from time.Since(StartTime) and move between calls by design.
 	labels := func() []string {
-		got := c.GetStats()
 		var out []string
-		for _, line := range strings.Split(got.FormatStats(), "\n") {
+		for _, line := range strings.Split(logger.BuildFinalStats().String(), "\n") {
 			if label, _, found := strings.Cut(strings.TrimSpace(line), ":"); found {
 				out = append(out, label)
 			}

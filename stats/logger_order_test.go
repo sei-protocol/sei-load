@@ -21,7 +21,7 @@ import (
 func TestFinalStatsScenarioOrderIsStable(t *testing.T) {
 	c := stats.NewCollector()
 	for _, scenario := range []string{"storagerw", "erc721", "evmtransfer", "disperse", "erc20"} {
-		c.RecordTransaction(scenario, time.Millisecond, true)
+		c.RecordTransaction(scenario, "transfer", time.Millisecond, true)
 	}
 	logger := stats.NewLogger(c, time.Second, "", false)
 
