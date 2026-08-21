@@ -104,7 +104,7 @@ func TestScenarioWeightsAndAccountDistribution(t *testing.T) {
 	}
 
 	rng := newTestRng(1)
-	gen, err := generator.NewGenerator(rng, cfg)
+	gen, err := generator.NewGenerator(t.Context(), rng, cfg, types.NewAccount(false))
 	require.NoError(t, err)
 	require.NotNil(t, gen)
 
