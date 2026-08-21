@@ -25,9 +25,8 @@ type FinalStats struct {
 	GasStatistics        *BlockStats        `json:"gas_statistics,omitempty"`
 }
 
-// OperationReport is one call shape's share of a run. Scenario and Operation
-// together identify it: two scenarios that issue the same call share an
-// operation name, so neither field is a key alone.
+// OperationReport is one OperationKey's share of a run, flattened for the
+// report.
 type OperationReport struct {
 	Scenario    string        `json:"scenario"`
 	Operation   string        `json:"operation"`
@@ -98,7 +97,7 @@ func (fs *FinalStats) String() string {
 	}
 
 	if len(fs.OperationStats) > 0 {
-		result += "\nPer Operation:\n"
+		result += "\nPer Operation (latency covers successful txs only):\n"
 		for _, op := range fs.OperationStats {
 			result += fmt.Sprintf("  %s/%s: %d txs | P50: %v | P99: %v (samples: %d)\n",
 				op.Scenario, op.Operation, op.Count,
@@ -108,8 +107,7 @@ func (fs *FinalStats) String() string {
 		}
 	}
 
-	// Transaction performance, pooled across every scenario and operation.
-	result += "\nTransaction Performance:\n"
+	result += "\nTransaction Performance (pooled across scenarios and operations):\n"
 	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
 		fs.TransactionStats.LatencyP50.Round(time.Millisecond),
 		fs.TransactionStats.LatencyP99.Round(time.Millisecond),
@@ -153,7 +151,8 @@ func (fs *FinalStats) String() string {
 	result += fmt.Sprintf("  Average TPS: %.2f\n", fs.OverallPerformance.AverageTPS)
 	result += fmt.Sprintf("  Max TPS: %.2f\n", fs.OverallPerformance.MaxTPS)
 
-	// Scenario distribution, sorted for the same reason as the counts above.
+	// Scenario distribution, sorted like the scenario counts, so two runs stay
+	// comparable.
 	result += "\nScenario Distribution:\n"
 	for _, scenario := range slices.Sorted(maps.Keys(fs.ScenarioDistribution)) {
 		total := fs.ScenarioDistribution[scenario]
@@ -192,6 +191,8 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 		scenarioDistribution[scenario] = count
 	}
 
+	// Sorted by scenario then operation: Go randomises map iteration, and a report
+	// whose lines move cannot be compared against another run.
 	operationStats := make([]OperationReport, 0, len(stats.Operations))
 	for _, key := range slices.SortedFunc(maps.Keys(stats.Operations), func(a, b OperationKey) int {
 		if a.Scenario != b.Scenario {

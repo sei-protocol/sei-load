@@ -10,14 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFinalStatsScenarioOrderIsStable pins the printed report against Go's
-// randomised map iteration. FinalStats.String walked ScenarioDistribution
-// directly, so the scenario lines came out in a different order on each call,
-// and two runs of one workload could not be diffed — which is what this tool
-// writes a run summary for.
-//
-// It drives the path a run actually takes: LogFinalStats builds a FinalStats and
-// prints its String. Stats.FormatStats is a second formatter with no caller.
+// TestFinalStatsScenarioOrderIsStable pins the scenario order in the printed
+// report against Go's randomised map iteration. Two runs of one workload must
+// stay comparable line by line.
 func TestFinalStatsScenarioOrderIsStable(t *testing.T) {
 	c := stats.NewCollector()
 	for _, scenario := range []string{"storagerw", "erc721", "evmtransfer", "disperse", "erc20"} {

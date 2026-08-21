@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPerOperationLatencySeparates is the claim the dimension exists to support:
-// one slow operation must show as slow on its own line, not be averaged into the
-// scenario. The pooled percentile cannot answer which operation degraded.
+// TestPerOperationLatencySeparates is why the dimension exists: one slow
+// operation keeps its own P99 instead of being averaged into the scenario. The
+// pooled percentile cannot say which operation degraded.
 func TestPerOperationLatencySeparates(t *testing.T) {
 	c := stats.NewCollector()
 	for i := 0; i < 100; i++ {
@@ -30,9 +30,8 @@ func TestPerOperationLatencySeparates(t *testing.T) {
 	require.Equal(t, 500*time.Millisecond, rmw.P99Latency)
 }
 
-// TestOperationsDoNotConflateAcrossScenarios covers the reason the key carries
-// both fields: two scenarios issuing the same call share an operation name, so
-// the operation alone is not a key.
+// TestOperationsDoNotConflateAcrossScenarios covers the reason OperationKey
+// carries both fields.
 func TestOperationsDoNotConflateAcrossScenarios(t *testing.T) {
 	c := stats.NewCollector()
 	c.RecordTransaction("erc20", "erc20_transfer", 5*time.Millisecond, true)
@@ -44,10 +43,9 @@ func TestOperationsDoNotConflateAcrossScenarios(t *testing.T) {
 	require.Equal(t, uint64(1), got[stats.OperationKey{Scenario: "erc20noop", Operation: "erc20_transfer"}].Count)
 }
 
-// TestOperationReportOrderIsStable pins the printed report and the JSON report
-// against Go's randomised map iteration, and drives the path a run takes:
-// LogFinalStats builds a FinalStats and prints its String. A summary whose lines
-// reorder cannot be diffed against another run.
+// TestOperationReportOrderIsStable pins the printed report against Go's
+// randomised map iteration. Two runs of one workload must stay comparable line
+// by line. It drives what LogFinalStats calls: BuildFinalStats().String().
 func TestOperationReportOrderIsStable(t *testing.T) {
 	c := stats.NewCollector()
 	for _, op := range []string{"write", "read", "rmw"} {
@@ -86,8 +84,8 @@ func TestOperationReportOrderIsStable(t *testing.T) {
 		"scenarios sort before their operations are compared")
 }
 
-// TestRecordTransactionCountsFailures: a rejected tx still happened, so it
-// counts, but it contributes no latency sample.
+// TestRecordTransactionCountsFailures shows that a rejected tx still counts but
+// contributes no latency sample.
 func TestRecordTransactionCountsFailures(t *testing.T) {
 	c := stats.NewCollector()
 	c.RecordTransaction("storagerw", "rmw", time.Second, false)

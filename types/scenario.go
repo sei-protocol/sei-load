@@ -68,8 +68,9 @@ type TxScenario struct {
 	// Operation is the call shape this transaction issues, from the frozen
 	// vocabulary in config. The generator records the scenario's own operation
 	// here; a scenario that draws from a weighted basket overwrites it with the
-	// draw. It is never empty, so a consumer records the dimension on every
-	// sample and needs no placeholder for a scenario that draws nothing.
+	// draw. NewTxScenario takes it as a parameter, so a new call site cannot leave
+	// it out by accident. Nothing rejects an empty string, and an empty one is
+	// lost at ingest — see NewTxScenario.
 	Operation string
 	Sender    Account
 	Receiver  common.Address

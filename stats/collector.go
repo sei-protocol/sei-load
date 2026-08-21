@@ -15,13 +15,13 @@ type Collector struct {
 	// Transaction counts by scenario
 	txCounts map[string]uint64
 
-	// Per-operation counts and latencies. A run whose scenarios draw from a
-	// weighted basket reports one blended percentile without this, which cannot
-	// say which operation degraded.
+	// Per-operation counts and latencies, keyed by scenario and operation. A run
+	// whose scenarios draw from a weighted basket needs these to name which
+	// operation degraded.
 	perOperation map[OperationKey]*operationSamples
 
-	// Latency tracking, pooled across every scenario and operation. Kept as the
-	// run's headline percentile; perOperation splits it.
+	// Latency tracking, pooled across every scenario and operation. The report
+	// prints this as the headline percentile; perOperation splits it.
 	latencies []time.Duration
 
 	// TPS tracking with 10-second windows
@@ -303,7 +303,8 @@ type OperationKey struct {
 	Operation string
 }
 
-// OperationStats is one operation's share of a run.
+// OperationStats is one operation's share of a run. Count includes failed
+// transactions. The percentiles cover the SampleCount successful ones only.
 type OperationStats struct {
 	Count       uint64
 	P50Latency  time.Duration
@@ -311,9 +312,9 @@ type OperationStats struct {
 	SampleCount int
 }
 
-// operationSamples accumulates one operation's counts and latencies. Each
-// operation keeps its own bounded window, so a low-rate operation stays
-// represented instead of being evicted by a high-rate one.
+// operationSamples accumulates one operation's count and its most recent
+// latencies. Each operation keeps its own sample limit, so a low-rate operation
+// stays represented instead of being evicted by a high-rate one.
 type operationSamples struct {
 	count     uint64
 	latencies []time.Duration
@@ -371,7 +372,10 @@ func (c *Collector) GetBlockCollector() *BlockCollector {
 	return c.blockCollector
 }
 
-// FormatStats returns a formatted string representation of the statistics
+// FormatStats returns a formatted string representation of the statistics.
+//
+// No caller reaches it: a run prints through Logger.LogFinalStats, which formats
+// a FinalStats instead.
 func (s *Stats) FormatStats() string {
 	duration := time.Since(s.StartTime)
 	avgTPS := float64(s.TotalTxs) / duration.Seconds()
