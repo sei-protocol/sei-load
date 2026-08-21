@@ -2,6 +2,8 @@ package stats
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -318,10 +320,11 @@ func (s *Stats) FormatStats() string {
 	result += fmt.Sprintf("Runtime: %v | Total TXs: %d | Avg TPS: %.2f\n\n",
 		duration.Round(time.Second), s.TotalTxs, avgTPS)
 
-	// Transaction counts by scenario
+	// Sorted: Go randomises map iteration, so an unsorted loop reorders these
+	// lines between calls, and two runs of one workload cannot be diffed.
 	result += "Transaction Counts by Scenario:\n"
-	for scenario, count := range s.TxCounts {
-		result += fmt.Sprintf("  %s: %d\n", scenario, count)
+	for _, scenario := range slices.Sorted(maps.Keys(s.TxCounts)) {
+		result += fmt.Sprintf("  %s: %d\n", scenario, s.TxCounts[scenario])
 	}
 
 	result += "\nTransaction Performance:\n"
