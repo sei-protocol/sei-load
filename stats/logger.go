@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/sei-protocol/sei-load/utils"
@@ -26,14 +25,17 @@ type FinalStats struct {
 }
 
 // OperationReport is one OperationKey's share of a run, flattened for the
-// report.
+// report. Window is the span the retained samples cover; see OperationStats for
+// why two operations' windows differ.
 type OperationReport struct {
 	Scenario    string        `json:"scenario"`
 	Operation   string        `json:"operation"`
 	Count       uint64        `json:"count"`
-	LatencyP50  time.Duration `json:"latency_p50"`
-	LatencyP99  time.Duration `json:"latency_p99"`
+	Successes   uint64        `json:"successes"`
+	LatencyP50  time.Duration `json:"latency_p50_ns"`
+	LatencyP99  time.Duration `json:"latency_p99_ns"`
 	SampleCount int           `json:"sample_count"`
+	Window      time.Duration `json:"window_ns"`
 }
 
 // LoadTestStatistics represents basic load test metrics
@@ -97,17 +99,19 @@ func (fs *FinalStats) String() string {
 	}
 
 	if len(fs.OperationStats) > 0 {
-		result += "\nPer Operation (latency covers successful txs only):\n"
+		result += "\nPer Operation:\n"
 		for _, op := range fs.OperationStats {
-			result += fmt.Sprintf("  %s/%s: %d txs | P50: %v | P99: %v (samples: %d)\n",
+			result += fmt.Sprintf("  %s/%s: %d TXs | P50: %v | P99: %v (%d of %d successes, %v window)\n",
 				op.Scenario, op.Operation, op.Count,
 				op.LatencyP50.Round(time.Millisecond),
 				op.LatencyP99.Round(time.Millisecond),
-				op.SampleCount)
+				op.SampleCount, op.Successes,
+				op.Window.Round(time.Millisecond))
 		}
 	}
 
-	result += "\nTransaction Performance (pooled across scenarios and operations):\n"
+	result += "\nTransaction Performance:\n"
+	result += "  Pooled across every scenario and operation.\n"
 	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
 		fs.TransactionStats.LatencyP50.Round(time.Millisecond),
 		fs.TransactionStats.LatencyP99.Round(time.Millisecond),
@@ -191,23 +195,21 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 		scenarioDistribution[scenario] = count
 	}
 
-	// Sorted by scenario then operation: Go randomises map iteration, and a report
-	// whose lines move cannot be compared against another run.
-	operationStats := make([]OperationReport, 0, len(stats.Operations))
-	for _, key := range slices.SortedFunc(maps.Keys(stats.Operations), func(a, b OperationKey) int {
-		if a.Scenario != b.Scenario {
-			return strings.Compare(a.Scenario, b.Scenario)
-		}
-		return strings.Compare(a.Operation, b.Operation)
-	}) {
-		op := stats.Operations[key]
+	// Sorted by scenario then operation: Go map iteration order is unspecified, and
+	// a report whose lines move cannot be compared against another run.
+	operations := l.collector.GetOperationStats()
+	operationStats := make([]OperationReport, 0, len(operations))
+	for _, key := range slices.SortedFunc(maps.Keys(operations), compareOperationKeys) {
+		op := operations[key]
 		operationStats = append(operationStats, OperationReport{
 			Scenario:    key.Scenario,
 			Operation:   key.Operation,
 			Count:       op.Count,
+			Successes:   op.Successes,
 			LatencyP50:  op.P50Latency,
 			LatencyP99:  op.P99Latency,
 			SampleCount: op.SampleCount,
+			Window:      op.Window,
 		})
 	}
 

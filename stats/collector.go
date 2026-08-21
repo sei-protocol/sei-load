@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sort"
@@ -73,18 +74,11 @@ func (c *Collector) RecordTransaction(scenario, operation string, latency time.D
 	c.txCounts[scenario]++
 	c.totalTxs++
 
-	key := OperationKey{Scenario: scenario, Operation: operation}
-	samples := c.perOperation[key]
-	if samples == nil {
-		samples = &operationSamples{}
-		c.perOperation[key] = samples
-	}
-	samples.count++
+	c.recordOperation(OperationKey{Scenario: scenario, Operation: operation}, latency, success)
 
 	// Record latency (only for successful transactions)
 	if success {
 		c.recordLatency(latency)
-		samples.record(latency, c.maxLatencyHistory)
 	}
 
 	// Record TPS
@@ -92,6 +86,26 @@ func (c *Collector) RecordTransaction(scenario, operation string, latency time.D
 
 	// Record window stats
 	c.recordWindowStats(latency)
+}
+
+// recordOperation counts one attempt for key and, on success, adds its latency
+// to that operation's samples. The bound is the same one recordLatency applies
+// to the pooled window.
+func (c *Collector) recordOperation(key OperationKey, latency time.Duration, success bool) {
+	samples := c.perOperation[key]
+	if samples == nil {
+		samples = &operationSamples{}
+		c.perOperation[key] = samples
+	}
+	samples.count++
+	if !success {
+		return
+	}
+	samples.successes++
+	samples.samples = append(samples.samples, latencySample{at: time.Now(), latency: latency})
+	if len(samples.samples) > c.maxLatencyHistory {
+		samples.samples = samples.samples[len(samples.samples)-c.maxLatencyHistory:]
+	}
 }
 
 // recordLatency adds a latency measurement, maintaining history limit
@@ -188,26 +202,14 @@ func (c *Collector) GetStats() Stats {
 	defer c.mu.RUnlock()
 
 	stats := Stats{
-		StartTime:  c.startTime,
-		TotalTxs:   c.totalTxs,
-		TxCounts:   make(map[string]uint64),
-		Operations: make(map[OperationKey]OperationStats, len(c.perOperation)),
+		StartTime: c.startTime,
+		TotalTxs:  c.totalTxs,
+		TxCounts:  make(map[string]uint64),
 	}
 
 	// Copy transaction counts
 	for scenario, count := range c.txCounts {
 		stats.TxCounts[scenario] = count
-	}
-
-	for key, samples := range c.perOperation {
-		op := OperationStats{Count: samples.count, SampleCount: len(samples.latencies)}
-		if len(samples.latencies) > 0 {
-			sorted := slices.Clone(samples.latencies)
-			slices.Sort(sorted)
-			op.P50Latency = calculatePercentile(sorted, 50)
-			op.P99Latency = calculatePercentile(sorted, 99)
-		}
-		stats.Operations[key] = op
 	}
 
 	// Calculate transaction statistics
@@ -257,6 +259,43 @@ func (c *Collector) GetStats() Stats {
 	return stats
 }
 
+// GetOperationStats returns one entry per operation the run has recorded. It
+// sorts a copy of each operation's samples, so the final report calls it once
+// rather than every stats interval, the way GetCumulativeBlockStats is called.
+func (c *Collector) GetOperationStats() map[OperationKey]OperationStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	out := make(map[OperationKey]OperationStats, len(c.perOperation))
+	for key, samples := range c.perOperation {
+		op := OperationStats{
+			Count:       samples.count,
+			Successes:   samples.successes,
+			SampleCount: len(samples.samples),
+			Window:      samples.window(),
+		}
+		if len(samples.samples) > 0 {
+			sorted := make([]time.Duration, len(samples.samples))
+			for i, sample := range samples.samples {
+				sorted[i] = sample.latency
+			}
+			slices.Sort(sorted)
+			op.P50Latency = calculatePercentile(sorted, 50)
+			op.P99Latency = calculatePercentile(sorted, 99)
+		}
+		out[key] = op
+	}
+	return out
+}
+
+// compareOperationKeys orders keys by scenario, then by operation.
+func compareOperationKeys(a, b OperationKey) int {
+	return cmp.Or(
+		cmp.Compare(a.Scenario, b.Scenario),
+		cmp.Compare(a.Operation, b.Operation),
+	)
+}
+
 // GetCumulativeBlockStats returns cumulative block stats for final summary
 func (c *Collector) GetCumulativeBlockStats() *BlockStats {
 	c.mu.RLock()
@@ -291,8 +330,7 @@ type Stats struct {
 	TransactionStats  TransactionStats
 	OverallMaxTPS     float64
 	OverallCurrentTPS float64
-	BlockStats        *BlockStats                     // Block-related statistics
-	Operations        map[OperationKey]OperationStats // [scenario, operation] -> stats
+	BlockStats        *BlockStats // Block-related statistics
 }
 
 // OperationKey identifies one call shape within one scenario. Two scenarios that
@@ -304,27 +342,47 @@ type OperationKey struct {
 }
 
 // OperationStats is one operation's share of a run. Count includes failed
-// transactions. The percentiles cover the SampleCount successful ones only.
+// transactions. The percentiles cover the SampleCount retained samples only,
+// which is the most recent Successes up to the retention limit.
+//
+// Window is the span the retained samples cover. The limit is a sample count,
+// not a duration, so a low-rate operation's window reaches further back than a
+// high-rate one's. Two operations in one report are comparable only when their
+// windows are close.
 type OperationStats struct {
 	Count       uint64
+	Successes   uint64
 	P50Latency  time.Duration
 	P99Latency  time.Duration
 	SampleCount int
+	Window      time.Duration
 }
 
-// operationSamples accumulates one operation's count and its most recent
-// latencies. Each operation keeps its own sample limit, so a low-rate operation
-// stays represented instead of being evicted by a high-rate one.
+// operationSamples accumulates one operation's counts and its most recent
+// latencies. Each operation has its own samples, so a low-rate operation stays
+// represented instead of being evicted by a high-rate one.
+//
+// Each sample carries the instant it was taken, so the report can state the span
+// the retained samples cover. Without that span a reader compares two
+// percentiles over different stretches of the run and cannot see it.
 type operationSamples struct {
 	count     uint64
-	latencies []time.Duration
+	successes uint64
+	samples   []latencySample
 }
 
-func (o *operationSamples) record(latency time.Duration, limit int) {
-	o.latencies = append(o.latencies, latency)
-	if len(o.latencies) > limit {
-		o.latencies = o.latencies[len(o.latencies)-limit:]
+// latencySample is one successful transaction's latency and when it happened.
+type latencySample struct {
+	at      time.Time
+	latency time.Duration
+}
+
+// window is the span the retained samples cover.
+func (o *operationSamples) window() time.Duration {
+	if len(o.samples) < 2 {
+		return 0
 	}
+	return o.samples[len(o.samples)-1].at.Sub(o.samples[0].at)
 }
 
 // TransactionStats represents transaction performance statistics.

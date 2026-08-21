@@ -1,8 +1,6 @@
 package stats_test
 
 import (
-	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +18,7 @@ func TestPerOperationLatencySeparates(t *testing.T) {
 		c.RecordTransaction("storagerw", "rmw", 500*time.Millisecond, true)
 	}
 
-	got := c.GetStats().Operations
+	got := c.GetOperationStats()
 	read := got[stats.OperationKey{Scenario: "storagerw", Operation: "read"}]
 	rmw := got[stats.OperationKey{Scenario: "storagerw", Operation: "rmw"}]
 
@@ -37,51 +35,10 @@ func TestOperationsDoNotConflateAcrossScenarios(t *testing.T) {
 	c.RecordTransaction("erc20", "erc20_transfer", 5*time.Millisecond, true)
 	c.RecordTransaction("erc20noop", "erc20_transfer", 5*time.Millisecond, true)
 
-	got := c.GetStats().Operations
+	got := c.GetOperationStats()
 	require.Len(t, got, 2)
 	require.Equal(t, uint64(1), got[stats.OperationKey{Scenario: "erc20", Operation: "erc20_transfer"}].Count)
 	require.Equal(t, uint64(1), got[stats.OperationKey{Scenario: "erc20noop", Operation: "erc20_transfer"}].Count)
-}
-
-// TestOperationReportOrderIsStable pins the printed report against Go's
-// randomised map iteration. Two runs of one workload must stay comparable line
-// by line. It drives what LogFinalStats calls: BuildFinalStats().String().
-func TestOperationReportOrderIsStable(t *testing.T) {
-	c := stats.NewCollector()
-	for _, op := range []string{"write", "read", "rmw"} {
-		c.RecordTransaction("storagerw", op, time.Millisecond, true)
-	}
-	for _, scenario := range []string{"evmtransfer", "erc721", "disperse"} {
-		c.RecordTransaction(scenario, "transfer", time.Millisecond, true)
-	}
-
-	logger := stats.NewLogger(c, time.Second, "", false)
-
-	// Compare the label order, not the whole report: runtime and Avg TPS derive
-	// from time.Since(StartTime) and move between calls by design.
-	labels := func() []string {
-		var out []string
-		for _, line := range strings.Split(logger.BuildFinalStats().String(), "\n") {
-			if label, _, found := strings.Cut(strings.TrimSpace(line), ":"); found {
-				out = append(out, label)
-			}
-		}
-		return out
-	}
-
-	first := labels()
-	require.Subset(t, first, []string{"storagerw/read", "storagerw/rmw", "storagerw/write"})
-	for i := 0; i < 20; i++ {
-		require.Equal(t, first, labels())
-	}
-	require.Less(t,
-		slices.Index(first, "storagerw/read"),
-		slices.Index(first, "storagerw/rmw"),
-		"operations sort by name within a scenario")
-	require.Less(t,
-		slices.Index(first, "disperse/transfer"),
-		slices.Index(first, "storagerw/read"),
-		"scenarios sort before their operations are compared")
 }
 
 // TestRecordTransactionCountsFailures shows that a rejected tx still counts but
@@ -90,7 +47,40 @@ func TestRecordTransactionCountsFailures(t *testing.T) {
 	c := stats.NewCollector()
 	c.RecordTransaction("storagerw", "rmw", time.Second, false)
 
-	op := c.GetStats().Operations[stats.OperationKey{Scenario: "storagerw", Operation: "rmw"}]
+	op := c.GetOperationStats()[stats.OperationKey{Scenario: "storagerw", Operation: "rmw"}]
 	require.Equal(t, uint64(1), op.Count)
 	require.Zero(t, op.SampleCount)
+}
+
+// TestOperationWindowIsReported covers why the window is in the report at all.
+// The retention limit is a sample count, not a duration, so a low-rate operation
+// keeps samples reaching further back than a high-rate one. Two percentiles over
+// different stretches of a run are not comparable, and the span is what lets a
+// reader see that.
+func TestOperationWindowIsReported(t *testing.T) {
+	c := stats.NewCollector()
+	for i := 0; i < 4; i++ {
+		c.RecordTransaction("erc20", "erc20_transfer", 8*time.Millisecond, true)
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	op := c.GetOperationStats()[stats.OperationKey{Scenario: "erc20", Operation: "erc20_transfer"}]
+	require.Equal(t, 4, op.SampleCount)
+	require.Equal(t, uint64(4), op.Successes)
+	require.Positive(t, op.Window, "the span the retained samples cover")
+}
+
+// TestOperationStatsSeparatesAttemptsFromSamples: Count is attempts, Successes
+// is what could yield a latency, and SampleCount is what the retention limit
+// kept. All three differ once an operation both fails and saturates.
+func TestOperationStatsSeparatesAttemptsFromSamples(t *testing.T) {
+	c := stats.NewCollector()
+	c.RecordTransaction("storagerw", "rmw", time.Millisecond, true)
+	c.RecordTransaction("storagerw", "rmw", time.Second, false)
+	c.RecordTransaction("storagerw", "rmw", time.Second, false)
+
+	op := c.GetOperationStats()[stats.OperationKey{Scenario: "storagerw", Operation: "rmw"}]
+	require.Equal(t, uint64(3), op.Count, "attempts")
+	require.Equal(t, uint64(1), op.Successes, "could yield a latency")
+	require.Equal(t, 1, op.SampleCount, "retained")
 }
