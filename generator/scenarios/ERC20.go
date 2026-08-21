@@ -26,6 +26,10 @@ func (s *ERC20Scenario) Name() string {
 	return ERC20
 }
 
+func (s *ERC20Scenario) Operation() string {
+	return config.OpERC20Transfer
+}
+
 // NewERC20Scenario creates a new ERC20 scenario
 func NewERC20Scenario(cfg config.Scenario) TxGenerator {
 	scenario := &ERC20Scenario{}

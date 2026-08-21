@@ -63,10 +63,51 @@ type JSONRPCRequest struct {
 
 // TxScenario captures the scenario of this test transaction.
 type TxScenario struct {
-	Name     string
-	Nonce    uint64
-	Sender   Account
-	Receiver common.Address
+	Name  string
+	Nonce uint64
+	// Operation is the call shape this transaction issues, from the frozen
+	// vocabulary in config. The generator records the scenario's own operation
+	// here; a scenario that draws from a weighted basket overwrites it with the
+	// draw. It is never empty, so a consumer records the dimension on every
+	// sample and needs no placeholder for a scenario that draws nothing.
+	Operation string
+	Sender    Account
+	Receiver  common.Address
+}
+
+// NewTxScenario describes one transaction a scenario is about to build. Every
+// field is a parameter so a new call site cannot leave one at its zero value:
+// an empty Operation reaches the metrics as an empty label, which Prometheus
+// treats as absent, collides with the streams that carry a real name, and
+// discards a sample with no scrape error to show it.
+func NewTxScenario(name, operation string, nonce uint64, sender Account, receiver common.Address) *TxScenario {
+	return &TxScenario{
+		Name:      name,
+		Operation: operation,
+		Nonce:     nonce,
+		Sender:    sender,
+		Receiver:  receiver,
+	}
+}
+
+// NewSetupTx builds a transaction the run sends to prepare itself, not to offer
+// load. It has no timing basis, so IntendedSendTime stays zero and the inclusion
+// tracker leaves it out of the latency histogram.
+func NewSetupTx(tx *ethtypes.Transaction, scenario *TxScenario) *LoadTx {
+	return &LoadTx{EthTx: tx, Scenario: scenario}
+}
+
+// NewEnqueuedTx builds a transaction the run offers as load, stamped with the
+// instant it was handed to the sender.
+//
+// That instant is an enqueue time, not an arrival schedule: the sender applies
+// back-pressure, so it already carries the delay a schedule would have measured.
+// A latency taken from it understates by whatever the pipeline was holding, which
+// is the coordinated-omission error. Only a scheduler that fixes an instant
+// independent of sender readiness can supply a schedule, and this repo has none;
+// see the arrival-model note in sender/doc.go.
+func NewEnqueuedTx(tx *ethtypes.Transaction, scenario *TxScenario, enqueuedAt time.Time) *LoadTx {
+	return &LoadTx{EthTx: tx, Scenario: scenario, IntendedSendTime: enqueuedAt}
 }
 
 // CreateTxFromEthTx creates a LoadTx from an EthTx (pre-marshaled).

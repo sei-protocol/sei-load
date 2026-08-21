@@ -27,6 +27,14 @@ var bigOne = big.NewInt(1)
 // TxGenerator defines the interface for generating transactions.
 type TxGenerator interface {
 	Name() string
+	// Operation names the call shape this scenario issues, from the frozen
+	// vocabulary in config. A scenario that draws from a basket returns the draw's
+	// default and overwrites it per transaction in Generate.
+	//
+	// ScenarioBase does not implement this. Every scenario declares its own, so
+	// adding a scenario without naming its operation does not compile, and no
+	// transaction reaches the metrics without the dimension.
+	Operation() string
 	Generate(rng *mrand.Rand, scenario *types.TxScenario) (*ethtypes.Transaction, error)
 	Attach(config *config.LoadConfig, address common.Address) error
 	Deploy(ctx context.Context, config *config.LoadConfig, deployer types.Account) (common.Address, error)
