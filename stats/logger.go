@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/sei-protocol/sei-load/utils"
@@ -16,9 +18,24 @@ type FinalStats struct {
 	ScenarioDistribution map[string]uint64  `json:"scenario_distribution"`
 	TransactionStats     PerformanceStats   `json:"transaction_stats"`
 	OverallTPS           OverallTPS         `json:"overall_tps"`
+	OperationStats       []OperationReport  `json:"operation_stats,omitempty"`
 	BlockStatistics      *BlockStats        `json:"block_statistics,omitempty"`
 	OverallPerformance   OverallPerformance `json:"overall_performance"`
 	GasStatistics        *BlockStats        `json:"gas_statistics,omitempty"`
+}
+
+// OperationReport is one OperationKey's share of a run, flattened for the
+// report. Window is the span the retained samples cover; see OperationStats for
+// why two operations' windows differ.
+type OperationReport struct {
+	Scenario    string        `json:"scenario"`
+	Operation   string        `json:"operation"`
+	Count       uint64        `json:"count"`
+	Successes   uint64        `json:"successes"`
+	LatencyP50  time.Duration `json:"latency_p50_ns"`
+	LatencyP99  time.Duration `json:"latency_p99_ns"`
+	SampleCount int           `json:"sample_count"`
+	Window      time.Duration `json:"window_ns"`
 }
 
 // LoadTestStatistics represents basic load test metrics
@@ -74,14 +91,27 @@ func (fs *FinalStats) String() string {
 		fs.LoadTestStatistics.TotalTxs,
 		fs.LoadTestStatistics.AvgTPS)
 
-	// Transaction counts by scenario
+	// Sorted: Go randomises map iteration, so an unsorted loop reorders these
+	// lines between calls, and two runs of one workload cannot be diffed.
 	result += "Transaction Counts by Scenario:\n"
-	for scenario, total := range fs.ScenarioDistribution {
-		result += fmt.Sprintf("  %s: %d\n", scenario, total)
+	for _, scenario := range slices.Sorted(maps.Keys(fs.ScenarioDistribution)) {
+		result += fmt.Sprintf("  %s: %d\n", scenario, fs.ScenarioDistribution[scenario])
 	}
 
-	// Transaction performance
+	if len(fs.OperationStats) > 0 {
+		result += "\nPer Operation:\n"
+		for _, op := range fs.OperationStats {
+			result += fmt.Sprintf("  %s/%s: %d TXs | P50: %v | P99: %v (%d of %d successes, %v window)\n",
+				op.Scenario, op.Operation, op.Count,
+				op.LatencyP50.Round(time.Millisecond),
+				op.LatencyP99.Round(time.Millisecond),
+				op.SampleCount, op.Successes,
+				op.Window.Round(time.Millisecond))
+		}
+	}
+
 	result += "\nTransaction Performance:\n"
+	result += "  Pooled across every scenario and operation.\n"
 	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
 		fs.TransactionStats.LatencyP50.Round(time.Millisecond),
 		fs.TransactionStats.LatencyP99.Round(time.Millisecond),
@@ -125,9 +155,11 @@ func (fs *FinalStats) String() string {
 	result += fmt.Sprintf("  Average TPS: %.2f\n", fs.OverallPerformance.AverageTPS)
 	result += fmt.Sprintf("  Max TPS: %.2f\n", fs.OverallPerformance.MaxTPS)
 
-	// Scenario distribution
+	// Scenario distribution, sorted like the scenario counts, so two runs stay
+	// comparable.
 	result += "\nScenario Distribution:\n"
-	for scenario, total := range fs.ScenarioDistribution {
+	for _, scenario := range slices.Sorted(maps.Keys(fs.ScenarioDistribution)) {
+		total := fs.ScenarioDistribution[scenario]
 		percentage := float64(total) / float64(fs.LoadTestStatistics.TotalTxs) * 100
 		result += fmt.Sprintf("  %s: %d (%.1f%%)\n", scenario, total, percentage)
 	}
@@ -161,6 +193,24 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 	scenarioDistribution := make(map[string]uint64)
 	for scenario, count := range stats.TxCounts {
 		scenarioDistribution[scenario] = count
+	}
+
+	// Sorted by scenario then operation: Go map iteration order is unspecified, and
+	// a report whose lines move cannot be compared against another run.
+	operations := l.collector.GetOperationStats()
+	operationStats := make([]OperationReport, 0, len(operations))
+	for _, key := range slices.SortedFunc(maps.Keys(operations), compareOperationKeys) {
+		op := operations[key]
+		operationStats = append(operationStats, OperationReport{
+			Scenario:    key.Scenario,
+			Operation:   key.Operation,
+			Count:       op.Count,
+			Successes:   op.Successes,
+			LatencyP50:  op.P50Latency,
+			LatencyP99:  op.P99Latency,
+			SampleCount: op.SampleCount,
+			Window:      op.Window,
+		})
 	}
 
 	transactionStats := PerformanceStats{
@@ -203,6 +253,7 @@ func (l *Logger) BuildFinalStats() *FinalStats {
 	return &FinalStats{
 		LoadTestStatistics:   loadTestStats,
 		ScenarioDistribution: scenarioDistribution,
+		OperationStats:       operationStats,
 		TransactionStats:     transactionStats,
 		OverallTPS:           overallTPS,
 		BlockStatistics:      stats.BlockStats,

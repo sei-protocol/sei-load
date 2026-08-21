@@ -1,7 +1,9 @@
 package stats
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -14,7 +16,13 @@ type Collector struct {
 	// Transaction counts by scenario
 	txCounts map[string]uint64
 
-	// Latency tracking
+	// Per-operation counts and latencies, keyed by scenario and operation. A run
+	// whose scenarios draw from a weighted basket needs these to name which
+	// operation degraded.
+	perOperation map[OperationKey]*operationSamples
+
+	// Latency tracking, pooled across every scenario and operation. The report
+	// prints this as the headline percentile; perOperation splits it.
 	latencies []time.Duration
 
 	// TPS tracking with 10-second windows
@@ -46,6 +54,7 @@ type TPSWindow struct {
 func NewCollector() *Collector {
 	return &Collector{
 		txCounts:          make(map[string]uint64),
+		perOperation:      make(map[OperationKey]*operationSamples),
 		latencies:         make([]time.Duration, 0),
 		tpsWindow:         &TPSWindow{timestamps: make([]time.Time, 0)},
 		windowStats:       &WindowStats{windowStart: time.Now()},
@@ -55,14 +64,17 @@ func NewCollector() *Collector {
 	}
 }
 
-// RecordTransaction records a transaction attempt
-func (c *Collector) RecordTransaction(scenario string, latency time.Duration, success bool) {
+// RecordTransaction records a transaction attempt. The operation names the call
+// shape the scenario issued; see types.TxScenario.
+func (c *Collector) RecordTransaction(scenario, operation string, latency time.Duration, success bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Record transaction count
 	c.txCounts[scenario]++
 	c.totalTxs++
+
+	c.recordOperation(OperationKey{Scenario: scenario, Operation: operation}, latency, success)
 
 	// Record latency (only for successful transactions)
 	if success {
@@ -74,6 +86,26 @@ func (c *Collector) RecordTransaction(scenario string, latency time.Duration, su
 
 	// Record window stats
 	c.recordWindowStats(latency)
+}
+
+// recordOperation counts one attempt for key and, on success, adds its latency
+// to that operation's samples. The bound is the same one recordLatency applies
+// to the pooled window.
+func (c *Collector) recordOperation(key OperationKey, latency time.Duration, success bool) {
+	samples := c.perOperation[key]
+	if samples == nil {
+		samples = &operationSamples{}
+		c.perOperation[key] = samples
+	}
+	samples.count++
+	if !success {
+		return
+	}
+	samples.successes++
+	samples.samples = append(samples.samples, latencySample{at: time.Now(), latency: latency})
+	if len(samples.samples) > c.maxLatencyHistory {
+		samples.samples = samples.samples[len(samples.samples)-c.maxLatencyHistory:]
+	}
 }
 
 // recordLatency adds a latency measurement, maintaining history limit
@@ -227,6 +259,43 @@ func (c *Collector) GetStats() Stats {
 	return stats
 }
 
+// GetOperationStats returns one entry per operation the run has recorded. It
+// sorts a copy of each operation's samples, so the final report calls it once
+// rather than every stats interval, the way GetCumulativeBlockStats is called.
+func (c *Collector) GetOperationStats() map[OperationKey]OperationStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	out := make(map[OperationKey]OperationStats, len(c.perOperation))
+	for key, samples := range c.perOperation {
+		op := OperationStats{
+			Count:       samples.count,
+			Successes:   samples.successes,
+			SampleCount: len(samples.samples),
+			Window:      samples.window(),
+		}
+		if len(samples.samples) > 0 {
+			sorted := make([]time.Duration, len(samples.samples))
+			for i, sample := range samples.samples {
+				sorted[i] = sample.latency
+			}
+			slices.Sort(sorted)
+			op.P50Latency = calculatePercentile(sorted, 50)
+			op.P99Latency = calculatePercentile(sorted, 99)
+		}
+		out[key] = op
+	}
+	return out
+}
+
+// compareOperationKeys orders keys by scenario, then by operation.
+func compareOperationKeys(a, b OperationKey) int {
+	return cmp.Or(
+		cmp.Compare(a.Scenario, b.Scenario),
+		cmp.Compare(a.Operation, b.Operation),
+	)
+}
+
 // GetCumulativeBlockStats returns cumulative block stats for final summary
 func (c *Collector) GetCumulativeBlockStats() *BlockStats {
 	c.mu.RLock()
@@ -262,6 +331,58 @@ type Stats struct {
 	OverallMaxTPS     float64
 	OverallCurrentTPS float64
 	BlockStats        *BlockStats // Block-related statistics
+}
+
+// OperationKey identifies one call shape within one scenario. Two scenarios that
+// issue the same call share an operation name, so neither field identifies a
+// series on its own.
+type OperationKey struct {
+	Scenario  string
+	Operation string
+}
+
+// OperationStats is one operation's share of a run. Count includes failed
+// transactions. The percentiles cover the SampleCount retained samples only,
+// which is the most recent Successes up to the retention limit.
+//
+// Window is the span the retained samples cover. The limit is a sample count,
+// not a duration, so a low-rate operation's window reaches further back than a
+// high-rate one's. Two operations in one report are comparable only when their
+// windows are close.
+type OperationStats struct {
+	Count       uint64
+	Successes   uint64
+	P50Latency  time.Duration
+	P99Latency  time.Duration
+	SampleCount int
+	Window      time.Duration
+}
+
+// operationSamples accumulates one operation's counts and its most recent
+// latencies. Each operation has its own samples, so a low-rate operation stays
+// represented instead of being evicted by a high-rate one.
+//
+// Each sample carries the instant it was taken, so the report can state the span
+// the retained samples cover. Without that span a reader compares two
+// percentiles over different stretches of the run and cannot see it.
+type operationSamples struct {
+	count     uint64
+	successes uint64
+	samples   []latencySample
+}
+
+// latencySample is one successful transaction's latency and when it happened.
+type latencySample struct {
+	at      time.Time
+	latency time.Duration
+}
+
+// window is the span the retained samples cover.
+func (o *operationSamples) window() time.Duration {
+	if len(o.samples) < 2 {
+		return 0
+	}
+	return o.samples[len(o.samples)-1].at.Sub(o.samples[0].at)
 }
 
 // TransactionStats represents transaction performance statistics.
@@ -309,7 +430,10 @@ func (c *Collector) GetBlockCollector() *BlockCollector {
 	return c.blockCollector
 }
 
-// FormatStats returns a formatted string representation of the statistics
+// FormatStats returns a formatted string representation of the statistics.
+//
+// No caller reaches it: a run prints through Logger.LogFinalStats, which formats
+// a FinalStats instead.
 func (s *Stats) FormatStats() string {
 	duration := time.Since(s.StartTime)
 	avgTPS := float64(s.TotalTxs) / duration.Seconds()
