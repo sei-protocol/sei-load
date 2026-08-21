@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/sei-protocol/sei-load/utils"
@@ -74,10 +76,11 @@ func (fs *FinalStats) String() string {
 		fs.LoadTestStatistics.TotalTxs,
 		fs.LoadTestStatistics.AvgTPS)
 
-	// Transaction counts by scenario
+	// Sorted: Go randomises map iteration, so an unsorted loop reorders these
+	// lines between calls, and two runs of one workload cannot be diffed.
 	result += "Transaction Counts by Scenario:\n"
-	for scenario, total := range fs.ScenarioDistribution {
-		result += fmt.Sprintf("  %s: %d\n", scenario, total)
+	for _, scenario := range slices.Sorted(maps.Keys(fs.ScenarioDistribution)) {
+		result += fmt.Sprintf("  %s: %d\n", scenario, fs.ScenarioDistribution[scenario])
 	}
 
 	// Transaction performance
@@ -125,9 +128,10 @@ func (fs *FinalStats) String() string {
 	result += fmt.Sprintf("  Average TPS: %.2f\n", fs.OverallPerformance.AverageTPS)
 	result += fmt.Sprintf("  Max TPS: %.2f\n", fs.OverallPerformance.MaxTPS)
 
-	// Scenario distribution
+	// Scenario distribution, sorted for the same reason as the counts above.
 	result += "\nScenario Distribution:\n"
-	for scenario, total := range fs.ScenarioDistribution {
+	for _, scenario := range slices.Sorted(maps.Keys(fs.ScenarioDistribution)) {
+		total := fs.ScenarioDistribution[scenario]
 		percentage := float64(total) / float64(fs.LoadTestStatistics.TotalTxs) * 100
 		result += fmt.Sprintf("  %s: %d (%.1f%%)\n", scenario, total, percentage)
 	}
