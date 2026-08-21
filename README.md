@@ -1,3 +1,5 @@
+> 🤖 For agent-driven experiments, start at [AGENTS.md](AGENTS.md) and docs/ — the authoritative, current operating docs. This README is a human quick-start and may lag.
+
 # sei-load
 [![Tests](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/sei-protocol/sei-load/actions/workflows/build-and-test.yml)
 
