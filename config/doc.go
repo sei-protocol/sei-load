@@ -28,10 +28,31 @@
 //
 //	"recordCount"        the keyspace a keyDistribution indexes
 //	"sizeBuckets"        the pad-length histogram a sizeDistribution indexes
-//	"operations"         the operation mix, with keys "read", "write", "rmw"
+//	"operations"         the operation mix, keyed by operation name
 //
-// So is the order OperationMix.Select compares those weights in, which decides
-// which operation a given draw selects.
+// So are the operation names a scenario declares, and the order it declares them
+// in. storagerw declares "rmw", "read", "write" — the three names an operations
+// object may weight, and the order a draw walks them in, which decides which
+// operation a given draw selects.
+//
+// # Operation baskets
+//
+// A scenario declares the operations it supports as an OperationSet, and a
+// profile weights them with an "operations" object of name to weight. Selection
+// is a per-transaction weighted draw: OperationSet.Picker resolves a mix against
+// the set once, and OperationPicker.Select draws from the result.
+//
+// The set is an ordered declaration rather than a bare set of allowed names,
+// because Go map iteration order is unspecified. A draw that walked the mix
+// itself would hand the same sub-range of the draw to a different operation on
+// every process, so one seed would stop reproducing one sequence. The set's
+// slice fixes the order, and Picker precomputes the cumulative weights along it.
+//
+// scenarioOperations wires a scenario's wire name to its set. A profile naming an
+// operation the scenario does not declare fails Scenario.Validate at load, with
+// the scenario and the operation named. An absent mix selects the set's first
+// operation and draws no randomness. A present but all-zero mix is a config
+// error, because it can select nothing.
 //
 // # Semantics: uniform vs zipfian(theta)
 //
