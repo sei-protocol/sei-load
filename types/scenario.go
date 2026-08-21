@@ -90,6 +90,26 @@ func NewTxScenario(name, operation string, nonce uint64, sender Account, receive
 	}
 }
 
+// NewSetupTx builds a transaction the run sends to prepare itself, not to offer
+// load. It has no timing basis, so IntendedSendTime stays zero and the inclusion
+// tracker leaves it out of the latency histogram.
+func NewSetupTx(tx *ethtypes.Transaction, scenario *TxScenario) *LoadTx {
+	return &LoadTx{EthTx: tx, Scenario: scenario}
+}
+
+// NewEnqueuedTx builds a transaction the run offers as load, stamped with the
+// instant it was handed to the sender.
+//
+// That instant is an enqueue time, not an arrival schedule: the sender applies
+// back-pressure, so it already carries the delay a schedule would have measured.
+// A latency taken from it understates by whatever the pipeline was holding, which
+// is the coordinated-omission error. Only a scheduler that fixes an instant
+// independent of sender readiness can supply a schedule, and this repo has none;
+// see the arrival-model note in sender/doc.go.
+func NewEnqueuedTx(tx *ethtypes.Transaction, scenario *TxScenario, enqueuedAt time.Time) *LoadTx {
+	return &LoadTx{EthTx: tx, Scenario: scenario, IntendedSendTime: enqueuedAt}
+}
+
 // CreateTxFromEthTx creates a LoadTx from an EthTx (pre-marshaled).
 func CreateTxFromEthTx(tx *ethtypes.Transaction, scenario *TxScenario) *LoadTx {
 	// Return the complete LoadTx object

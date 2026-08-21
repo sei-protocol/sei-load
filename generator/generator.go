@@ -164,9 +164,7 @@ func (g *Generator) Prewarm(ctx context.Context, rng *mrand.Rand, cfg *config.Lo
 		if err != nil {
 			return fmt.Errorf("evmScenario.Generate(): %w", err)
 		}
-		// Prewarm has no arrival schedule, so IntendedSendTime stays zero and the
-		// inclusion tracker leaves these out of its latency histogram.
-		ltx := &types.LoadTx{EthTx: tx, Scenario: scenario}
+		ltx := types.NewSetupTx(tx, scenario)
 		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
@@ -188,15 +186,15 @@ func (w *Generator) Run(ctx context.Context, rng *mrand.Rand, txSender TxSender)
 		sender := g.Accounts.NextAccount(rng)
 		receiver := g.Accounts.NextAccount(rng)
 		// TODO: This should probably hold a lock on sender.
-		// Stamp before hand-off while sole owner: race-free (see LoadTx). This is
-		// the back-pressured enqueue time, not a true schedule instant.
 		scenario := types.NewTxScenario(g.Scenario.Name(), g.Scenario.Operation(),
 			txSender.Nonce(sender), sender, receiver.Address)
 		tx, err := g.Scenario.Generate(rng, scenario)
 		if err != nil {
 			return fmt.Errorf("g.Scenario.Generate(): %w", err)
 		}
-		ltx := &types.LoadTx{EthTx: tx, IntendedSendTime: time.Now(), Scenario: scenario}
+		// Stamped before hand-off while this goroutine is sole owner: race-free,
+		// see LoadTx.
+		ltx := types.NewEnqueuedTx(tx, scenario, time.Now())
 		if err := txSender.Send(ctx, ltx); err != nil {
 			return err
 		}
