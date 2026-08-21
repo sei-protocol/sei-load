@@ -149,6 +149,6 @@ func (c *ethClient) Send(ctx context.Context, tx *types.LoadTx) (_err error) {
 			attribute.String("operation", tx.Scenario.Operation),
 		))
 	}
-	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, time.Since(start), err == nil)
+	c.cfg.Collector.RecordTransaction(tx.Scenario.Name, tx.Scenario.Operation, time.Since(start), err == nil)
 	return err
 }

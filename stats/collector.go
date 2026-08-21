@@ -3,6 +3,7 @@ package stats
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,7 +15,13 @@ type Collector struct {
 	// Transaction counts by scenario
 	txCounts map[string]uint64
 
-	// Latency tracking
+	// Per-operation counts and latencies. A run whose scenarios draw from a
+	// weighted basket reports one blended percentile without this, which cannot
+	// say which operation degraded.
+	perOperation map[OperationKey]*operationSamples
+
+	// Latency tracking, pooled across every scenario and operation. Kept as the
+	// run's headline percentile; perOperation splits it.
 	latencies []time.Duration
 
 	// TPS tracking with 10-second windows
@@ -46,6 +53,7 @@ type TPSWindow struct {
 func NewCollector() *Collector {
 	return &Collector{
 		txCounts:          make(map[string]uint64),
+		perOperation:      make(map[OperationKey]*operationSamples),
 		latencies:         make([]time.Duration, 0),
 		tpsWindow:         &TPSWindow{timestamps: make([]time.Time, 0)},
 		windowStats:       &WindowStats{windowStart: time.Now()},
@@ -55,8 +63,9 @@ func NewCollector() *Collector {
 	}
 }
 
-// RecordTransaction records a transaction attempt
-func (c *Collector) RecordTransaction(scenario string, latency time.Duration, success bool) {
+// RecordTransaction records a transaction attempt. The operation names the call
+// shape the scenario issued; see types.TxScenario.
+func (c *Collector) RecordTransaction(scenario, operation string, latency time.Duration, success bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -64,9 +73,18 @@ func (c *Collector) RecordTransaction(scenario string, latency time.Duration, su
 	c.txCounts[scenario]++
 	c.totalTxs++
 
+	key := OperationKey{Scenario: scenario, Operation: operation}
+	samples := c.perOperation[key]
+	if samples == nil {
+		samples = &operationSamples{}
+		c.perOperation[key] = samples
+	}
+	samples.count++
+
 	// Record latency (only for successful transactions)
 	if success {
 		c.recordLatency(latency)
+		samples.record(latency, c.maxLatencyHistory)
 	}
 
 	// Record TPS
@@ -170,14 +188,26 @@ func (c *Collector) GetStats() Stats {
 	defer c.mu.RUnlock()
 
 	stats := Stats{
-		StartTime: c.startTime,
-		TotalTxs:  c.totalTxs,
-		TxCounts:  make(map[string]uint64),
+		StartTime:  c.startTime,
+		TotalTxs:   c.totalTxs,
+		TxCounts:   make(map[string]uint64),
+		Operations: make(map[OperationKey]OperationStats, len(c.perOperation)),
 	}
 
 	// Copy transaction counts
 	for scenario, count := range c.txCounts {
 		stats.TxCounts[scenario] = count
+	}
+
+	for key, samples := range c.perOperation {
+		op := OperationStats{Count: samples.count, SampleCount: len(samples.latencies)}
+		if len(samples.latencies) > 0 {
+			sorted := slices.Clone(samples.latencies)
+			slices.Sort(sorted)
+			op.P50Latency = calculatePercentile(sorted, 50)
+			op.P99Latency = calculatePercentile(sorted, 99)
+		}
+		stats.Operations[key] = op
 	}
 
 	// Calculate transaction statistics
@@ -261,7 +291,39 @@ type Stats struct {
 	TransactionStats  TransactionStats
 	OverallMaxTPS     float64
 	OverallCurrentTPS float64
-	BlockStats        *BlockStats // Block-related statistics
+	BlockStats        *BlockStats                     // Block-related statistics
+	Operations        map[OperationKey]OperationStats // [scenario, operation] -> stats
+}
+
+// OperationKey identifies one call shape within one scenario. Two scenarios that
+// issue the same call share an operation name, so neither field identifies a
+// series on its own.
+type OperationKey struct {
+	Scenario  string
+	Operation string
+}
+
+// OperationStats is one operation's share of a run.
+type OperationStats struct {
+	Count       uint64
+	P50Latency  time.Duration
+	P99Latency  time.Duration
+	SampleCount int
+}
+
+// operationSamples accumulates one operation's counts and latencies. Each
+// operation keeps its own bounded window, so a low-rate operation stays
+// represented instead of being evicted by a high-rate one.
+type operationSamples struct {
+	count     uint64
+	latencies []time.Duration
+}
+
+func (o *operationSamples) record(latency time.Duration, limit int) {
+	o.latencies = append(o.latencies, latency)
+	if len(o.latencies) > limit {
+		o.latencies = o.latencies[len(o.latencies)-limit:]
+	}
 }
 
 // TransactionStats represents transaction performance statistics.
@@ -324,7 +386,26 @@ func (s *Stats) FormatStats() string {
 		result += fmt.Sprintf("  %s: %d\n", scenario, count)
 	}
 
+	if len(s.Operations) > 0 {
+		keys := slices.SortedFunc(maps.Keys(s.Operations), func(a, b OperationKey) int {
+			if a.Scenario != b.Scenario {
+				return strings.Compare(a.Scenario, b.Scenario)
+			}
+			return strings.Compare(a.Operation, b.Operation)
+		})
+		result += "\nPer Operation:\n"
+		for _, key := range keys {
+			op := s.Operations[key]
+			result += fmt.Sprintf("  %s/%s: %d txs | P50: %v | P99: %v (samples: %d)\n",
+				key.Scenario, key.Operation, op.Count,
+				op.P50Latency.Round(time.Millisecond),
+				op.P99Latency.Round(time.Millisecond),
+				op.SampleCount)
+		}
+	}
+
 	result += "\nTransaction Performance:\n"
+	result += "  (pooled across every scenario and operation)\n"
 	result += fmt.Sprintf("  Latency P50: %v | P99: %v (samples: %d)\n",
 		s.TransactionStats.P50Latency.Round(time.Millisecond),
 		s.TransactionStats.P99Latency.Round(time.Millisecond),
