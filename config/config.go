@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"time"
 )
@@ -36,6 +39,70 @@ type LoadConfig struct {
 	// "unseeded": the generator resolves a random one and records it for
 	// after-the-fact replay.
 	Seed *uint64 `json:"seed,omitempty"`
+}
+
+// ParseLoadConfig decodes a profile strictly: a key that maps to no config field
+// is an error naming that key, and the scenario that carries it. A mistyped or
+// stale key therefore fails the run instead of keeping its default.
+//
+// Four kinds of key still pass, because encoding/json resolves them before the
+// strict check sees them:
+//
+//   - a key inside a type with its own UnmarshalJSON, such as a Distribution or
+//     a GasPicker object, which parses its own payload;
+//   - a key of a map-typed field, which accepts every key by construction —
+//     an unknown operation name is rejected later, by ValidateScenarios;
+//   - a key differing from a field's tag only by case, which encoding/json
+//     matches case-insensitively;
+//   - a repeated key, where the last occurrence wins.
+//
+// ParseLoadConfig checks no semantics. A caller MUST run ValidateScenarios and
+// ValidateFunding next.
+func ParseLoadConfig(data []byte) (*LoadConfig, error) {
+	// Scenarios decode one at a time so an unknown key is reported against the
+	// scenario that carries it. The declared field shadows the embedded one.
+	var wire struct {
+		LoadConfig
+		Scenarios []json.RawMessage `json:"scenarios,omitempty"`
+	}
+	if err := decodeStrict(data, &wire); err != nil {
+		return nil, err
+	}
+
+	cfg := wire.LoadConfig
+	cfg.Scenarios = make([]Scenario, len(wire.Scenarios))
+	for i, raw := range wire.Scenarios {
+		if err := decodeStrict(raw, &cfg.Scenarios[i]); err != nil {
+			return nil, fmt.Errorf("scenario %s: %w", scenarioLabel(raw, i), err)
+		}
+	}
+	return &cfg, nil
+}
+
+// decodeStrict unmarshals JSON into v. It rejects a key that maps to no field,
+// and data after the value, which json.Unmarshal also rejects.
+func decodeStrict(data []byte, v any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("unexpected data after the top-level JSON value")
+	}
+	return nil
+}
+
+// scenarioLabel names a scenario the way Scenario.Validate does, and falls back
+// to its position when the scenario carries no name.
+func scenarioLabel(raw json.RawMessage, index int) string {
+	var named struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &named); err == nil && named.Name != "" {
+		return fmt.Sprintf("%q", named.Name)
+	}
+	return fmt.Sprintf("at index %d", index)
 }
 
 func (c *LoadConfig) TotalQueueSize() int {

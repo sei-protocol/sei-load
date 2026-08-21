@@ -54,6 +54,12 @@
 // operation and draws no randomness. A present but all-zero mix is a config
 // error, because it can select nothing.
 //
+// # Strict parsing
+//
+// ParseLoadConfig rejects a key that maps to no config field, so a key retired
+// from an older wire format fails the run instead of running the default
+// workload. Four kinds of key still pass; ParseLoadConfig names them.
+//
 // # Semantics: uniform vs zipfian(theta)
 //
 // uniform draws every index in [0, n) with equal probability.

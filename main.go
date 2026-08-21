@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -439,15 +438,16 @@ func inclusionRegistryCap(maxInFlight int, tps float64, reapAfter time.Duration)
 	return floor
 }
 
-// loadConfig reads and parses the configuration file
+// loadConfig reads the profile, parses it with config.ParseLoadConfig, then runs
+// ValidateScenarios and ValidateFunding.
 func loadConfig(filename string) (*config.LoadConfig, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var cfg config.LoadConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	cfg, err := config.ParseLoadConfig(data)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse config json: %w", err)
 	}
 
@@ -463,5 +463,5 @@ func loadConfig(filename string) (*config.LoadConfig, error) {
 		return nil, err
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
